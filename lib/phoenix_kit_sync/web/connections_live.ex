@@ -226,17 +226,13 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   end
 
   defp handle_verification_result({:ok, :not_found}, conn_uuid, pid) do
-    Logger.warning(
-      "[Sync.Connections] Verify returned not_found for connection #{conn_uuid}"
-    )
+    Logger.warning("[Sync.Connections] Verify returned not_found for connection #{conn_uuid}")
 
     send(pid, {:receiver_connection_severed, conn_uuid})
   end
 
   defp handle_verification_result({:ok, :offline}, conn_uuid, _pid) do
-    Logger.debug(
-      "[Sync.Connections] Remote site offline during verify | uuid=#{conn_uuid}"
-    )
+    Logger.debug("[Sync.Connections] Remote site offline during verify | uuid=#{conn_uuid}")
   end
 
   defp handle_verification_result({:error, reason}, conn_uuid, _pid) do
@@ -1001,7 +997,11 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             "| site_url=#{connection.site_url}"
         )
 
-        case Connections.suspend_connection(connection, nil, "Remote site reports connection not found") do
+        case Connections.update_connection(connection, %{
+               status: "suspended",
+               suspended_at: DateTime.utc_now() |> DateTime.truncate(:second),
+               suspended_reason: "Remote site reports connection not found"
+             }) do
           {:ok, _} ->
             socket =
               socket

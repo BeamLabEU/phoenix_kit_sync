@@ -100,59 +100,60 @@ defmodule PhoenixKitSync.Connections do
   @spec create_connection(map()) ::
           {:ok, Connection.t(), String.t()} | {:error, Ecto.Changeset.t()}
   def create_connection(attrs) do
-    site_url = attrs["site_url"] || attrs[:site_url]
     direction = attrs["direction"] || attrs[:direction]
-    name = attrs["name"] || attrs[:name]
+    site_url = attrs["site_url"] || attrs[:site_url]
 
     if direction == "sender" and self_connection?(site_url) do
-      Logger.warning(
-        "[Sync.Connections] Rejected self-connection " <>
-          "| site_url=#{site_url} " <>
-          "| our_url=#{ConnectionNotifier.get_our_site_url()}"
-      )
-
-      changeset =
-        %Connection{}
-        |> Connection.changeset(attrs)
-        |> Ecto.Changeset.add_error(:site_url, "cannot create a connection to yourself")
-
-      {:error, changeset}
+      reject_self_connection(attrs, site_url)
     else
-      repo = RepoHelper.repo()
+      do_insert_connection(attrs)
+    end
+  end
 
-      # Use provided token or generate a new one
-      token = attrs["auth_token"] || attrs[:auth_token] || Connection.generate_auth_token()
+  defp reject_self_connection(attrs, site_url) do
+    Logger.warning(
+      "[Sync.Connections] Rejected self-connection " <>
+        "| site_url=#{site_url} " <>
+        "| our_url=#{ConnectionNotifier.get_our_site_url()}"
+    )
 
-      # Use string key to match form params (avoid mixed atom/string keys)
-      attrs_with_token = Map.put(attrs, "auth_token", token)
-
+    changeset =
       %Connection{}
-      |> Connection.changeset(attrs_with_token)
-      |> repo.insert()
-      |> case do
-        {:ok, connection} ->
-          Logger.info(
-            "[Sync.Connections] Connection created " <>
-              "| uuid=#{connection.uuid} " <>
-              "| direction=#{direction} " <>
-              "| name=#{inspect(name)} " <>
-              "| site_url=#{site_url} " <>
-              "| status=#{connection.status}"
-          )
+      |> Connection.changeset(attrs)
+      |> Ecto.Changeset.add_error(:site_url, "cannot create a connection to yourself")
 
-          broadcast({:connection_created, connection.uuid})
-          {:ok, connection, token}
+    {:error, changeset}
+  end
 
-        {:error, changeset} ->
-          Logger.warning(
-            "[Sync.Connections] Failed to create connection " <>
-              "| direction=#{direction} " <>
-              "| site_url=#{site_url} " <>
-              "| errors=#{inspect(changeset.errors)}"
-          )
+  defp do_insert_connection(attrs) do
+    repo = RepoHelper.repo()
+    token = attrs["auth_token"] || attrs[:auth_token] || Connection.generate_auth_token()
+    attrs_with_token = Map.put(attrs, "auth_token", token)
 
-          {:error, changeset}
-      end
+    %Connection{}
+    |> Connection.changeset(attrs_with_token)
+    |> repo.insert()
+    |> case do
+      {:ok, connection} ->
+        Logger.info(
+          "[Sync.Connections] Connection created " <>
+            "| uuid=#{connection.uuid} " <>
+            "| direction=#{connection.direction} " <>
+            "| name=#{inspect(connection.name)} " <>
+            "| site_url=#{connection.site_url} " <>
+            "| status=#{connection.status}"
+        )
+
+        broadcast({:connection_created, connection.uuid})
+        {:ok, connection, token}
+
+      {:error, changeset} ->
+        Logger.warning(
+          "[Sync.Connections] Failed to create connection " <>
+            "| errors=#{inspect(changeset.errors)}"
+        )
+
+        {:error, changeset}
     end
   end
 
