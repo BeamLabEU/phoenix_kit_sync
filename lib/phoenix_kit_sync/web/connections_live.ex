@@ -961,9 +961,24 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   end
 
   def handle_info({:sender_status_fetched, connection_uuid, status}, socket) do
-    # Store the sender's status in the sender_statuses map
     sender_statuses = Map.put(socket.assigns.sender_statuses, connection_uuid, status)
-    {:noreply, assign(socket, :sender_statuses, sender_statuses)}
+
+    # Reload connections from DB — the status query may have triggered
+    # auto-activation of pending senders on the remote side, which
+    # updates the shared DB but can't reach us via PubSub (separate node)
+    sender_connections =
+      Connections.list_connections(direction: "sender")
+
+    receiver_connections =
+      Connections.list_connections(direction: "receiver")
+
+    socket =
+      socket
+      |> assign(:sender_statuses, sender_statuses)
+      |> assign(:sender_connections, sender_connections)
+      |> assign(:receiver_connections, receiver_connections)
+
+    {:noreply, socket}
   end
 
   def handle_info({:receiver_connection_severed, connection_uuid}, socket) do
@@ -1006,10 +1021,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   end
 
   # PubSub handlers for real-time updates
-  # Use skip_async: true to prevent feedback loops - just reload from DB without
-  # triggering HTTP calls that could cause more broadcasts
+  # Most use skip_async: true to prevent feedback loops.
+  # connection_created needs async to fetch sender status for new receivers.
   def handle_info({:connection_created, _connection_uuid}, socket) do
-    {:noreply, load_connections(socket, skip_async: true)}
+    {:noreply, load_connections(socket)}
   end
 
   def handle_info({:connection_status_changed, _connection_uuid, _status}, socket) do
