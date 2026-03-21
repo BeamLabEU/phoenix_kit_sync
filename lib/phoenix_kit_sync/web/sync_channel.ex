@@ -72,7 +72,7 @@ defmodule PhoenixKitSync.Web.SyncChannel do
 
     capabilities = %{
       version: "1.0.0",
-      phoenix_kit_version: Application.spec(:phoenix_kit, :vsn) |> to_string(),
+      phoenix_kit_version: Application.spec(:phoenix_kit_sync, :vsn) |> to_string(),
       features: ["list_tables", "get_schema", "fetch_records"]
     }
 
