@@ -411,12 +411,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   def handle_event("delete_connection", %{"uuid" => uuid}, socket) do
     connection = Connections.get_connection!(uuid)
 
-    # If receiver is severing, notify the sender first
-    if connection.direction == "receiver" do
-      Task.start(fn ->
-        ConnectionNotifier.notify_delete(connection)
-      end)
-    end
+    # Notify the remote site about the deletion (async)
+    Task.start(fn ->
+      ConnectionNotifier.notify_delete(connection)
+    end)
 
     case Connections.delete_connection(connection) do
       {:ok, _connection} ->
