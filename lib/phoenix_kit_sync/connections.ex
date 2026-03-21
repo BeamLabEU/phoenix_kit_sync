@@ -104,7 +104,7 @@ defmodule PhoenixKitSync.Connections do
     direction = attrs["direction"] || attrs[:direction]
     name = attrs["name"] || attrs[:name]
 
-    if self_connection?(site_url) do
+    if direction == "sender" and self_connection?(site_url) do
       Logger.warning(
         "[Sync.Connections] Rejected self-connection " <>
           "| site_url=#{site_url} " <>
