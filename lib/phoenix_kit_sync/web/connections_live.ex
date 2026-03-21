@@ -1541,6 +1541,18 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
       </button>
       <%!-- Status controls only for sender connections (receivers sync from sender) --%>
       <%= if @connection.direction == "sender" do %>
+        <%= if @connection.status == "pending" do %>
+          <button
+            type="button"
+            phx-click="approve_connection"
+            phx-value-uuid={@connection.uuid}
+            class="btn btn-success btn-xs tooltip tooltip-bottom"
+            data-tip={gettext("Approve")}
+          >
+            <.icon name="hero-check" class="w-4 h-4 hidden sm:inline" />
+            <span class="sm:hidden whitespace-nowrap">{gettext("Approve")}</span>
+          </button>
+        <% end %>
         <%= if @connection.status == "active" do %>
           <button
             type="button"
