@@ -194,12 +194,12 @@ defmodule PhoenixKitSync.DataExporter do
   end
 
   # Serialize values to JSON-compatible format
+  # Struct types must come before the is_map guard (structs are maps)
   defp serialize_value(nil), do: nil
   defp serialize_value(value) when is_binary(value), do: value
   defp serialize_value(value) when is_number(value), do: value
   defp serialize_value(value) when is_boolean(value), do: value
   defp serialize_value(value) when is_list(value), do: Enum.map(value, &serialize_value/1)
-  defp serialize_value(value) when is_map(value), do: serialize_map(value)
 
   defp serialize_value(%Date{} = date), do: Date.to_iso8601(date)
   defp serialize_value(%Time{} = time), do: Time.to_iso8601(time)
@@ -208,7 +208,7 @@ defmodule PhoenixKitSync.DataExporter do
 
   defp serialize_value(%Decimal{} = decimal), do: Decimal.to_string(decimal)
 
-  # Handle Ecto types
+  # Handle other Ecto types (must be before is_map guard)
   defp serialize_value(%{__struct__: _} = struct) do
     if function_exported?(struct.__struct__, :to_string, 1) do
       to_string(struct)
@@ -216,6 +216,9 @@ defmodule PhoenixKitSync.DataExporter do
       inspect(struct)
     end
   end
+
+  # Plain maps (after struct matchers)
+  defp serialize_value(value) when is_map(value), do: serialize_map(value)
 
   # Fallback for other types
   defp serialize_value(value), do: inspect(value)

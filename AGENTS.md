@@ -9,14 +9,26 @@ PhoenixKit Sync — an Elixir module for peer-to-peer data synchronization betwe
 ## Commands
 
 ```bash
-mix test                    # Run all tests
+mix test                    # Run all tests (integration excluded if no DB)
 mix test test/file_test.exs # Run single test file
 mix test test/file_test.exs:42  # Run specific test by line
 mix format                  # Format code
-mix credo                   # Lint / code quality
+mix credo --strict          # Lint / code quality (strict mode)
 mix dialyzer                # Static type checking
+mix precommit               # compile + format + credo --strict + dialyzer
 mix deps.get                # Install dependencies
 ```
+
+## Dependencies
+
+This is a **library**, not a standalone app. It requires a sibling `../phoenix_kit` directory (path dependency). The full dependency chain:
+
+- `phoenix_kit` (path: `"../phoenix_kit"`) — provides Module behaviour, Settings, RepoHelper, Dashboard tabs
+- `phoenix`, `phoenix_live_view` — web framework
+- `ecto_sql`, `postgrex` — database (via phoenix_kit)
+- `websockex` — WebSocket client for connecting to remote senders
+- `oban` — background job processing for imports
+- `jason` — JSON encoding/decoding
 
 ## Architecture
 
@@ -61,6 +73,61 @@ This is a **PhoenixKit module** that implements the `PhoenixKit.Module` behaviou
 
 `sync_enabled`, `sync_incoming_mode`, `sync_incoming_password`
 
+### API Endpoints
+
+All under the configured URL prefix (default: `/phoenix_kit`):
+
+| Method | Path | Handler | Auth |
+|--------|------|---------|------|
+| POST | `/sync/api/register-connection` | Register incoming connection | Incoming mode + optional password |
+| POST | `/sync/api/delete-connection` | Delete a connection | Module enabled |
+| POST | `/sync/api/verify-connection` | Verify connection exists | Module enabled |
+| POST | `/sync/api/update-status` | Update connection status | Module enabled |
+| POST | `/sync/api/get-connection-status` | Query connection status | Module enabled |
+| POST | `/sync/api/list-tables` | List available tables | Token + active connection |
+| POST | `/sync/api/pull-data` | Pull table data | Token + active connection |
+| POST | `/sync/api/table-schema` | Get table schema | Token + active connection |
+| POST | `/sync/api/table-records` | Get table records | Token + active connection |
+| GET | `/sync/api/status` | Check module status | None |
+| WS | `/sync/websocket` | WebSocket sync protocol | Code or token in query params |
+
+### File Layout
+
+```
+lib/phoenix_kit_sync.ex                    # Main module (PhoenixKit.Module behaviour)
+lib/phoenix_kit_sync/
+├── connection.ex                          # Connection Ecto schema + changesets
+├── connections.ex                         # Connections context (CRUD, validation)
+├── transfer.ex                            # Transfer Ecto schema + changesets
+├── transfers.ex                           # Transfers context (CRUD, lifecycle)
+├── schema_inspector.ex                    # DB introspection (tables, columns, FKs)
+├── data_exporter.ex                       # Record export with pagination + streaming
+├── data_importer.ex                       # Record import with conflict strategies
+├── connection_notifier.ex                 # HTTP client for remote site communication
+├── session_store.ex                       # ETS-based ephemeral session management
+├── column_info.ex                         # Column metadata struct
+├── table_schema.ex                        # Table schema struct
+├── client.ex                              # High-level sync client API
+├── channel_client.ex                      # Channel-based sync client
+├── websocket_client.ex                    # WebSockex-based sync client
+├── paths.ex                               # Centralized URL path helpers
+├── routes.ex                              # Route generation macro
+├── migration.ex                           # Standalone migration (IF NOT EXISTS)
+├── web/
+│   ├── api_controller.ex                  # REST API for cross-site operations
+│   ├── sync_websock.ex                    # WebSocket handler (WebSock behaviour)
+│   ├── sync_channel.ex                    # Phoenix Channel handler
+│   ├── sync_socket.ex                     # Phoenix Socket for channels
+│   ├── socket_plug.ex                     # WebSocket upgrade plug
+│   ├── index.ex                           # Admin dashboard LiveView
+│   ├── connections_live.ex                # Admin connections management LiveView
+│   ├── sender.ex                          # Admin sender LiveView
+│   ├── receiver.ex                        # Admin receiver LiveView
+│   └── history.ex                         # Admin transfer history LiveView
+└── workers/
+    └── import_worker.ex                   # Oban worker for batch imports
+```
+
 ## Key Conventions
 
 - **UUIDv7 primary keys** — all schemas use UUIDv7 primary keys
@@ -70,6 +137,76 @@ This is a **PhoenixKit module** that implements the `PhoenixKit.Module` behaviou
 - **Public routes from `route_module/0`** — the single public entry point is `PhoenixKitSync.Routes`; `route_module/0` returns this module so PhoenixKit registers public routes automatically
 - **LiveViews use `Phoenix.LiveView` directly** — do not use `PhoenixKitWeb` macros (`use PhoenixKitWeb, :live_view`) in this standalone package; import helpers explicitly
 - **SQL identifier safety** — always validate table/column names with `valid_identifier?/1` and quote with `quote_identifier/1` before using in raw SQL
+- **`Connection.ip_allowed?/2` quirk** — when `ip_whitelist` is empty (allow all), calling `ip_allowed?(conn, "127.0.0.1")` returns `false` because the 2-arity clause doesn't match the empty-list guard. The 1-arity `ip_allowed?(conn)` works correctly. Callers like `Connections.validate_connection/2` pass `nil` as IP to avoid this
+
+## Testing
+
+### Setup
+
+The test database must be created manually:
+
+```bash
+createdb phoenix_kit_sync_test
+mix test
+```
+
+Integration tests are automatically excluded when the database is unavailable. The test helper creates the `uuid_generate_v7()` function and runs `PhoenixKitSync.Migration` on first run.
+
+The critical config wiring is in `config/test.exs`:
+
+```elixir
+config :phoenix_kit, repo: PhoenixKitSync.Test.Repo
+```
+
+Without this, all DB calls through `PhoenixKit.RepoHelper` crash with "No repository configured".
+
+### Structure
+
+```
+test/
+├── test_helper.exs                  # DB detection, migration, sandbox setup
+├── support/
+│   ├── test_repo.ex                 # PhoenixKitSync.Test.Repo
+│   ├── data_case.ex                 # DataCase (sandbox + :integration tag)
+│   └── changeset_helpers.ex         # errors_on/1 helper
+├── phoenix_kit_sync/                # Unit tests (no DB, async: true)
+│   ├── module_test.exs              # PhoenixKit.Module behaviour compliance
+│   ├── connection_test.exs          # Connection changesets, access controls
+│   ├── transfer_test.exs            # Transfer changesets, status logic
+│   ├── session_store_test.exs       # ETS CRUD, process monitoring
+│   ├── ephemeral_session_test.exs   # Session lifecycle via public API
+│   ├── import_worker_test.exs       # Oban job changeset building
+│   └── paths_test.exs              # URL path helpers
+└── integration/                     # Integration tests (needs DB)
+    ├── connections_test.exs         # Connections context CRUD + validation
+    ├── transfers_test.exs           # Transfer lifecycle + approval workflow
+    ├── migration_test.exs           # Table structure verification
+    ├── schema_inspector_test.exs    # Table listing, schema, checksums
+    ├── data_exporter_test.exs       # Count, fetch, pagination, streaming
+    ├── data_importer_test.exs       # All 4 conflict strategies
+    ├── api_controller_test.exs      # Business logic + access control
+    ├── sync_websock_test.exs        # WebSocket access control logic
+    └── full_sync_flow_test.exs      # End-to-end export → import cycle
+```
+
+### Key patterns
+
+- **Use string keys** for `Connections.create_connection/1` attrs — it injects a string key internally, causing `Ecto.CastError` with atom keys
+- **Use `UUIDv7.generate()`** for any user UUID field (`approved_by_uuid`, etc.) — plain strings cause `Ecto.ChangeError`
+- **Tag DB tests via `DataCase`** — the `@moduletag :integration` is set automatically
+- **`enabled?/0` and `get_config/0` hit the DB** — test with `function_exported?/3` in unit tests, or tag as `:integration`
+- **SessionStore uses a global ETS table** — use `setup_all` with `{:error, {:already_started, _}}` handling, not per-test `start_link`
+- **Ecto schema types** — use `:integer` (not `:bigint`) and `:string` (not `:text`) in schemas; the migration-only types cause compilation errors
+- **Run migrations via `Ecto.Migrator.up/4`** — calling `Migration.up()` directly fails outside a migrator process
+
+### Running tests
+
+```bash
+mix test                             # All tests (excludes integration if no DB)
+mix test test/phoenix_kit_sync/      # Unit tests only
+mix test test/integration/           # Integration tests only
+mix test --only integration          # Only integration-tagged tests
+```
 
 ## PR Reviews
 
