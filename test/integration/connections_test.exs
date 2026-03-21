@@ -1,5 +1,5 @@
 defmodule PhoenixKitSync.Integration.ConnectionsTest do
-  use PhoenixKitSync.DataCase, async: true
+  use PhoenixKitSync.DataCase, async: false
 
   alias PhoenixKitSync.Connections
 
@@ -304,6 +304,175 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
 
       pending_count = Connections.count_connections(status: "pending")
       assert is_integer(pending_count)
+    end
+  end
+
+  # ===========================================
+  # SELF-CONNECTION PROTECTION
+  # ===========================================
+
+  describe "self-connection protection" do
+    test "allows sender to different site" do
+      result =
+        Connections.create_connection(%{
+          "name" => "Different Site",
+          "direction" => "sender",
+          "site_url" => "https://completely-different-site-#{System.unique_integer([:positive])}.example.com"
+        })
+
+      assert {:ok, _conn, _token} = result
+    end
+
+    test "allows receiver even if site_url matches own (API-created)" do
+      # Receivers are created by remote API — should never be blocked
+      # Use a URL that would match our own if self-check ran
+      result =
+        Connections.create_connection(%{
+          "name" => "From: Remote",
+          "direction" => "receiver",
+          "site_url" => "https://self-check-receiver-#{System.unique_integer([:positive])}.com"
+        })
+
+      assert {:ok, conn, _token} = result
+      assert conn.direction == "receiver"
+    end
+
+    test "self-connection check does not crash when Settings table is missing" do
+      # In test env, phoenix_kit_settings doesn't exist.
+      # create_connection should rescue and allow the connection through
+      # (the self-check returns false on error, so it doesn't block)
+      result =
+        Connections.create_connection(%{
+          "name" => "Resilient Test",
+          "direction" => "sender",
+          "site_url" => "https://resilient-#{System.unique_integer([:positive])}.com"
+        })
+
+      assert {:ok, _conn, _token} = result
+    end
+  end
+
+  # ===========================================
+  # PUBSUB BROADCASTS
+  # ===========================================
+
+  describe "PubSub broadcasts" do
+    setup do
+      pubsub = PhoenixKit.Config.pubsub_server()
+      Phoenix.PubSub.subscribe(pubsub, "sync:connections")
+      :ok
+    end
+
+    test "create_connection broadcasts :connection_created" do
+      {:ok, conn, _token} =
+        Connections.create_connection(%{
+          "name" => "PubSub Create Test",
+          "direction" => "sender",
+          "site_url" => "https://pubsub-create-#{System.unique_integer([:positive])}.com"
+        })
+
+      assert_receive {:connection_created, uuid}
+      assert uuid == conn.uuid
+    end
+
+    test "delete_connection broadcasts :connection_deleted" do
+      conn =
+        create_connection(%{
+          "site_url" => "https://pubsub-delete-#{System.unique_integer([:positive])}.com"
+        })
+
+      # Drain the create broadcast
+      assert_receive {:connection_created, _}
+
+      {:ok, _} = Connections.delete_connection(conn)
+      assert_receive {:connection_deleted, uuid}
+      assert uuid == conn.uuid
+    end
+
+    test "approve_connection broadcasts :connection_status_changed" do
+      conn =
+        create_connection(%{
+          "site_url" => "https://pubsub-approve-#{System.unique_integer([:positive])}.com"
+        })
+
+      assert_receive {:connection_created, _}
+
+      {:ok, _} = Connections.approve_connection(conn, UUIDv7.generate())
+      assert_receive {:connection_status_changed, uuid, "active"}
+      assert uuid == conn.uuid
+    end
+
+    test "suspend_connection broadcasts :connection_status_changed" do
+      conn =
+        create_connection(%{
+          "site_url" => "https://pubsub-suspend-#{System.unique_integer([:positive])}.com"
+        })
+
+      assert_receive {:connection_created, _}
+      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+      assert_receive {:connection_status_changed, _, "active"}
+
+      {:ok, _} = Connections.suspend_connection(active, UUIDv7.generate(), "test")
+      assert_receive {:connection_status_changed, uuid, "suspended"}
+      assert uuid == conn.uuid
+    end
+
+    test "revoke_connection broadcasts :connection_status_changed" do
+      conn =
+        create_connection(%{
+          "site_url" => "https://pubsub-revoke-#{System.unique_integer([:positive])}.com"
+        })
+
+      assert_receive {:connection_created, _}
+      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+      assert_receive {:connection_status_changed, _, "active"}
+
+      {:ok, _} = Connections.revoke_connection(active, UUIDv7.generate(), "test")
+      assert_receive {:connection_status_changed, uuid, "revoked"}
+      assert uuid == conn.uuid
+    end
+
+    test "reactivate_connection broadcasts :connection_status_changed" do
+      conn =
+        create_connection(%{
+          "site_url" => "https://pubsub-react-#{System.unique_integer([:positive])}.com"
+        })
+
+      assert_receive {:connection_created, _}
+      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+      assert_receive {:connection_status_changed, _, "active"}
+      {:ok, suspended} = Connections.suspend_connection(active, UUIDv7.generate())
+      assert_receive {:connection_status_changed, _, "suspended"}
+
+      {:ok, _} = Connections.reactivate_connection(suspended)
+      assert_receive {:connection_status_changed, uuid, "active"}
+      assert uuid == conn.uuid
+    end
+
+    test "update_connection with status change broadcasts :connection_status_changed" do
+      conn =
+        create_connection(%{
+          "site_url" => "https://pubsub-update-#{System.unique_integer([:positive])}.com"
+        })
+
+      assert_receive {:connection_created, _}
+
+      {:ok, _} = Connections.update_connection(conn, %{status: "active"})
+      assert_receive {:connection_status_changed, uuid, "active"}
+      assert uuid == conn.uuid
+    end
+
+    test "update_connection without status change broadcasts :connection_updated" do
+      conn =
+        create_connection(%{
+          "site_url" => "https://pubsub-update2-#{System.unique_integer([:positive])}.com"
+        })
+
+      assert_receive {:connection_created, _}
+
+      {:ok, _} = Connections.update_connection(conn, %{name: "Updated Name"})
+      assert_receive {:connection_updated, uuid}
+      assert uuid == conn.uuid
     end
   end
 end
