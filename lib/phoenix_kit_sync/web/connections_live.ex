@@ -142,6 +142,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     |> assign(:sync_loading, true)
     |> assign(:sync_error, nil)
     |> assign(:selected_sync_tables, MapSet.new())
+    |> assign(:suggested_sync_tables, MapSet.new())
     |> assign(:sync_in_progress, false)
     |> assign(:sync_progress, nil)
     |> assign(:conflict_strategy, connection.default_conflict_strategy || "skip")
@@ -460,7 +461,14 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         end)
       end
 
-    {:noreply, assign(socket, :selected_sync_tables, selected)}
+    suggested = compute_suggested_tables(selected, tables)
+
+    socket =
+      socket
+      |> assign(:selected_sync_tables, selected)
+      |> assign(:suggested_sync_tables, suggested)
+
+    {:noreply, socket}
   end
 
   def handle_event("toggle_all_tables", _params, socket) do
@@ -475,32 +483,58 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         all_names
       end
 
-    {:noreply, assign(socket, :selected_sync_tables, selected)}
+    suggested = compute_suggested_tables(selected, tables)
+
+    socket =
+      socket
+      |> assign(:selected_sync_tables, selected)
+      |> assign(:suggested_sync_tables, suggested)
+
+    {:noreply, socket}
   end
 
   def handle_event("select_all_tables", _params, socket) do
     tables = socket.assigns.sync_tables
     all_names = Enum.map(tables, fn t -> t.name || t["name"] end) |> MapSet.new()
-    {:noreply, assign(socket, :selected_sync_tables, all_names)}
+
+    socket =
+      socket
+      |> assign(:selected_sync_tables, all_names)
+      |> assign(:suggested_sync_tables, MapSet.new())
+
+    {:noreply, socket}
   end
 
   def handle_event("deselect_all_tables", _params, socket) do
-    {:noreply, assign(socket, :selected_sync_tables, MapSet.new())}
+    socket =
+      socket
+      |> assign(:selected_sync_tables, MapSet.new())
+      |> assign(:suggested_sync_tables, MapSet.new())
+
+    {:noreply, socket}
   end
 
   def handle_event("select_different_tables", _params, socket) do
-    # Select tables that either don't exist locally or have different data
+    tables = socket.assigns.sync_tables
     local_counts = socket.assigns.sync_local_counts
     local_checksums = socket.assigns.sync_local_checksums
 
     different_tables =
-      socket.assigns.sync_tables
+      tables
       |> Enum.filter(fn table ->
         table_differs?(table, local_counts, local_checksums)
       end)
       |> Enum.map(&get_table_field(&1, :name))
 
-    {:noreply, assign(socket, :selected_sync_tables, MapSet.new(different_tables))}
+    selected = MapSet.new(different_tables)
+    suggested = compute_suggested_tables(selected, tables)
+
+    socket =
+      socket
+      |> assign(:selected_sync_tables, selected)
+      |> assign(:suggested_sync_tables, suggested)
+
+    {:noreply, socket}
   end
 
   def handle_event("change_conflict_strategy", %{"strategy" => strategy}, socket) do
@@ -1142,6 +1176,27 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     |> MapSet.to_list()
   end
 
+  # Compute tables that depend on any selected table but aren't selected themselves.
+  # These are "suggested" — they reference selected tables via FK and may be needed
+  # for the imported data to function correctly (e.g., roles when importing users).
+  defp compute_suggested_tables(selected, tables) do
+    if MapSet.size(selected) == 0 do
+      MapSet.new()
+    else
+      tables
+      |> Enum.filter(fn table ->
+        name = get_table_field(table, :name)
+        deps = get_table_field(table, :depends_on) || []
+
+        # Not already selected, but depends on at least one selected table
+        not MapSet.member?(selected, name) and
+          Enum.any?(deps, &MapSet.member?(selected, &1))
+      end)
+      |> Enum.map(&get_table_field(&1, :name))
+      |> MapSet.new()
+    end
+  end
+
   defp get_table_dependencies(table_name, tables, visited) do
     if MapSet.member?(visited, table_name) do
       visited
@@ -1347,6 +1402,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               loading={@sync_loading}
               error={@sync_error}
               selected_tables={@selected_sync_tables}
+              suggested_tables={@suggested_sync_tables}
               sync_in_progress={@sync_in_progress}
               progress={@sync_progress}
               conflict_strategy={@conflict_strategy}
@@ -2171,10 +2227,17 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                         <%= for table <- @tables do %>
                           <% table_name = get_table_field(table, :name) %>
                           <% is_selected = MapSet.member?(@selected_tables, table_name) %>
+                          <% is_suggested = MapSet.member?(@suggested_tables, table_name) %>
                           <% local_count = Map.get(@local_counts, table_name) %>
                           <% local_checksum = Map.get(@local_checksums, table_name) %>
                           <% sender_checksum = Map.get(table, :checksum) || Map.get(table, "checksum") %>
-                          <tr class={if is_selected, do: "bg-primary/10"}>
+                          <tr class={
+                            cond do
+                              is_selected -> "bg-primary/10"
+                              is_suggested -> "bg-warning/5 border-l-2 border-warning"
+                              true -> ""
+                            end
+                          }>
                             <td>
                               <button
                                 type="button"
@@ -2189,7 +2252,17 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                                 <% end %>
                               </button>
                             </td>
-                            <td class="font-mono text-sm">{table_name}</td>
+                            <td class="font-mono text-sm">
+                              {table_name}
+                              <%= if is_suggested do %>
+                                <span
+                                  class="ml-1 text-warning text-xs tooltip tooltip-right"
+                                  data-tip="Used by selected tables — consider including"
+                                >
+                                  ⚠
+                                </span>
+                              <% end %>
+                            </td>
                             <td class="text-right">{format_number(table.row_count || 0)}</td>
                             <td class="text-right">
                               <%= if local_count do %>
