@@ -142,6 +142,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     |> assign(:sync_loading, true)
     |> assign(:sync_error, nil)
     |> assign(:selected_sync_tables, MapSet.new())
+    |> assign(:suggested_sync_tables, MapSet.new())
     |> assign(:sync_in_progress, false)
     |> assign(:sync_progress, nil)
     |> assign(:conflict_strategy, connection.default_conflict_strategy || "skip")
@@ -226,7 +227,21 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   end
 
   defp handle_verification_result({:ok, :not_found}, conn_uuid, pid) do
+    Logger.warning("[Sync.Connections] Verify returned not_found for connection #{conn_uuid}")
+
     send(pid, {:receiver_connection_severed, conn_uuid})
+  end
+
+  defp handle_verification_result({:ok, :offline}, conn_uuid, _pid) do
+    Logger.debug("[Sync.Connections] Remote site offline during verify | uuid=#{conn_uuid}")
+  end
+
+  defp handle_verification_result({:error, reason}, conn_uuid, _pid) do
+    Logger.warning(
+      "[Sync.Connections] Verify failed for connection #{conn_uuid} | error=#{inspect(reason)}"
+    )
+
+    # Don't trigger severed on errors — could be transient network issue or hot reload
   end
 
   defp handle_verification_result(_result, _conn_uuid, _pid), do: :ok
@@ -393,12 +408,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   def handle_event("delete_connection", %{"uuid" => uuid}, socket) do
     connection = Connections.get_connection!(uuid)
 
-    # If receiver is severing, notify the sender first
-    if connection.direction == "receiver" do
-      Task.start(fn ->
-        ConnectionNotifier.notify_delete(connection)
-      end)
-    end
+    # Notify the remote site about the deletion (async)
+    Task.start(fn ->
+      ConnectionNotifier.notify_delete(connection)
+    end)
 
     case Connections.delete_connection(connection) do
       {:ok, _connection} ->
@@ -448,7 +461,14 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         end)
       end
 
-    {:noreply, assign(socket, :selected_sync_tables, selected)}
+    suggested = compute_suggested_tables(selected, tables)
+
+    socket =
+      socket
+      |> assign(:selected_sync_tables, selected)
+      |> assign(:suggested_sync_tables, suggested)
+
+    {:noreply, socket}
   end
 
   def handle_event("toggle_all_tables", _params, socket) do
@@ -463,32 +483,58 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         all_names
       end
 
-    {:noreply, assign(socket, :selected_sync_tables, selected)}
+    suggested = compute_suggested_tables(selected, tables)
+
+    socket =
+      socket
+      |> assign(:selected_sync_tables, selected)
+      |> assign(:suggested_sync_tables, suggested)
+
+    {:noreply, socket}
   end
 
   def handle_event("select_all_tables", _params, socket) do
     tables = socket.assigns.sync_tables
     all_names = Enum.map(tables, fn t -> t.name || t["name"] end) |> MapSet.new()
-    {:noreply, assign(socket, :selected_sync_tables, all_names)}
+
+    socket =
+      socket
+      |> assign(:selected_sync_tables, all_names)
+      |> assign(:suggested_sync_tables, MapSet.new())
+
+    {:noreply, socket}
   end
 
   def handle_event("deselect_all_tables", _params, socket) do
-    {:noreply, assign(socket, :selected_sync_tables, MapSet.new())}
+    socket =
+      socket
+      |> assign(:selected_sync_tables, MapSet.new())
+      |> assign(:suggested_sync_tables, MapSet.new())
+
+    {:noreply, socket}
   end
 
   def handle_event("select_different_tables", _params, socket) do
-    # Select tables that either don't exist locally or have different data
+    tables = socket.assigns.sync_tables
     local_counts = socket.assigns.sync_local_counts
     local_checksums = socket.assigns.sync_local_checksums
 
     different_tables =
-      socket.assigns.sync_tables
+      tables
       |> Enum.filter(fn table ->
         table_differs?(table, local_counts, local_checksums)
       end)
       |> Enum.map(&get_table_field(&1, :name))
 
-    {:noreply, assign(socket, :selected_sync_tables, MapSet.new(different_tables))}
+    selected = MapSet.new(different_tables)
+    suggested = compute_suggested_tables(selected, tables)
+
+    socket =
+      socket
+      |> assign(:selected_sync_tables, selected)
+      |> assign(:suggested_sync_tables, suggested)
+
+    {:noreply, socket}
   end
 
   def handle_event("change_conflict_strategy", %{"strategy" => strategy}, socket) do
@@ -945,24 +991,59 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   end
 
   def handle_info({:sender_status_fetched, connection_uuid, status}, socket) do
-    # Store the sender's status in the sender_statuses map
     sender_statuses = Map.put(socket.assigns.sender_statuses, connection_uuid, status)
-    {:noreply, assign(socket, :sender_statuses, sender_statuses)}
+
+    # Reload connections from DB — the status query may have triggered
+    # auto-activation of pending senders on the remote side, which
+    # updates the shared DB but can't reach us via PubSub (separate node)
+    sender_connections =
+      Connections.list_connections(direction: "sender")
+
+    receiver_connections =
+      Connections.list_connections(direction: "receiver")
+
+    socket =
+      socket
+      |> assign(:sender_statuses, sender_statuses)
+      |> assign(:sender_connections, sender_connections)
+      |> assign(:receiver_connections, receiver_connections)
+
+    {:noreply, socket}
   end
 
   def handle_info({:receiver_connection_severed, connection_uuid}, socket) do
-    # Receiver severed their connection - delete our sender connection
+    # Receiver reports connection not found on their side.
+    # Instead of auto-deleting (which can cascade on shared-DB setups or
+    # during hot reloads), suspend the connection so the admin can investigate.
     case Connections.get_connection(connection_uuid) do
       nil ->
-        # Already deleted
+        {:noreply, socket}
+
+      %{status: "suspended"} ->
+        # Already suspended, don't re-suspend
         {:noreply, socket}
 
       connection ->
-        case Connections.delete_connection(connection) do
+        Logger.warning(
+          "[Sync.Connections] Remote site reports connection not found, suspending " <>
+            "| uuid=#{connection.uuid} " <>
+            "| name=#{inspect(connection.name)} " <>
+            "| site_url=#{connection.site_url}"
+        )
+
+        case Connections.update_connection(connection, %{
+               status: "suspended",
+               suspended_at: DateTime.utc_now() |> DateTime.truncate(:second),
+               suspended_reason: "Remote site reports connection not found"
+             }) do
           {:ok, _} ->
             socket =
               socket
-              |> put_flash(:info, "Connection '#{connection.name}' was severed by remote site")
+              |> put_flash(
+                :warning,
+                "Connection '#{connection.name}' suspended — remote site reports it no longer exists. " <>
+                  "You can delete it or reactivate and re-verify."
+              )
               |> load_connections()
 
             {:noreply, socket}
@@ -974,13 +1055,21 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   end
 
   # PubSub handlers for real-time updates
-  # Use skip_async: true to prevent feedback loops - just reload from DB without
-  # triggering HTTP calls that could cause more broadcasts
+  # Most use skip_async: true to prevent feedback loops.
+  # connection_created needs async to fetch sender status for new receivers.
   def handle_info({:connection_created, _connection_uuid}, socket) do
-    {:noreply, load_connections(socket, skip_async: true)}
+    {:noreply, load_connections(socket)}
   end
 
   def handle_info({:connection_status_changed, _connection_uuid, _status}, socket) do
+    {:noreply, load_connections(socket, skip_async: true)}
+  end
+
+  def handle_info({:connection_deleted, _connection_uuid}, socket) do
+    {:noreply, load_connections(socket, skip_async: true)}
+  end
+
+  def handle_info({:connection_updated, _connection_uuid}, socket) do
     {:noreply, load_connections(socket, skip_async: true)}
   end
 
@@ -1085,6 +1174,27 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   defp get_table_dependencies(table_name, tables) do
     get_table_dependencies(table_name, tables, MapSet.new())
     |> MapSet.to_list()
+  end
+
+  # Compute tables that depend on any selected table but aren't selected themselves.
+  # These are "suggested" — they reference selected tables via FK and may be needed
+  # for the imported data to function correctly (e.g., roles when importing users).
+  defp compute_suggested_tables(selected, tables) do
+    if MapSet.size(selected) == 0 do
+      MapSet.new()
+    else
+      tables
+      |> Enum.filter(fn table ->
+        name = get_table_field(table, :name)
+        deps = get_table_field(table, :depends_on) || []
+
+        # Not already selected, but depends on at least one selected table
+        not MapSet.member?(selected, name) and
+          Enum.any?(deps, &MapSet.member?(selected, &1))
+      end)
+      |> Enum.map(&get_table_field(&1, :name))
+      |> MapSet.new()
+    end
   end
 
   defp get_table_dependencies(table_name, tables, visited) do
@@ -1292,6 +1402,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               loading={@sync_loading}
               error={@sync_error}
               selected_tables={@selected_sync_tables}
+              suggested_tables={@suggested_sync_tables}
               sync_in_progress={@sync_in_progress}
               progress={@sync_progress}
               conflict_strategy={@conflict_strategy}
@@ -1499,6 +1610,18 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
       </button>
       <%!-- Status controls only for sender connections (receivers sync from sender) --%>
       <%= if @connection.direction == "sender" do %>
+        <%= if @connection.status == "pending" do %>
+          <button
+            type="button"
+            phx-click="approve_connection"
+            phx-value-uuid={@connection.uuid}
+            class="btn btn-success btn-xs tooltip tooltip-bottom"
+            data-tip={gettext("Approve")}
+          >
+            <.icon name="hero-check" class="w-4 h-4 hidden sm:inline" />
+            <span class="sm:hidden whitespace-nowrap">{gettext("Approve")}</span>
+          </button>
+        <% end %>
         <%= if @connection.status == "active" do %>
           <button
             type="button"
@@ -2104,10 +2227,17 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                         <%= for table <- @tables do %>
                           <% table_name = get_table_field(table, :name) %>
                           <% is_selected = MapSet.member?(@selected_tables, table_name) %>
+                          <% is_suggested = MapSet.member?(@suggested_tables, table_name) %>
                           <% local_count = Map.get(@local_counts, table_name) %>
                           <% local_checksum = Map.get(@local_checksums, table_name) %>
                           <% sender_checksum = Map.get(table, :checksum) || Map.get(table, "checksum") %>
-                          <tr class={if is_selected, do: "bg-primary/10"}>
+                          <tr class={
+                            cond do
+                              is_selected -> "bg-primary/10"
+                              is_suggested -> "bg-warning/10"
+                              true -> ""
+                            end
+                          }>
                             <td>
                               <button
                                 type="button"
@@ -2122,7 +2252,17 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                                 <% end %>
                               </button>
                             </td>
-                            <td class="font-mono text-sm">{table_name}</td>
+                            <td class="font-mono text-sm">
+                              {table_name}
+                              <%= if is_suggested do %>
+                                <span
+                                  class="ml-1 text-warning text-xs tooltip tooltip-right"
+                                  data-tip="Used by selected tables — consider including"
+                                >
+                                  ⚠
+                                </span>
+                              <% end %>
+                            </td>
                             <td class="text-right">{format_number(table.row_count || 0)}</td>
                             <td class="text-right">
                               <%= if local_count do %>
@@ -2219,6 +2359,19 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                       <.icon name="hero-arrow-down-tray" class="w-4 h-4" />
                       Pull {MapSet.size(@selected_tables)} Table(s)
                     </button>
+                  </div>
+
+                  <div class="text-xs text-base-content/50 mt-3 space-y-1">
+                    <p>
+                      <span class="inline-block w-3 h-3 bg-primary/10 rounded mr-1 align-middle"></span>
+                      <span class="font-semibold">Selected</span>
+                      — tables that will be synced. Dependencies (via foreign keys) are auto-selected.
+                    </p>
+                    <p>
+                      <span class="inline-block w-3 h-3 bg-warning/10 rounded mr-1 align-middle"></span>
+                      <span class="font-semibold">Suggested</span>
+                      — tables that reference selected tables. Consider including them for data to function correctly.
+                    </p>
                   </div>
                 <% end %>
               <% end %>

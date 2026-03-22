@@ -253,16 +253,7 @@ defmodule PhoenixKitSync.Web.ApiController do
         new_status: validated.status
       })
 
-      # Broadcast to any listening LiveViews to refresh
-      pubsub = PhoenixKit.Config.pubsub_server()
-
-      if pubsub do
-        Phoenix.PubSub.broadcast(
-          pubsub,
-          "sync:connections",
-          {:connection_status_changed, connection.uuid, validated.status}
-        )
-      end
+      # PubSub broadcast handled by Connections.update_connection
 
       conn
       |> put_status(200)
@@ -671,30 +662,42 @@ defmodule PhoenixKitSync.Web.ApiController do
   # --- Private Functions ---
 
   defp maybe_activate_pending_connection(%{status: "pending"} = connection) do
-    case Connections.update_connection(connection, %{status: "active"}) do
+    Logger.info(
+      "[Sync.API] Auto-activating pending sender connection " <>
+        "| uuid=#{connection.uuid} " <>
+        "| name=#{inspect(connection.name)} " <>
+        "| reason=receiver_queried_status"
+    )
+
+    now = UtilsDate.utc_now()
+
+    case Connections.update_connection(connection, %{
+           status: "active",
+           approved_at: now,
+           metadata:
+             Map.merge(connection.metadata || %{}, %{
+               "auto_activated" => true,
+               "auto_activated_at" => DateTime.to_iso8601(now),
+               "auto_activated_reason" => "receiver queried connection status"
+             })
+         }) do
       {:ok, updated} ->
-        broadcast_connection_status_change(connection.uuid, "active")
+        # PubSub broadcast handled by Connections.update_connection
         {updated, "active"}
 
-      {:error, _} ->
+      {:error, reason} ->
+        Logger.error(
+          "[Sync.API] Failed to auto-activate connection " <>
+            "| uuid=#{connection.uuid} " <>
+            "| error=#{inspect(reason)}"
+        )
+
         {connection, connection.status}
     end
   end
 
   defp maybe_activate_pending_connection(connection) do
     {connection, connection.status}
-  end
-
-  defp broadcast_connection_status_change(connection_uuid, status) do
-    pubsub = PhoenixKit.Config.pubsub_server()
-
-    if pubsub do
-      Phoenix.PubSub.broadcast(
-        pubsub,
-        "sync:connections",
-        {:connection_status_changed, connection_uuid, status}
-      )
-    end
   end
 
   defp check_module_enabled do
@@ -885,16 +888,7 @@ defmodule PhoenixKitSync.Web.ApiController do
             "| status=#{connection.status}"
         )
 
-        # Broadcast to any listening LiveViews to refresh
-        pubsub = PhoenixKit.Config.pubsub_server()
-
-        if pubsub do
-          Phoenix.PubSub.broadcast(
-            pubsub,
-            "sync:connections",
-            {:connection_created, connection.uuid}
-          )
-        end
+        # PubSub broadcast handled by Connections.create_connection
 
         {:ok,
          %{

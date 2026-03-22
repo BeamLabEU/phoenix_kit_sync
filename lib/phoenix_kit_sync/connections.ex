@@ -47,10 +47,24 @@ defmodule PhoenixKitSync.Connections do
 
   import Ecto.Query, warn: false
 
+  require Logger
+
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Utils.Date, as: UtilsDate
   alias PhoenixKit.Utils.UUID, as: UUIDUtils
   alias PhoenixKitSync.Connection
+  alias PhoenixKitSync.ConnectionNotifier
+
+  # ===========================================
+  # PUBSUB BROADCASTING
+  # ===========================================
+
+  defp broadcast(event) do
+    case PhoenixKit.Config.pubsub_server() do
+      nil -> :ok
+      pubsub -> Phoenix.PubSub.broadcast(pubsub, "sync:connections", event)
+    end
+  end
 
   # ===========================================
   # CRUD OPERATIONS
@@ -86,22 +100,101 @@ defmodule PhoenixKitSync.Connections do
   @spec create_connection(map()) ::
           {:ok, Connection.t(), String.t()} | {:error, Ecto.Changeset.t()}
   def create_connection(attrs) do
+    direction = attrs["direction"] || attrs[:direction]
+    site_url = attrs["site_url"] || attrs[:site_url]
+
+    if direction == "sender" and self_connection?(site_url) do
+      reject_self_connection(attrs, site_url)
+    else
+      do_insert_connection(attrs)
+    end
+  end
+
+  defp reject_self_connection(attrs, site_url) do
+    Logger.warning(
+      "[Sync.Connections] Rejected self-connection " <>
+        "| site_url=#{site_url} " <>
+        "| our_url=#{ConnectionNotifier.get_our_site_url()}"
+    )
+
+    changeset =
+      %Connection{}
+      |> Connection.changeset(attrs)
+      |> Ecto.Changeset.add_error(:site_url, "cannot create a connection to yourself")
+
+    {:error, changeset}
+  end
+
+  defp do_insert_connection(attrs) do
     repo = RepoHelper.repo()
-
-    # Use provided token or generate a new one
     token = attrs["auth_token"] || attrs[:auth_token] || Connection.generate_auth_token()
-
-    # Use string key to match form params (avoid mixed atom/string keys)
     attrs_with_token = Map.put(attrs, "auth_token", token)
 
     %Connection{}
     |> Connection.changeset(attrs_with_token)
     |> repo.insert()
     |> case do
-      {:ok, connection} -> {:ok, connection, token}
-      {:error, changeset} -> {:error, changeset}
+      {:ok, connection} ->
+        Logger.info(
+          "[Sync.Connections] Connection created " <>
+            "| uuid=#{connection.uuid} " <>
+            "| direction=#{connection.direction} " <>
+            "| name=#{inspect(connection.name)} " <>
+            "| site_url=#{connection.site_url} " <>
+            "| status=#{connection.status}"
+        )
+
+        broadcast({:connection_created, connection.uuid})
+        {:ok, connection, token}
+
+      {:error, changeset} ->
+        Logger.warning(
+          "[Sync.Connections] Failed to create connection " <>
+            "| errors=#{inspect(changeset.errors)}"
+        )
+
+        {:error, changeset}
     end
   end
+
+  defp self_connection?(nil), do: false
+
+  defp self_connection?(site_url) when is_binary(site_url) do
+    our_url = ConnectionNotifier.get_our_site_url()
+    urls_match?(site_url, our_url)
+  rescue
+    _ -> false
+  end
+
+  # Compare URLs accounting for default ports (80 for http, 443 for https)
+  defp urls_match?(url_a, url_b) do
+    parse_url(url_a) == parse_url(url_b)
+  end
+
+  defp parse_url(url) when is_binary(url) do
+    url = url |> String.trim_trailing("/") |> String.downcase()
+
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host, port: port} when is_binary(host) ->
+        # Normalize port: nil or default port for scheme → explicit default
+        normalized_port =
+          case {scheme, port} do
+            {"http", nil} -> 80
+            {"http", 80} -> 80
+            {"https", nil} -> 443
+            {"https", 443} -> 443
+            {_, nil} -> 80
+            {_, p} -> p
+          end
+
+        {scheme, host, normalized_port}
+
+      _ ->
+        {nil, url, nil}
+    end
+  end
+
+  defp parse_url(_), do: {nil, nil, nil}
 
   @doc """
   Gets a connection by UUID.
@@ -200,6 +293,34 @@ defmodule PhoenixKitSync.Connections do
     connection
     |> Connection.settings_changeset(attrs)
     |> repo.update()
+    |> tap(fn
+      {:ok, updated} ->
+        changed_fields =
+          attrs
+          |> Enum.reject(fn {k, v} -> Map.get(connection, k) == v end)
+          |> Enum.map(fn {k, _v} -> k end)
+
+        if changed_fields != [] do
+          Logger.info(
+            "[Sync.Connections] Connection updated " <>
+              "| uuid=#{updated.uuid} " <>
+              "| changed=#{inspect(changed_fields)}"
+          )
+        end
+
+        if :status in changed_fields or "status" in changed_fields do
+          broadcast({:connection_status_changed, updated.uuid, updated.status})
+        else
+          broadcast({:connection_updated, updated.uuid})
+        end
+
+      {:error, changeset} ->
+        Logger.warning(
+          "[Sync.Connections] Failed to update connection " <>
+            "| uuid=#{connection.uuid} " <>
+            "| errors=#{inspect(changeset.errors)}"
+        )
+    end)
   end
 
   @doc """
@@ -211,8 +332,23 @@ defmodule PhoenixKitSync.Connections do
   """
   @spec delete_connection(Connection.t()) :: {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
   def delete_connection(%Connection{} = connection) do
+    Logger.info(
+      "[Sync.Connections] Deleting connection " <>
+        "| uuid=#{connection.uuid} " <>
+        "| direction=#{connection.direction} " <>
+        "| site_url=#{connection.site_url}"
+    )
+
     repo = RepoHelper.repo()
-    repo.delete(connection)
+
+    case repo.delete(connection) do
+      {:ok, deleted} ->
+        broadcast({:connection_deleted, deleted.uuid})
+        {:ok, deleted}
+
+      error ->
+        error
+    end
   end
 
   # ===========================================
@@ -234,11 +370,22 @@ defmodule PhoenixKitSync.Connections do
   @spec approve_connection(Connection.t(), String.t()) ::
           {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
   def approve_connection(%Connection{} = connection, admin_user_uuid) do
+    Logger.info(
+      "[Sync.Connections] Approving connection " <>
+        "| uuid=#{connection.uuid} " <>
+        "| approved_by=#{admin_user_uuid}"
+    )
+
     repo = RepoHelper.repo()
 
-    connection
-    |> Connection.approve_changeset(admin_user_uuid)
-    |> repo.update()
+    case connection |> Connection.approve_changeset(admin_user_uuid) |> repo.update() do
+      {:ok, updated} ->
+        broadcast({:connection_status_changed, updated.uuid, "active"})
+        {:ok, updated}
+
+      error ->
+        error
+    end
   end
 
   @doc """
@@ -257,11 +404,23 @@ defmodule PhoenixKitSync.Connections do
   @spec suspend_connection(Connection.t(), String.t(), String.t() | nil) ::
           {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
   def suspend_connection(%Connection{} = connection, admin_user_uuid, reason \\ nil) do
+    Logger.info(
+      "[Sync.Connections] Suspending connection " <>
+        "| uuid=#{connection.uuid} " <>
+        "| suspended_by=#{admin_user_uuid} " <>
+        "| reason=#{inspect(reason)}"
+    )
+
     repo = RepoHelper.repo()
 
-    connection
-    |> Connection.suspend_changeset(admin_user_uuid, reason)
-    |> repo.update()
+    case connection |> Connection.suspend_changeset(admin_user_uuid, reason) |> repo.update() do
+      {:ok, updated} ->
+        broadcast({:connection_status_changed, updated.uuid, "suspended"})
+        {:ok, updated}
+
+      error ->
+        error
+    end
   end
 
   @doc """
@@ -280,11 +439,23 @@ defmodule PhoenixKitSync.Connections do
   @spec revoke_connection(Connection.t(), String.t(), String.t() | nil) ::
           {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
   def revoke_connection(%Connection{} = connection, admin_user_uuid, reason \\ nil) do
+    Logger.info(
+      "[Sync.Connections] Revoking connection " <>
+        "| uuid=#{connection.uuid} " <>
+        "| revoked_by=#{admin_user_uuid} " <>
+        "| reason=#{inspect(reason)}"
+    )
+
     repo = RepoHelper.repo()
 
-    connection
-    |> Connection.revoke_changeset(admin_user_uuid, reason)
-    |> repo.update()
+    case connection |> Connection.revoke_changeset(admin_user_uuid, reason) |> repo.update() do
+      {:ok, updated} ->
+        broadcast({:connection_status_changed, updated.uuid, "revoked"})
+        {:ok, updated}
+
+      error ->
+        error
+    end
   end
 
   @doc """
@@ -297,11 +468,21 @@ defmodule PhoenixKitSync.Connections do
   @spec reactivate_connection(Connection.t()) ::
           {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
   def reactivate_connection(%Connection{} = connection) do
+    Logger.info(
+      "[Sync.Connections] Reactivating connection " <>
+        "| uuid=#{connection.uuid}"
+    )
+
     repo = RepoHelper.repo()
 
-    connection
-    |> Connection.reactivate_changeset()
-    |> repo.update()
+    case connection |> Connection.reactivate_changeset() |> repo.update() do
+      {:ok, updated} ->
+        broadcast({:connection_status_changed, updated.uuid, "active"})
+        {:ok, updated}
+
+      error ->
+        error
+    end
   end
 
   # ===========================================
@@ -355,7 +536,24 @@ defmodule PhoenixKitSync.Connections do
          :ok <- check_record_limits(connection),
          :ok <- check_ip_whitelist(connection, client_ip),
          :ok <- check_allowed_hours(connection) do
+      Logger.debug(
+        "[Sync.Connections] Token validated " <>
+          "| uuid=#{connection.uuid} " <>
+          "| direction=#{connection.direction} " <>
+          "| client_ip=#{client_ip}"
+      )
+
       {:ok, connection}
+    else
+      {:error, reason} = error ->
+        Logger.warning(
+          "[Sync.Connections] Token validation failed " <>
+            "| reason=#{reason} " <>
+            "| client_ip=#{client_ip} " <>
+            "| token_prefix=#{String.slice(token || "", 0, 8)}…"
+        )
+
+        error
     end
   end
 

@@ -989,7 +989,11 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
-  defp get_our_site_url do
+  @doc """
+  Resolves this site's own URL from Settings, config, or dynamic detection.
+  Used to identify ourselves when communicating with remote sites.
+  """
+  def get_our_site_url do
     case Settings.get_setting("site_url", nil) do
       nil ->
         url = get_our_site_url_fallback()
@@ -1544,7 +1548,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   # Convert ISO8601 strings to DateTime/Date/Time structs for Postgrex
   defp prepare_value(value) when is_binary(value) do
-    parse_datetime_string(value) || parse_date_string(value) || parse_time_string(value) || value
+    parse_datetime_string(value) || parse_date_string(value) || parse_time_string(value) ||
+      parse_decimal_string(value) || value
   end
 
   defp prepare_value(%{"__phoenix_kit_binary__" => encoded}) when is_binary(encoded) do
@@ -1627,5 +1632,17 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         _ -> nil
       end
     end
+  end
+
+  # Decimal-like strings (e.g., "0.00", "123.45", "-99.99")
+  # Only matches strings that look like decimals with a dot — plain integers
+  # like "123" are left as strings since Postgrex handles those fine.
+  @decimal_regex ~r/^-?\d+\.\d+$/
+  defp parse_decimal_string(value) do
+    if Regex.match?(@decimal_regex, value) do
+      Decimal.new(value)
+    end
+  rescue
+    _ -> nil
   end
 end

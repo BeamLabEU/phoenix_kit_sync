@@ -269,7 +269,7 @@ defmodule PhoenixKitSync.SchemaInspector do
 
     # Handle auto-increment for bigint primary keys
     type_with_serial =
-      if (column["primary_key"] || column[:primary_key]) and type in ["bigint", "integer"] do
+      if !!(column["primary_key"] || column[:primary_key]) and type in ["bigint", "integer"] do
         if type == "bigint", do: "bigserial", else: "serial"
       else
         type

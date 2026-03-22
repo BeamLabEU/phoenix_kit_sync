@@ -53,6 +53,8 @@ defmodule PhoenixKitSync.Transfers do
 
   import Ecto.Query, warn: false
 
+  require Logger
+
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Utils.Date, as: UtilsDate
   alias PhoenixKit.Utils.UUID, as: UUIDUtils
@@ -254,12 +256,26 @@ defmodule PhoenixKitSync.Transfers do
           {:ok, Transfer.t()} | {:error, :cannot_start | Ecto.Changeset.t()}
   def start_transfer(%Transfer{} = transfer) do
     if Transfer.can_start?(transfer) do
+      Logger.info(
+        "[Sync.Transfers] Starting transfer " <>
+          "| uuid=#{transfer.uuid} " <>
+          "| table=#{transfer.table_name} " <>
+          "| direction=#{transfer.direction}"
+      )
+
       repo = RepoHelper.repo()
 
       transfer
       |> Transfer.start_changeset()
       |> repo.update()
     else
+      Logger.warning(
+        "[Sync.Transfers] Cannot start transfer " <>
+          "| uuid=#{transfer.uuid} " <>
+          "| status=#{transfer.status} " <>
+          "| requires_approval=#{transfer.requires_approval}"
+      )
+
       {:error, :cannot_start}
     end
   end
@@ -315,6 +331,13 @@ defmodule PhoenixKitSync.Transfers do
   @spec complete_transfer(Transfer.t(), map()) ::
           {:ok, Transfer.t()} | {:error, Ecto.Changeset.t()}
   def complete_transfer(%Transfer{} = transfer, final_stats \\ %{}) do
+    Logger.info(
+      "[Sync.Transfers] Completing transfer " <>
+        "| uuid=#{transfer.uuid} " <>
+        "| table=#{transfer.table_name} " <>
+        "| stats=#{inspect(final_stats)}"
+    )
+
     repo = RepoHelper.repo()
 
     transfer
@@ -337,6 +360,13 @@ defmodule PhoenixKitSync.Transfers do
   @spec fail_transfer(Transfer.t(), String.t()) ::
           {:ok, Transfer.t()} | {:error, Ecto.Changeset.t()}
   def fail_transfer(%Transfer{} = transfer, error_message) do
+    Logger.error(
+      "[Sync.Transfers] Transfer failed " <>
+        "| uuid=#{transfer.uuid} " <>
+        "| table=#{transfer.table_name} " <>
+        "| error=#{error_message}"
+    )
+
     repo = RepoHelper.repo()
 
     transfer
@@ -353,6 +383,12 @@ defmodule PhoenixKitSync.Transfers do
   """
   @spec cancel_transfer(Transfer.t()) :: {:ok, Transfer.t()} | {:error, Ecto.Changeset.t()}
   def cancel_transfer(%Transfer{} = transfer) do
+    Logger.info(
+      "[Sync.Transfers] Cancelling transfer " <>
+        "| uuid=#{transfer.uuid} " <>
+        "| table=#{transfer.table_name}"
+    )
+
     repo = RepoHelper.repo()
 
     transfer
@@ -381,6 +417,13 @@ defmodule PhoenixKitSync.Transfers do
   @spec request_approval(Transfer.t(), non_neg_integer()) ::
           {:ok, Transfer.t()} | {:error, Ecto.Changeset.t()}
   def request_approval(%Transfer{} = transfer, expires_in_hours \\ 24) do
+    Logger.info(
+      "[Sync.Transfers] Requesting approval " <>
+        "| uuid=#{transfer.uuid} " <>
+        "| table=#{transfer.table_name} " <>
+        "| expires_in_hours=#{expires_in_hours}"
+    )
+
     repo = RepoHelper.repo()
 
     transfer
@@ -403,6 +446,13 @@ defmodule PhoenixKitSync.Transfers do
   @spec approve_transfer(Transfer.t(), String.t()) ::
           {:ok, Transfer.t()} | {:error, Ecto.Changeset.t()}
   def approve_transfer(%Transfer{} = transfer, admin_user_uuid) do
+    Logger.info(
+      "[Sync.Transfers] Approving transfer " <>
+        "| uuid=#{transfer.uuid} " <>
+        "| table=#{transfer.table_name} " <>
+        "| approved_by=#{admin_user_uuid}"
+    )
+
     repo = RepoHelper.repo()
 
     transfer
@@ -426,6 +476,14 @@ defmodule PhoenixKitSync.Transfers do
   @spec deny_transfer(Transfer.t(), String.t(), String.t() | nil) ::
           {:ok, Transfer.t()} | {:error, Ecto.Changeset.t()}
   def deny_transfer(%Transfer{} = transfer, admin_user_uuid, reason \\ nil) do
+    Logger.info(
+      "[Sync.Transfers] Denying transfer " <>
+        "| uuid=#{transfer.uuid} " <>
+        "| table=#{transfer.table_name} " <>
+        "| denied_by=#{admin_user_uuid} " <>
+        "| reason=#{inspect(reason)}"
+    )
+
     repo = RepoHelper.repo()
 
     transfer
