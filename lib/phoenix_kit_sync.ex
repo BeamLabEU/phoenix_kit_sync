@@ -165,7 +165,7 @@ defmodule PhoenixKitSync do
   def module_name, do: "Sync"
 
   @impl PhoenixKit.Module
-  def version, do: "0.1.0"
+  def version, do: "0.1.6"
 
   @impl PhoenixKit.Module
   def route_module, do: PhoenixKitSync.Routes
