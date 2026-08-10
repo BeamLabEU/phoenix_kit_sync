@@ -10,7 +10,7 @@ sync between dev and prod, dev and dev, or different websites entirely.
 Add to your parent app's `mix.exs`:
 
 ```elixir
-{:phoenix_kit_sync, "~> 0.1"}
+{:phoenix_kit_sync, "~> 0.2"}
 ```
 
 The module is auto-discovered via PhoenixKit's beam scanning — no additional

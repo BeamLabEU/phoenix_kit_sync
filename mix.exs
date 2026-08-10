@@ -1,7 +1,7 @@
 defmodule PhoenixKitSync.MixProject do
   use Mix.Project
 
-  @version "0.1.6"
+  @version "0.2.0"
   @description "Peer-to-peer data sync module for PhoenixKit"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_sync"
 
@@ -85,7 +85,7 @@ defmodule PhoenixKitSync.MixProject do
 
   defp deps do
     [
-      pk_dep(:phoenix_kit, ">= 1.7.189 and < 2.0.0"),
+      pk_dep(:phoenix_kit, "~> 2.0"),
       {:phoenix_live_view, "~> 1.1"},
       {:phoenix, "~> 1.8.1"},
       {:ecto_sql, "~> 3.10"},
