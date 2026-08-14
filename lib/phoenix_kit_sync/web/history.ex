@@ -264,9 +264,9 @@ defmodule PhoenixKitSync.Web.History do
         <div class="card bg-base-100 shadow mb-6">
           <div class="card-body py-4">
             <div class="flex flex-wrap gap-4 items-end">
-              <div class="form-control">
+              <div class="fieldset">
                 <label class="label">
-                  <span class="label-text">Direction</span>
+                  <span class="fieldset-legend">Direction</span>
                 </label>
                 <label class="select select-sm">
                   <select
@@ -280,9 +280,9 @@ defmodule PhoenixKitSync.Web.History do
                 </label>
               </div>
 
-              <div class="form-control">
+              <div class="fieldset">
                 <label class="label">
-                  <span class="label-text">Status</span>
+                  <span class="fieldset-legend">Status</span>
                 </label>
                 <label class="select select-sm">
                   <select
@@ -624,12 +624,12 @@ defmodule PhoenixKitSync.Web.History do
           <%= if @transfer.status == "pending_approval" do %>
             <form phx-submit="deny_transfer" class="flex gap-2 items-end">
               <input type="hidden" name="transfer_uuid" value={@transfer.uuid} />
-              <div class="form-control">
+              <div class="fieldset">
                 <input
                   type="text"
                   name="reason"
                   placeholder={gettext("Reason (optional)")}
-                  class="input input-bordered input-sm w-48"
+                  class="input input-sm w-48"
                 />
               </div>
               <button

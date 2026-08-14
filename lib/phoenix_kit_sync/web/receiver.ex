@@ -962,29 +962,29 @@ defmodule PhoenixKitSync.Web.Receiver do
 
         <form phx-change="update_form" phx-submit="connect" class="space-y-4">
           <%!-- Sender URL --%>
-          <div class="form-control">
+          <div class="fieldset">
             <label class="label">
-              <span class="label-text font-semibold">Sender's Site URL</span>
+              <span class="fieldset-legend font-semibold">Sender's Site URL</span>
             </label>
             <input
               type="url"
               name="sender_url"
               value={@sender_url}
               placeholder="https://example.com"
-              class="input input-bordered w-full"
+              class="input w-full"
               required
             />
             <label class="label">
-              <span class="label-text-alt text-base-content/50">
+              <span class="fieldset-label text-base-content/50">
                 The URL of the site you want to receive data from
               </span>
             </label>
           </div>
 
           <%!-- Connection Code --%>
-          <div class="form-control">
+          <div class="fieldset">
             <label class="label">
-              <span class="label-text font-semibold">Connection Code</span>
+              <span class="fieldset-legend font-semibold">Connection Code</span>
             </label>
             <input
               type="text"
@@ -992,11 +992,11 @@ defmodule PhoenixKitSync.Web.Receiver do
               value={@connection_code}
               placeholder="ABC12345"
               maxlength="8"
-              class="input input-bordered w-full font-mono text-xl tracking-widest uppercase"
+              class="input w-full font-mono text-xl tracking-widest uppercase"
               required
             />
             <label class="label">
-              <span class="label-text-alt text-base-content/50">
+              <span class="fieldset-label text-base-content/50">
                 8-character code from the sending site
               </span>
             </label>
@@ -1011,7 +1011,7 @@ defmodule PhoenixKitSync.Web.Receiver do
           <% end %>
 
           <%!-- Submit Button --%>
-          <div class="form-control mt-6">
+          <div class="fieldset mt-6">
             <button
               type="submit"
               class="btn btn-primary btn-lg"
@@ -1297,7 +1297,7 @@ defmodule PhoenixKitSync.Web.Receiver do
             <.icon name="hero-table-cells" class="w-5 h-5 inline" /> Select Table
           </h3>
 
-          <form phx-change="select_detail_table" class="form-control">
+          <form phx-change="select_detail_table" class="fieldset">
             <label class="select w-full">
               <select name="table">
                 <option value="">Choose a table...</option>
@@ -1432,7 +1432,7 @@ defmodule PhoenixKitSync.Web.Receiver do
                 <.icon name="hero-funnel" class="w-5 h-5 inline" /> Filter Records
               </h3>
 
-              <div class="form-control mb-4">
+              <div class="fieldset mb-4">
                 <div class="flex flex-wrap gap-4">
                   <label class="label cursor-pointer gap-2">
                     <input
@@ -1444,7 +1444,7 @@ defmodule PhoenixKitSync.Web.Receiver do
                       phx-click="update_detail_filter"
                       phx-value-mode="all"
                     />
-                    <span class="label-text">All Records</span>
+                    <span class="fieldset-legend">All Records</span>
                   </label>
                   <label class="label cursor-pointer gap-2">
                     <input
@@ -1456,7 +1456,7 @@ defmodule PhoenixKitSync.Web.Receiver do
                       phx-click="update_detail_filter"
                       phx-value-mode="ids"
                     />
-                    <span class="label-text">Specific IDs</span>
+                    <span class="fieldset-legend">Specific IDs</span>
                   </label>
                   <label class="label cursor-pointer gap-2">
                     <input
@@ -1468,39 +1468,39 @@ defmodule PhoenixKitSync.Web.Receiver do
                       phx-click="update_detail_filter"
                       phx-value-mode="range"
                     />
-                    <span class="label-text">ID Range</span>
+                    <span class="fieldset-legend">ID Range</span>
                   </label>
                 </div>
               </div>
 
               <%= case @detail_filter.mode do %>
                 <% :ids -> %>
-                  <div class="form-control">
+                  <div class="fieldset">
                     <label class="label">
-                      <span class="label-text">Enter IDs (comma-separated)</span>
+                      <span class="fieldset-legend">Enter IDs (comma-separated)</span>
                     </label>
                     <textarea
-                      class="textarea textarea-bordered h-24 font-mono"
+                      class="textarea h-24 font-mono"
                       placeholder="1, 2, 3, 10, 25..."
                       name="ids"
                       phx-change="update_detail_filter"
                       phx-debounce="300"
                     >{@detail_filter.ids}</textarea>
                     <label class="label">
-                      <span class="label-text-alt text-base-content/50">
+                      <span class="fieldset-label text-base-content/50">
                         Enter the IDs you want to transfer, separated by commas or newlines
                       </span>
                     </label>
                   </div>
                 <% :range -> %>
                   <div class="flex gap-4">
-                    <div class="form-control flex-1">
+                    <div class="fieldset flex-1">
                       <label class="label">
-                        <span class="label-text">Start ID</span>
+                        <span class="fieldset-legend">Start ID</span>
                       </label>
                       <input
                         type="number"
-                        class="input input-bordered font-mono"
+                        class="input font-mono"
                         placeholder="1"
                         name="range_start"
                         value={@detail_filter.range_start}
@@ -1508,13 +1508,13 @@ defmodule PhoenixKitSync.Web.Receiver do
                         phx-debounce="300"
                       />
                     </div>
-                    <div class="form-control flex-1">
+                    <div class="fieldset flex-1">
                       <label class="label">
-                        <span class="label-text">End ID</span>
+                        <span class="fieldset-legend">End ID</span>
                       </label>
                       <input
                         type="number"
-                        class="input input-bordered font-mono"
+                        class="input font-mono"
                         placeholder="100"
                         name="range_end"
                         value={@detail_filter.range_end}
@@ -1598,9 +1598,9 @@ defmodule PhoenixKitSync.Web.Receiver do
               </h3>
 
               <%!-- Conflict Strategy --%>
-              <div class="form-control mb-4">
+              <div class="fieldset mb-4">
                 <label class="label">
-                  <span class="label-text font-semibold">Conflict Resolution</span>
+                  <span class="fieldset-legend font-semibold">Conflict Resolution</span>
                 </label>
                 <div class="flex flex-wrap gap-4">
                   <label class="label cursor-pointer gap-2">
@@ -1613,7 +1613,7 @@ defmodule PhoenixKitSync.Web.Receiver do
                       phx-click="set_conflict_strategy"
                       phx-value-strategy="skip"
                     />
-                    <span class="label-text">Skip existing</span>
+                    <span class="fieldset-legend">Skip existing</span>
                   </label>
                   <label class="label cursor-pointer gap-2">
                     <input
@@ -1625,7 +1625,7 @@ defmodule PhoenixKitSync.Web.Receiver do
                       phx-click="set_conflict_strategy"
                       phx-value-strategy="overwrite"
                     />
-                    <span class="label-text">Overwrite</span>
+                    <span class="fieldset-legend">Overwrite</span>
                   </label>
                   <label class="label cursor-pointer gap-2">
                     <input
@@ -1637,7 +1637,7 @@ defmodule PhoenixKitSync.Web.Receiver do
                       phx-click="set_conflict_strategy"
                       phx-value-strategy="merge"
                     />
-                    <span class="label-text">Merge</span>
+                    <span class="fieldset-legend">Merge</span>
                   </label>
                   <label class="label cursor-pointer gap-2">
                     <input
@@ -1649,7 +1649,7 @@ defmodule PhoenixKitSync.Web.Receiver do
                       phx-click="set_conflict_strategy"
                       phx-value-strategy="append"
                     />
-                    <span class="label-text">Append (new IDs)</span>
+                    <span class="fieldset-legend">Append (new IDs)</span>
                   </label>
                 </div>
               </div>
@@ -1688,9 +1688,9 @@ defmodule PhoenixKitSync.Web.Receiver do
         </h3>
 
         <%!-- Conflict Resolution --%>
-        <div class="form-control mb-6">
+        <div class="fieldset mb-6">
           <label class="label">
-            <span class="label-text font-semibold">Conflict Resolution</span>
+            <span class="fieldset-legend font-semibold">Conflict Resolution</span>
           </label>
           <p class="text-sm text-base-content/70 mb-2">
             How to handle records that already exist (matching primary key)?
@@ -1706,7 +1706,7 @@ defmodule PhoenixKitSync.Web.Receiver do
                 phx-click="set_conflict_strategy"
                 phx-value-strategy="skip"
               />
-              <span class="label-text">
+              <span class="fieldset-legend">
                 <strong>Skip</strong> - Keep existing records
               </span>
             </label>
@@ -1720,7 +1720,7 @@ defmodule PhoenixKitSync.Web.Receiver do
                 phx-click="set_conflict_strategy"
                 phx-value-strategy="overwrite"
               />
-              <span class="label-text">
+              <span class="fieldset-legend">
                 <strong>Overwrite</strong> - Replace with new data
               </span>
             </label>
@@ -1734,7 +1734,7 @@ defmodule PhoenixKitSync.Web.Receiver do
                 phx-click="set_conflict_strategy"
                 phx-value-strategy="merge"
               />
-              <span class="label-text">
+              <span class="fieldset-legend">
                 <strong>Merge</strong> - Update only non-null fields
               </span>
             </label>
@@ -1748,7 +1748,7 @@ defmodule PhoenixKitSync.Web.Receiver do
                 phx-click="set_conflict_strategy"
                 phx-value-strategy="append"
               />
-              <span class="label-text">
+              <span class="fieldset-legend">
                 <strong>Append</strong> - Insert as new records with new IDs
               </span>
             </label>

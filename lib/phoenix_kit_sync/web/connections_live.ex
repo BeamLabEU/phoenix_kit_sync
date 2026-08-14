@@ -2002,7 +2002,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         </div>
 
         <%!-- Tab Navigation --%>
-        <div role="tablist" class="tabs tabs-bordered mb-4">
+        <div role="tablist" class="tabs tabs-border mb-4">
           <button
             type="button"
             role="tab"
@@ -2197,9 +2197,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
                     <form
                       phx-change="change_conflict_strategy"
-                      class="form-control flex-row items-center gap-2"
+                      class="fieldset flex-row items-center gap-2"
                     >
-                      <span class="label-text font-semibold text-sm">Conflict:</span>
+                      <span class="fieldset-legend font-semibold text-sm">Conflict:</span>
                       <label class="select select-sm">
                         <select name="strategy">
                           <option value="skip" selected={@conflict_strategy == "skip"}>Skip</option>
@@ -2469,9 +2469,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               </div>
             <% else %>
               <div class="space-y-4">
-                <form phx-change="select_detail_table" class="form-control">
+                <form phx-change="select_detail_table" class="fieldset">
                   <label class="label">
-                    <span class="label-text font-semibold">Select Table</span>
+                    <span class="fieldset-legend font-semibold">Select Table</span>
                   </label>
                   <label class="select w-full max-w-md">
                     <select name="table">
@@ -2589,7 +2589,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
                     <form phx-change="update_detail_filter" class="space-y-3">
                       <label class="label">
-                        <span class="label-text font-semibold">Filter Records</span>
+                        <span class="fieldset-legend font-semibold">Filter Records</span>
                       </label>
                       <div class="flex flex-wrap gap-4">
                         <label class="flex items-center gap-2 cursor-pointer">
@@ -2628,7 +2628,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                           type="text"
                           name="ids"
                           value={@detail_filter.ids}
-                          class="input input-bordered w-full"
+                          class="input w-full"
                           placeholder="Enter IDs (e.g., 1,2,3)"
                         />
                       <% end %>
@@ -2638,7 +2638,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                             type="number"
                             name="range_start"
                             value={@detail_filter.range_start}
-                            class="input input-bordered w-32"
+                            class="input w-32"
                             placeholder={gettext("From")}
                           />
                           <span>to</span>
@@ -2646,7 +2646,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                             type="number"
                             name="range_end"
                             value={@detail_filter.range_end}
-                            class="input input-bordered w-32"
+                            class="input w-32"
                             placeholder={gettext("To")}
                           />
                         </div>
@@ -2713,9 +2713,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                       </div>
                     <% end %>
 
-                    <form phx-change="change_conflict_strategy" class="form-control">
+                    <form phx-change="change_conflict_strategy" class="fieldset">
                       <label class="label">
-                        <span class="label-text font-semibold">Conflict Strategy</span>
+                        <span class="fieldset-legend font-semibold">Conflict Strategy</span>
                       </label>
                       <label class="select w-full max-w-xs">
                         <select name="strategy">
