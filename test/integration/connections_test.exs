@@ -89,7 +89,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
 
     test "filters by status" do
       conn = create_connection(%{"site_url" => "https://status-test.com"})
-      Connections.approve_connection(conn, UUIDv7.generate())
+      Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
 
       active = Connections.list_connections(status: "active")
       assert Enum.all?(active, &(&1.status == "active"))
@@ -105,7 +105,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
       conn = create_connection()
       assert conn.status == "pending"
 
-      admin_uuid = UUIDv7.generate()
+      admin_uuid = PhoenixKitSync.TestActor.uuid()
       assert {:ok, approved} = Connections.approve_connection(conn, admin_uuid)
       assert approved.status == "active"
       assert approved.approved_at != nil
@@ -116,10 +116,14 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
   describe "suspend_connection/3" do
     test "transitions active to suspended" do
       conn = create_connection()
-      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
 
       assert {:ok, suspended} =
-               Connections.suspend_connection(active, UUIDv7.generate(), "Security review")
+               Connections.suspend_connection(
+                 active,
+                 PhoenixKitSync.TestActor.uuid(),
+                 "Security review"
+               )
 
       assert suspended.status == "suspended"
       assert suspended.suspended_reason == "Security review"
@@ -129,8 +133,10 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
   describe "reactivate_connection/1" do
     test "transitions suspended back to active" do
       conn = create_connection()
-      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
-      {:ok, suspended} = Connections.suspend_connection(active, UUIDv7.generate(), "temp")
+      {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
+
+      {:ok, suspended} =
+        Connections.suspend_connection(active, PhoenixKitSync.TestActor.uuid(), "temp")
 
       assert {:ok, reactivated} = Connections.reactivate_connection(suspended)
       assert reactivated.status == "active"
@@ -142,10 +148,14 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
   describe "revoke_connection/3" do
     test "transitions to revoked" do
       conn = create_connection()
-      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
 
       assert {:ok, revoked} =
-               Connections.revoke_connection(active, UUIDv7.generate(), "Decommissioned")
+               Connections.revoke_connection(
+                 active,
+                 PhoenixKitSync.TestActor.uuid(),
+                 "Decommissioned"
+               )
 
       assert revoked.status == "revoked"
       assert revoked.revoked_reason == "Decommissioned"
@@ -165,7 +175,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
         })
 
       {:ok, conn, token} = Connections.create_connection(merged)
-      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
 
       assert {:ok, validated} = Connections.validate_connection(token, "127.0.0.1")
       assert validated.uuid == active.uuid
@@ -190,7 +200,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
           Map.merge(@valid_attrs, %{"site_url" => "https://expired.com", "expires_at" => past})
         )
 
-      {:ok, _active} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, _active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
       assert {:error, :connection_expired} = Connections.validate_connection(token)
     end
   end
@@ -249,7 +259,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
         })
 
       {:ok, conn, token} = Connections.create_connection(merged)
-      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
 
       # Set downloads_used to exceed max_downloads
       {:ok, _exhausted} =
@@ -266,7 +276,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
         })
 
       {:ok, conn, token} = Connections.create_connection(merged)
-      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
 
       # Set records_downloaded to exceed max_records_total
       {:ok, _exhausted} =
@@ -301,7 +311,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
 
     test "returns count matching status filter" do
       conn = create_connection(%{"site_url" => "https://cstatus.com"})
-      Connections.approve_connection(conn, UUIDv7.generate())
+      Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
 
       active_count = Connections.count_connections(status: "active")
       assert active_count >= 1
@@ -432,7 +442,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
 
       assert_receive {:connection_created, _}
 
-      {:ok, _} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, _} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
       assert_receive {:connection_status_changed, uuid, "active"}
       assert uuid == conn.uuid
     end
@@ -444,10 +454,10 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
         })
 
       assert_receive {:connection_created, _}
-      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
       assert_receive {:connection_status_changed, _, "active"}
 
-      {:ok, _} = Connections.suspend_connection(active, UUIDv7.generate(), "test")
+      {:ok, _} = Connections.suspend_connection(active, PhoenixKitSync.TestActor.uuid(), "test")
       assert_receive {:connection_status_changed, uuid, "suspended"}
       assert uuid == conn.uuid
     end
@@ -459,10 +469,10 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
         })
 
       assert_receive {:connection_created, _}
-      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
       assert_receive {:connection_status_changed, _, "active"}
 
-      {:ok, _} = Connections.revoke_connection(active, UUIDv7.generate(), "test")
+      {:ok, _} = Connections.revoke_connection(active, PhoenixKitSync.TestActor.uuid(), "test")
       assert_receive {:connection_status_changed, uuid, "revoked"}
       assert uuid == conn.uuid
     end
@@ -474,9 +484,9 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
         })
 
       assert_receive {:connection_created, _}
-      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
       assert_receive {:connection_status_changed, _, "active"}
-      {:ok, suspended} = Connections.suspend_connection(active, UUIDv7.generate())
+      {:ok, suspended} = Connections.suspend_connection(active, PhoenixKitSync.TestActor.uuid())
       assert_receive {:connection_status_changed, _, "suspended"}
 
       {:ok, _} = Connections.reactivate_connection(suspended)
@@ -577,7 +587,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
           "site_url" => "https://act-approve-#{System.unique_integer([:positive])}.com"
         })
 
-      admin_uuid = UUIDv7.generate()
+      admin_uuid = PhoenixKitSync.TestActor.uuid()
       {:ok, _} = Connections.approve_connection(conn, admin_uuid)
 
       assert_activity_logged("sync.connection.approved",
@@ -592,7 +602,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
           "site_url" => "https://act-suspend-#{System.unique_integer([:positive])}.com"
         })
 
-      admin_uuid = UUIDv7.generate()
+      admin_uuid = PhoenixKitSync.TestActor.uuid()
       {:ok, _} = Connections.suspend_connection(conn, admin_uuid, "Security audit")
 
       assert_activity_logged("sync.connection.suspended",
@@ -608,7 +618,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
           "site_url" => "https://act-revoke-#{System.unique_integer([:positive])}.com"
         })
 
-      admin_uuid = UUIDv7.generate()
+      admin_uuid = PhoenixKitSync.TestActor.uuid()
       {:ok, _} = Connections.revoke_connection(conn, admin_uuid, "Compromised")
 
       assert_activity_logged("sync.connection.revoked",
@@ -624,7 +634,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
           "site_url" => "https://act-reactivate-#{System.unique_integer([:positive])}.com"
         })
 
-      admin_uuid = UUIDv7.generate()
+      admin_uuid = PhoenixKitSync.TestActor.uuid()
       {:ok, suspended} = Connections.suspend_connection(conn, admin_uuid)
       {:ok, _} = Connections.reactivate_connection(suspended, actor_uuid: admin_uuid)
 
@@ -640,7 +650,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
           "site_url" => "https://act-delete-#{System.unique_integer([:positive])}.com"
         })
 
-      admin_uuid = UUIDv7.generate()
+      admin_uuid = PhoenixKitSync.TestActor.uuid()
       {:ok, _} = Connections.delete_connection(conn, actor_uuid: admin_uuid)
 
       assert_activity_logged("sync.connection.deleted",
@@ -655,7 +665,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
           "site_url" => "https://act-regen-#{System.unique_integer([:positive])}.com"
         })
 
-      admin_uuid = UUIDv7.generate()
+      admin_uuid = PhoenixKitSync.TestActor.uuid()
       {:ok, _, _new_token} = Connections.regenerate_token(conn, actor_uuid: admin_uuid)
 
       assert_activity_logged("sync.connection.token_regenerated",

@@ -145,7 +145,7 @@ defmodule PhoenixKitSync.Integration.FullSyncFlowTest do
           "approval_mode" => "auto_approve"
         })
 
-      {:ok, active_conn} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active_conn} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
 
       # Create a transfer record
       {:ok, transfer} =
@@ -239,7 +239,7 @@ defmodule PhoenixKitSync.Integration.FullSyncFlowTest do
           "site_url" => "https://fail-test-#{System.unique_integer([:positive])}.com"
         })
 
-      {:ok, active_conn} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active_conn} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
 
       # Test fail workflow
       {:ok, transfer} =
@@ -279,7 +279,7 @@ defmodule PhoenixKitSync.Integration.FullSyncFlowTest do
           "site_url" => "https://approval-test-#{System.unique_integer([:positive])}.com"
         })
 
-      {:ok, active_conn} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active_conn} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
 
       {:ok, transfer} =
         Transfers.create_transfer(%{
@@ -296,7 +296,7 @@ defmodule PhoenixKitSync.Integration.FullSyncFlowTest do
       assert pending.approval_expires_at != nil
 
       # Approve it
-      admin_uuid = UUIDv7.generate()
+      admin_uuid = PhoenixKitSync.TestActor.uuid()
       {:ok, approved} = Transfers.approve_transfer(pending, admin_uuid)
       assert approved.status == "approved"
       assert approved.approved_at != nil

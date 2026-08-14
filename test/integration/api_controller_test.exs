@@ -129,7 +129,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerTest do
 
       assert conn.status == "pending"
 
-      {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
       assert active.status == "active"
       assert active.approved_at != nil
     end

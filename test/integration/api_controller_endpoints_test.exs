@@ -29,7 +29,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
     }
 
     {:ok, conn, token} = Connections.create_connection(Map.merge(defaults, attrs))
-    {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+    {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
     {active, token}
   end
 
@@ -163,7 +163,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
 
     test "inactive connection returns 403", %{conn: conn} do
       {connection, token} = create_active_sender()
-      Connections.suspend_connection(connection, UUIDv7.generate())
+      Connections.suspend_connection(connection, PhoenixKitSync.TestActor.uuid())
 
       conn =
         post(conn, "/sync/api/list-tables", %{

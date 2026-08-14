@@ -107,7 +107,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLiveTest do
     # connections_test.exs catches it via the same assertion.
     test "reactivate threads actor_uuid into the activity log" do
       connection = create_connection(%{"name" => "Reactivatable"})
-      admin_uuid = UUIDv7.generate()
+      admin_uuid = PhoenixKitSync.TestActor.uuid()
 
       {:ok, suspended} = Connections.suspend_connection(connection, admin_uuid)
       {:ok, _} = Connections.reactivate_connection(suspended, actor_uuid: admin_uuid)
@@ -126,7 +126,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLiveTest do
     # where the LV drops the actor_uuid opt.
     test "regenerate_token threads actor_uuid into the activity log" do
       connection = create_connection(%{"name" => "Token Rotator"})
-      admin_uuid = UUIDv7.generate()
+      admin_uuid = PhoenixKitSync.TestActor.uuid()
 
       {:ok, _, _new_token} = Connections.regenerate_token(connection, actor_uuid: admin_uuid)
 

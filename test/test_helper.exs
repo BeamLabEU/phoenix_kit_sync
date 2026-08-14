@@ -85,6 +85,13 @@ Application.put_env(:phoenix_kit_sync, :test_repo_available, repo_available)
 {:ok, _pid} = PhoenixKit.PubSub.Manager.start_link([])
 {:ok, _pid} = PhoenixKit.ModuleRegistry.start_link([])
 
+# Anything that creates a user goes through `PhoenixKit.Users.Auth.register_user/2`,
+# which calls the Hammer-backed rate limiter. Without this its ETS table is
+# absent and the call dies in `:ets.update_counter/4`. Connections carry real
+# FKs to `phoenix_kit_users`, so tests that approve/suspend a connection need
+# a genuine user (see `PhoenixKitSync.TestActor`).
+{:ok, _pid} = PhoenixKit.Users.RateLimiter.Backend.start_link([])
+
 # Start PhoenixKit.TaskSupervisor so PhoenixKitSync.AsyncTasks can route
 # fire-and-forget tasks through the named supervisor as it does in
 # production. Without this, the helper's `:exit` fallback fires and tests

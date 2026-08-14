@@ -15,7 +15,7 @@ defmodule PhoenixKitSync.Integration.TransfersTest do
         "approval_mode" => "auto_approve"
       })
 
-    {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+    {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
     active
   end
 
@@ -246,7 +246,7 @@ defmodule PhoenixKitSync.Integration.TransfersTest do
 
     test "approve_transfer logs sync.transfer.approved with actor_uuid" do
       conn = create_connection()
-      admin_uuid = UUIDv7.generate()
+      admin_uuid = PhoenixKitSync.TestActor.uuid()
 
       {:ok, transfer} =
         Transfers.create_transfer(%{

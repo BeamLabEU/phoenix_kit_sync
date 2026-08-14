@@ -92,7 +92,7 @@ defmodule PhoenixKitSync.Integration.SyncWebsockTest do
       refute Connection.active?(conn)
 
       # Approve it
-      {:ok, active_conn} = Connections.approve_connection(conn, UUIDv7.generate())
+      {:ok, active_conn} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
       assert Connection.active?(active_conn)
     end
 

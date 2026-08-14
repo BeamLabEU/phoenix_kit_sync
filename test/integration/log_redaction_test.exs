@@ -26,7 +26,7 @@ defmodule PhoenixKitSync.Integration.LogRedactionTest do
         "approval_mode" => "auto_approve"
       })
 
-    {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+    {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
     {active, token}
   end
 

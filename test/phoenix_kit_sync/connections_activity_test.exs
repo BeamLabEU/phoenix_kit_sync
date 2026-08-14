@@ -25,7 +25,7 @@ defmodule PhoenixKitSync.ConnectionsActivityTest do
   describe "update_connection/3 — :ok branch logs" do
     test "writes a sync.connection.updated row with changed_fields metadata" do
       connection = create_active_sender_connection()
-      actor_uuid = UUIDv7.generate()
+      actor_uuid = PhoenixKitSync.TestActor.uuid()
 
       {:ok, _updated} =
         Connections.update_connection(
@@ -64,7 +64,7 @@ defmodule PhoenixKitSync.ConnectionsActivityTest do
   describe "update_connection/3 — :error branch logs" do
     test "writes a sync.connection.updated row with db_pending: true on validation failure" do
       connection = create_active_sender_connection()
-      actor_uuid = UUIDv7.generate()
+      actor_uuid = PhoenixKitSync.TestActor.uuid()
 
       # `validate_number(:max_records_per_request, greater_than: 0)` rejects
       # this — the changeset returns `{:error, %Ecto.Changeset{}}` and the
@@ -93,7 +93,7 @@ defmodule PhoenixKitSync.ConnectionsActivityTest do
   describe "update_connection/3 — empty-change branch (F3)" do
     test "no-op update writes no activity row" do
       connection = create_active_sender_connection()
-      actor_uuid = UUIDv7.generate()
+      actor_uuid = PhoenixKitSync.TestActor.uuid()
 
       before_count = activity_count_for(connection.uuid, "sync.connection.updated")
 
@@ -203,7 +203,7 @@ defmodule PhoenixKitSync.ConnectionsActivityTest do
         "approval_mode" => "auto_approve"
       })
 
-    {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+    {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
     active
   end
 

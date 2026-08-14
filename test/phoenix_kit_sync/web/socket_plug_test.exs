@@ -27,7 +27,7 @@ defmodule PhoenixKitSync.Web.SocketPlugTest do
     }
 
     {:ok, conn, token} = Connections.create_connection(Map.merge(defaults, attrs))
-    {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+    {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
     {active, token}
   end
 
@@ -122,7 +122,7 @@ defmodule PhoenixKitSync.Web.SocketPlugTest do
 
     test "rejects token for suspended connection with 403" do
       {connection, token} = create_active_sender()
-      Connections.suspend_connection(connection, UUIDv7.generate())
+      Connections.suspend_connection(connection, PhoenixKitSync.TestActor.uuid())
 
       result =
         upgrade_request("token=#{token}")

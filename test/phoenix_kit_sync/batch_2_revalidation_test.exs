@@ -337,13 +337,16 @@ defmodule PhoenixKitSync.Batch2RevalidationTest do
         "approval_mode" => "auto_approve"
       })
 
-    {:ok, active} = Connections.approve_connection(conn, UUIDv7.generate())
+    {:ok, active} = Connections.approve_connection(conn, PhoenixKitSync.TestActor.uuid())
     active
   end
 
   defp create_suspended_sender_connection do
     active = create_active_sender_connection()
-    {:ok, suspended} = Connections.suspend_connection(active, UUIDv7.generate(), "test")
+
+    {:ok, suspended} =
+      Connections.suspend_connection(active, PhoenixKitSync.TestActor.uuid(), "test")
+
     suspended
   end
 end
