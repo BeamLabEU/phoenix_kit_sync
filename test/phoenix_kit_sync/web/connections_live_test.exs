@@ -261,7 +261,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLiveTest do
   describe "revoke reason is gettext-wrapped (F4)" do
     test "revoke_connection persists a gettext-wrapped default reason", %{conn: conn} do
       receiver = create_connection(%{"direction" => "receiver", "status" => "active"})
-      admin_scope = fake_scope()
+      admin_scope = fake_scope(user_uuid: PhoenixKitSync.TestActor.uuid())
 
       # The revoke button lives in the connection detail view, not the
       # list view. Mount directly into the detail view via the URL the
@@ -289,7 +289,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLiveTest do
   describe "approve pending connection" do
     test "approve button triggers approve_connection and logs activity", %{conn: conn} do
       connection = create_connection(%{"name" => "Pending Approval", "status" => "pending"})
-      admin_scope = fake_scope()
+      admin_scope = fake_scope(user_uuid: PhoenixKitSync.TestActor.uuid())
 
       conn = put_test_scope(conn, admin_scope)
       {:ok, view, _html} = live(conn, "/en/admin/sync/connections")

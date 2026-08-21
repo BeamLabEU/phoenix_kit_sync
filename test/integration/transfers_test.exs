@@ -118,7 +118,9 @@ defmodule PhoenixKitSync.Integration.TransfersTest do
       assert pending.status == "pending_approval"
       assert pending.requires_approval == true
 
-      assert {:ok, approved} = Transfers.approve_transfer(pending, UUIDv7.generate())
+      assert {:ok, approved} =
+               Transfers.approve_transfer(pending, PhoenixKitSync.TestActor.uuid())
+
       assert approved.status == "approved"
 
       assert {:ok, started} = Transfers.start_transfer(approved)
@@ -132,7 +134,13 @@ defmodule PhoenixKitSync.Integration.TransfersTest do
       {_conn, transfer} = create_transfer()
       {:ok, pending} = Transfers.request_approval(transfer)
 
-      assert {:ok, denied} = Transfers.deny_transfer(pending, UUIDv7.generate(), "Not authorized")
+      assert {:ok, denied} =
+               Transfers.deny_transfer(
+                 pending,
+                 PhoenixKitSync.TestActor.uuid(),
+                 "Not authorized"
+               )
+
       assert denied.status == "denied"
       assert denied.denial_reason == "Not authorized"
     end

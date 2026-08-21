@@ -1,3 +1,21 @@
+## 0.2.2 - 2026-08-21
+
+### Changed
+
+- **The receiver's Bulk Transfer / Table Details strip uses core's
+  `<.nav_tabs>`**, replacing a hand-rolled copy that still carried
+  daisyUI 4's `tabs-boxed` (#14).
+
+### Fixed
+
+- **`version/0`'s test asserted `"0.1.0"`** while the package has been
+  at 0.2.x since the core 2.0 pin. It now tracks the published version
+  (post-merge).
+- **Four tests passed a random UUID as an approve/deny/revoke actor**,
+  which raises on the real `phoenix_kit_users` FKs. They now use
+  `PhoenixKitSync.TestActor` like the rest of the suite (post-merge,
+  surfaced by core 2.13.5).
+
 ## 0.2.1 - 2026-08-11
 
 ### Changed

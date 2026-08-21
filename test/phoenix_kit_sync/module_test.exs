@@ -114,7 +114,7 @@ defmodule PhoenixKitSync.ModuleTest do
 
   describe "version/0" do
     test "returns version string" do
-      assert PhoenixKitSync.version() == "0.1.0"
+      assert PhoenixKitSync.version() == "0.2.2"
     end
   end
 
