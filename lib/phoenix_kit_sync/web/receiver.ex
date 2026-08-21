@@ -1083,7 +1083,7 @@ defmodule PhoenixKitSync.Web.Receiver do
         <.render_transfer_progress {assigns} />
       <% else %>
         <%!-- Tab Navigation --%>
-        <div role="tablist" class="tabs tabs-boxed bg-base-200 p-1">
+        <div role="tablist" class="tabs tabs-box bg-base-200 p-1">
           <button
             role="tab"
             class={["tab", @active_tab == :global && "tab-active"]}
