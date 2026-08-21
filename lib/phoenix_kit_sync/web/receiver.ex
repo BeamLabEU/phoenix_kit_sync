@@ -1082,25 +1082,19 @@ defmodule PhoenixKitSync.Web.Receiver do
       <%= if @transferring do %>
         <.render_transfer_progress {assigns} />
       <% else %>
-        <%!-- Tab Navigation --%>
-        <div role="tablist" class="tabs tabs-boxed bg-base-200 p-1">
-          <button
-            role="tab"
-            class={["tab", @active_tab == :global && "tab-active"]}
-            phx-click="switch_tab"
-            phx-value-tab="global"
-          >
-            <.icon name="hero-globe-alt" class="w-4 h-4 mr-1" /> Bulk Transfer
-          </button>
-          <button
-            role="tab"
-            class={["tab", @active_tab == :table_details && "tab-active"]}
-            phx-click="switch_tab"
-            phx-value-tab="table_details"
-          >
-            <.icon name="hero-table-cells" class="w-4 h-4 mr-1" /> Table Details
-          </button>
-        </div>
+        <%!-- Tab Navigation. This was a hand-rolled copy of core's
+             <.nav_tabs> down to the container classes and the phx-value-tab
+             payload — which is how a daisyUI class rename came to need an
+             edit here at all. `to_string/1` because the assign is an atom
+             and the component compares against string ids. --%>
+        <.nav_tabs
+          active_tab={to_string(@active_tab)}
+          on_change="switch_tab"
+          tabs={[
+            %{id: "global", label: "Bulk Transfer", icon: "hero-globe-alt"},
+            %{id: "table_details", label: "Table Details", icon: "hero-table-cells"}
+          ]}
+        />
 
         <%= if @active_tab == :global do %>
           <%!-- Global Tab: Bulk Table Browser --%>
