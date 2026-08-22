@@ -2001,27 +2001,18 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           </button>
         </div>
 
-        <%!-- Tab Navigation --%>
-        <div role="tablist" class="tabs tabs-border mb-4">
-          <button
-            type="button"
-            role="tab"
-            class={"tab #{if @active_tab == :bulk, do: "tab-active"}"}
-            phx-click="switch_sync_tab"
-            phx-value-tab="bulk"
-          >
-            <.icon name="hero-table-cells" class="w-4 h-4 mr-2" /> Bulk Transfer
-          </button>
-          <button
-            type="button"
-            role="tab"
-            class={"tab #{if @active_tab == :details, do: "tab-active"}"}
-            phx-click="switch_sync_tab"
-            phx-value-tab="details"
-          >
-            <.icon name="hero-adjustments-horizontal" class="w-4 h-4 mr-2" /> Precise Transfer
-          </button>
-        </div>
+        <%!-- Tab Navigation: core's <.nav_tabs>. `to_string/1` because the
+             assign is an atom and the component compares string ids. --%>
+        <.nav_tabs
+          variant={:border}
+          class="mb-4"
+          active_tab={to_string(@active_tab)}
+          on_change="switch_sync_tab"
+          tabs={[
+            %{id: "bulk", label: "Bulk Transfer", icon: "hero-table-cells"},
+            %{id: "details", label: "Precise Transfer", icon: "hero-adjustments-horizontal"}
+          ]}
+        />
 
         <%!-- Error State --%>
         <%= if @error do %>
