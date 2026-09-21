@@ -105,34 +105,22 @@ defmodule PhoenixKitSync.Transfers do
   end
 
   # Best-effort audit trail for Transfers. Same pattern as
-  # Connections.log_sync_activity/4: guarded with Code.ensure_loaded? +
-  # rescued so a missing phoenix_kit_activities table never crashes the
-  # operation. Metadata is deliberately limited to table_name, direction,
+  # Connections.log_sync_activity/4: core's log never raises, so a missing
+  # phoenix_kit_activities table never crashes the operation. Metadata is deliberately limited to table_name, direction,
   # status, records_requested/transferred (numbers + strings, never PII).
   defp tap_activity({:ok, %Transfer{} = transfer} = result, action, opts) do
-    if Code.ensure_loaded?(PhoenixKit.Activity) do
-      try do
-        metadata = %{
-          "table_name" => transfer.table_name,
-          "direction" => transfer.direction,
-          "status" => transfer.status,
-          "records_requested" => transfer.records_requested,
-          "records_transferred" => transfer.records_transferred
-        }
-
-        PhoenixKit.Activity.log(%{
-          action: "sync.transfer.#{action}",
-          module: "sync",
-          mode: "manual",
-          actor_uuid: Keyword.get(opts, :actor_uuid),
-          resource_type: "sync_transfer",
-          resource_uuid: transfer.uuid,
-          metadata: metadata
-        })
-      rescue
-        _ -> :ok
-      end
-    end
+    PhoenixKit.Activity.log("sync", "sync.transfer.#{action}",
+      actor_uuid: Keyword.get(opts, :actor_uuid),
+      resource_type: "sync_transfer",
+      resource_uuid: transfer.uuid,
+      metadata: %{
+        "table_name" => transfer.table_name,
+        "direction" => transfer.direction,
+        "status" => transfer.status,
+        "records_requested" => transfer.records_requested,
+        "records_transferred" => transfer.records_transferred
+      }
+    )
 
     result
   end

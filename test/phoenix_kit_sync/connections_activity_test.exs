@@ -138,13 +138,22 @@ defmodule PhoenixKitSync.ConnectionsActivityTest do
   # in tests would require dropping the activities table (sandbox-unsafe)
   # or mocking; since the codebase doesn't use mocks, we pin the source
   # shape to ensure future edits don't regress it back to silent.
-  describe "log_sync_activity/4 — rescue branch logs (F2)" do
-    test "rescue clause calls Logger.warning with action + connection_uuid + error" do
-      source = File.read!("lib/phoenix_kit_sync/connections.ex")
+  describe "log_sync_activity/4 never fails the operation (F2)" do
+    test "a missing activities table is logged, and the update still lands" do
+      connection = create_active_sender_connection()
+      TestRepo.query!("DROP TABLE phoenix_kit_activities CASCADE")
 
-      assert source =~
-               ~r/rescue\s+#[^\n]*\n(?:\s*#[^\n]*\n)*\s+e ->\s+Logger\.warning\([\s\S]+?action=sync\.connection\.#\{action\}[\s\S]+?connection_uuid=#\{connection\.uuid\}[\s\S]+?error=#\{Exception\.message\(e\)\}/,
-             "log_sync_activity rescue must Logger.warning with action, connection_uuid, and error message"
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:ok, _updated} =
+                   Connections.update_connection(
+                     connection,
+                     %{"max_records_per_request" => 5000},
+                     actor_uuid: PhoenixKitSync.TestActor.uuid()
+                   )
+        end)
+
+      assert log =~ "Activity logging error"
     end
   end
 
