@@ -132,12 +132,10 @@ defmodule PhoenixKitSync.ConnectionsActivityTest do
     end
   end
 
-  # F2 follow-up: structural source pin. The rescue branch on the activity
-  # log used to be `_ -> :ok` — silent. A broken `PhoenixKit.Activity.log/1`
-  # in production wiped the audit trail with no breadcrumb. Force-raising
-  # in tests would require dropping the activities table (sandbox-unsafe)
-  # or mocking; since the codebase doesn't use mocks, we pin the source
-  # shape to ensure future edits don't regress it back to silent.
+  # F2: a failed activity write must neither fail the operation nor pass
+  # silently. Core's `PhoenixKit.Activity.log/3` never raises and logs the
+  # failure itself; dropping the table inside the sandbox transaction shows
+  # both halves.
   describe "log_sync_activity/4 never fails the operation (F2)" do
     test "a missing activities table is logged, and the update still lands" do
       connection = create_active_sender_connection()
