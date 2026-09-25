@@ -15,7 +15,7 @@ a WebSocket protocol for cross-site communication, and Oban-backed batch
 import. Implements `PhoenixKit.Module`; it is a library and borrows the host's
 Repo, Endpoint and Settings.
 
-- **Depends on:** `phoenix_kit` `>= 2.13.6 and < 3.0.0` (Hex; the floor is functional, see Landmines). No sibling `phoenix_kit_*` deps. Other runtime deps: `websockex` (WebSocket client towards a remote sender), `websock_adapter` (server-side upgrade), `oban` (import jobs), `jason`.
+- **Depends on:** `phoenix_kit` `>= 2.38.0 and < 3.0.0` (Hex; the floor is functional, see Landmines). No sibling `phoenix_kit_*` deps. Other runtime deps: `websockex` (WebSocket client towards a remote sender), `websock_adapter` (server-side upgrade), `oban` (import jobs), `jason`.
 - **Consumed by:** nothing yet.
 - **Admin surface:** tab `:admin_sync` "Sync" at `sync` (group `:admin_modules`, priority 640, `match: :prefix`) with subtabs Overview `sync` (`Web.Index`), Connections `sync/connections` (`Web.ConnectionsLive`), History `sync/history` (`Web.History`). Public: REST API under `<url_prefix>/sync/api/*` and a WebSocket forward at `<url_prefix>/sync/websocket`, both from `route_module/0`.
 - **Module key** `"sync"`; settings prefix `sync_`; permission key `"sync"`.
@@ -95,7 +95,7 @@ Repo-local aliases:
 - `PhoenixKitSync.Migration.up/1` is built on `Ecto.Migration` macros and raises outside a migrator process; call it from a host migration file or via `Ecto.Migrator.up/4`.
 - `SessionStore` owns one global ETS table: tests start it in `setup_all` and accept `{:error, {:already_started, _}}`; a per-test `start_link` fails.
 - `enabled?/0` and `get_config/0` hit the DB. Without `config :phoenix_kit, repo: ...` every `PhoenixKit.RepoHelper` call dies with "No repository configured"; in unit tests assert on `function_exported?/3` or tag `:integration`.
-- `connections_live.ex` renders the tab strip with `variant={:border}`, which core's `nav_tabs` only accepts from **2.13.6** on. Below that the attribute fails `attr :values` validation and the module does not compile — a failure that reads as an attribute typo, not a version problem. The requirement is `>= 2.13.6 and < 3.0.0` for exactly this reason, and `core_pin_conformance_test.exs` asserts the floor; `mix.lock` is not published to Hex, so the requirement is the only thing that protects a consumer. If a local checkout still fails this way, its lock predates the floor: `mix deps.update phoenix_kit`.
+- `connections_live.ex` renders the tab strip with `variant={:border}`, which core's `nav_tabs` only accepts from **2.13.6** on. Below that the attribute fails `attr :values` validation and the module does not compile — a failure that reads as an attribute typo, not a version problem. The requirement was raised to `>= 2.13.6` for exactly this reason (it is `>= 2.38.0 and < 3.0.0` now, for `PhoenixKitWeb.Actor` and `Activity.log/3`), and `core_pin_conformance_test.exs` asserts the floor; `mix.lock` is not published to Hex, so the requirement is the only thing that protects a consumer. If a local checkout still fails this way, its lock predates the floor: `mix deps.update phoenix_kit`.
 - `sync_channel_test.exs` replies are served by a live Postgres introspection query, so `assert_push`'s default 100 ms deadline loses the race on a loaded machine and reports an empty mailbox as a protocol failure. Those assertions carry an explicit `@reply_timeout`; keep it on any new DB-backed reply.
 
 ## Architecture
