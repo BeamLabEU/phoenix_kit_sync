@@ -39,7 +39,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
     socket =
       socket
-      |> assign(:page_title, "Connections")
+      |> assign(:page_section, gettext("Sync"))
+      |> assign(:page_section_path, Routes.path("/admin/sync", locale: locale))
+      |> assign(:page_title, gettext("Connections"))
       |> assign(:project_title, project_title)
       |> assign(:current_locale, locale)
       |> assign(:current_path, Routes.path("/admin/sync/connections", locale: locale))

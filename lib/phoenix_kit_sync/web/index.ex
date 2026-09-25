@@ -28,7 +28,7 @@ defmodule PhoenixKitSync.Web.Index do
 
     socket =
       socket
-      |> assign(:page_title, "DB Sync")
+      |> assign(:page_title, gettext("Sync"))
       |> assign(:project_title, project_title)
       |> assign(:current_locale, locale)
       |> assign(:current_path, Routes.path("/admin/sync", locale: locale))

@@ -26,7 +26,9 @@ defmodule PhoenixKitSync.Web.History do
 
     socket =
       socket
-      |> assign(:page_title, "Transfer History")
+      |> assign(:page_section, gettext("Sync"))
+      |> assign(:page_section_path, Routes.path("/admin/sync", locale: locale))
+      |> assign(:page_title, gettext("History"))
       |> assign(:project_title, project_title)
       |> assign(:current_locale, locale)
       |> assign(:current_path, Routes.path("/admin/sync/history", locale: locale))
