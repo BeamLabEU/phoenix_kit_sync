@@ -88,32 +88,24 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
     end
   end
 
-  # Best-effort audit row for a successful batch import. Guarded with
-  # Code.ensure_loaded? + rescue so a missing phoenix_kit_activities
-  # table never crashes the worker and re-queues the batch.
+  # Best-effort audit row for a successful batch import. Core's log never
+  # raises, so a missing phoenix_kit_activities table never crashes the
+  # worker and re-queues the batch.
   defp log_batch_completion(table, session_code, batch_index, strategy, result) do
-    if Code.ensure_loaded?(PhoenixKit.Activity) do
-      try do
-        PhoenixKit.Activity.log(%{
-          action: "sync.import.batch_completed",
-          module: "sync",
-          mode: "auto",
-          resource_type: "sync_table",
-          metadata: %{
-            "table_name" => table,
-            "session_code" => session_code,
-            "batch_index" => batch_index,
-            "strategy" => to_string(strategy),
-            "created" => result.created,
-            "updated" => result.updated,
-            "skipped" => result.skipped,
-            "error_count" => length(result.errors)
-          }
-        })
-      rescue
-        _ -> :ok
-      end
-    end
+    PhoenixKit.Activity.log("sync", "sync.import.batch_completed",
+      mode: "auto",
+      resource_type: "sync_table",
+      metadata: %{
+        "table_name" => table,
+        "session_code" => session_code,
+        "batch_index" => batch_index,
+        "strategy" => to_string(strategy),
+        "created" => result.created,
+        "updated" => result.updated,
+        "skipped" => result.skipped,
+        "error_count" => length(result.errors)
+      }
+    )
 
     :ok
   end

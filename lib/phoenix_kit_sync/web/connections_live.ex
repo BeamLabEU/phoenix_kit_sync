@@ -19,6 +19,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   alias PhoenixKitSync.ConnectionNotifier
   alias PhoenixKitSync.Connections
   alias PhoenixKitSync.SchemaInspector
+  alias PhoenixKitWeb.Actor
 
   @impl true
   def mount(params, _session, socket) do
@@ -38,7 +39,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
     socket =
       socket
-      |> assign(:page_title, "Connections")
+      |> assign(:page_section, gettext("Sync"))
+      |> assign(:page_section_path, Routes.path("/admin/sync", locale: locale))
+      |> assign(:page_title, gettext("Connections"))
       |> assign(:project_title, project_title)
       |> assign(:current_locale, locale)
       |> assign(:current_path, Routes.path("/admin/sync/connections", locale: locale))
@@ -275,9 +278,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
   def handle_event("approve_connection", %{"uuid" => uuid}, socket) do
     connection = Connections.get_connection!(uuid)
-    current_user = socket.assigns.phoenix_kit_current_scope.user
+    actor_uuid = Actor.uuid(socket)
 
-    case Connections.approve_connection(connection, current_user.uuid) do
+    case Connections.approve_connection(connection, actor_uuid) do
       {:ok, updated_connection} ->
         # Fire-and-forget: the DB change is committed; the remote site must
         # hear about it even if the admin closes the tab.
@@ -299,9 +302,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
   def handle_event("suspend_connection", %{"uuid" => uuid}, socket) do
     connection = Connections.get_connection!(uuid)
-    current_user = socket.assigns.phoenix_kit_current_scope.user
+    actor_uuid = Actor.uuid(socket)
 
-    case Connections.suspend_connection(connection, current_user.uuid) do
+    case Connections.suspend_connection(connection, actor_uuid) do
       {:ok, updated_connection} ->
         notify_remote_async(fn ->
           ConnectionNotifier.notify_status_change(updated_connection, "suspended")
@@ -321,9 +324,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
   def handle_event("reactivate_connection", %{"uuid" => uuid}, socket) do
     connection = Connections.get_connection!(uuid)
-    current_user = socket.assigns.phoenix_kit_current_scope.user
+    actor_uuid = Actor.uuid(socket)
 
-    case Connections.reactivate_connection(connection, actor_uuid: current_user.uuid) do
+    case Connections.reactivate_connection(connection, actor_uuid: actor_uuid) do
       {:ok, updated_connection} ->
         notify_remote_async(fn ->
           ConnectionNotifier.notify_status_change(updated_connection, "active")
@@ -343,9 +346,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
   def handle_event("revoke_connection", %{"uuid" => uuid}, socket) do
     connection = Connections.get_connection!(uuid)
-    current_user = socket.assigns.phoenix_kit_current_scope.user
+    actor_uuid = Actor.uuid(socket)
 
-    case Connections.revoke_connection(connection, current_user.uuid, gettext("Revoked by admin")) do
+    case Connections.revoke_connection(connection, actor_uuid, gettext("Revoked by admin")) do
       {:ok, updated_connection} ->
         notify_remote_async(fn ->
           ConnectionNotifier.notify_status_change(updated_connection, "revoked")
@@ -365,9 +368,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
   def handle_event("regenerate_token", %{"uuid" => uuid}, socket) do
     connection = Connections.get_connection!(uuid)
-    current_user = socket.assigns.phoenix_kit_current_scope.user
+    actor_uuid = Actor.uuid(socket)
 
-    case Connections.regenerate_token(connection, actor_uuid: current_user.uuid) do
+    case Connections.regenerate_token(connection, actor_uuid: actor_uuid) do
       {:ok, _connection, _new_token} ->
         socket =
           socket
@@ -383,13 +386,13 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
   def handle_event("delete_connection", %{"uuid" => uuid}, socket) do
     connection = Connections.get_connection!(uuid)
-    current_user = socket.assigns.phoenix_kit_current_scope.user
+    actor_uuid = Actor.uuid(socket)
 
     notify_remote_async(fn ->
       ConnectionNotifier.notify_delete(connection)
     end)
 
-    case Connections.delete_connection(connection, actor_uuid: current_user.uuid) do
+    case Connections.delete_connection(connection, actor_uuid: actor_uuid) do
       {:ok, _connection} ->
         message =
           if connection.direction == "receiver",
@@ -1289,8 +1292,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   # ===========================================
 
   defp do_create_connection(socket, params) do
-    current_user = socket.assigns.phoenix_kit_current_scope.user
-    params = Map.put(params, "created_by_uuid", current_user.uuid)
+    actor_uuid = Actor.uuid(socket)
+    params = Map.put(params, "created_by_uuid", actor_uuid)
 
     direction = params["direction"] || params[:direction]
     site_url = params["site_url"] || params[:site_url]
@@ -1301,7 +1304,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         "| direction=#{direction} " <>
         "| name=#{inspect(conn_name)} " <>
         "| site_url=#{site_url} " <>
-        "| created_by=#{current_user.uuid}"
+        "| created_by=#{actor_uuid}"
     )
 
     case Connections.create_connection(params) do
@@ -1339,7 +1342,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   end
 
   defp do_update_connection(socket, params) do
-    actor_uuid = socket.assigns.phoenix_kit_current_scope.user.uuid
+    actor_uuid = Actor.uuid(socket)
 
     case Connections.update_connection(
            socket.assigns.selected_connection,

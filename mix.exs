@@ -90,8 +90,14 @@ defmodule PhoenixKitSync.MixProject do
       # accepting in 2.13.6. Below it the attribute fails `attr :values`
       # validation and the module does not compile. `mix.lock` is not
       # published to Hex, so only this requirement protects a consumer.
-      # Written as a range rather than `~> 2.13.6`, which would exclude 2.14+.
-      pk_dep(:phoenix_kit, ">= 2.13.6 and < 3.0.0"),
+      # Written as a range rather than a three-segment `~>`, which would
+      # exclude the next minor.
+      # 2.38.0 is the floor now: the actor and the activity log come from
+      # `PhoenixKitWeb.Actor` and `PhoenixKit.Activity.log/3`, first shipped
+      # there and no longer feature-detected, so a lower core fails to compile.
+      # Patch-precise floor in the compound form, so the ceiling stays open
+      # through every later 2.x minor (see test/core_pin_conformance_test.exs).
+      pk_dep(:phoenix_kit, ">= 2.38.0 and < 3.0.0"),
       {:phoenix_live_view, "~> 1.1"},
       {:phoenix, "~> 1.8.1"},
       {:ecto_sql, "~> 3.10"},

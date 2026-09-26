@@ -14,6 +14,7 @@ defmodule PhoenixKitSync.Web.History do
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitSync
   alias PhoenixKitSync.Transfers
+  alias PhoenixKitWeb.Actor
 
   @per_page 20
 
@@ -25,7 +26,9 @@ defmodule PhoenixKitSync.Web.History do
 
     socket =
       socket
-      |> assign(:page_title, "Transfer History")
+      |> assign(:page_section, gettext("Sync"))
+      |> assign(:page_section_path, Routes.path("/admin/sync", locale: locale))
+      |> assign(:page_title, gettext("History"))
       |> assign(:project_title, project_title)
       |> assign(:current_locale, locale)
       |> assign(:current_path, Routes.path("/admin/sync/history", locale: locale))
@@ -143,9 +146,9 @@ defmodule PhoenixKitSync.Web.History do
 
   def handle_event("approve_transfer", %{"uuid" => uuid}, socket) do
     transfer = Transfers.get_transfer!(uuid)
-    current_user = socket.assigns.phoenix_kit_current_scope.user
+    actor_uuid = Actor.uuid(socket)
 
-    case Transfers.approve_transfer(transfer, current_user.uuid) do
+    case Transfers.approve_transfer(transfer, actor_uuid) do
       {:ok, _transfer} ->
         socket =
           socket
@@ -167,10 +170,10 @@ defmodule PhoenixKitSync.Web.History do
         socket
       ) do
     transfer = Transfers.get_transfer!(transfer_uuid)
-    current_user = socket.assigns.phoenix_kit_current_scope.user
+    actor_uuid = Actor.uuid(socket)
     reason = if reason == "", do: nil, else: reason
 
-    case Transfers.deny_transfer(transfer, current_user.uuid, reason) do
+    case Transfers.deny_transfer(transfer, actor_uuid, reason) do
       {:ok, _transfer} ->
         socket =
           socket

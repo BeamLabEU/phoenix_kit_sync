@@ -61,49 +61,28 @@ defmodule PhoenixKitSync.Connections do
   # PUBSUB BROADCASTING
   # ===========================================
 
-  # Best-effort audit trail. Calls core PhoenixKit.Activity.log/1 with a
+  # Best-effort audit trail. Calls core PhoenixKit.Activity.log/3 with a
   # standardised action string ("sync.connection.<verb>") and the safe
   # subset of connection fields that aren't PII (name, direction, status
   # — NOT the site_url, which may leak internal hostnames to the audit
-  # log). Guarded so the module keeps working if PhoenixKit.Activity is
-  # stripped or the activities table is missing during tests, and rescued
-  # so a logging failure never crashes the primary operation.
+  # log). Core never raises — a missing activities table or a broken
+  # backend is logged there for operators — so a logging failure never
+  # crashes the primary operation.
   defp log_sync_activity(action, %Connection{} = connection, opts, extra_metadata \\ %{}) do
-    if Code.ensure_loaded?(PhoenixKit.Activity) do
-      try do
-        metadata =
+    PhoenixKit.Activity.log("sync", "sync.connection.#{action}",
+      actor_uuid: Keyword.get(opts, :actor_uuid),
+      resource_type: "sync_connection",
+      resource_uuid: connection.uuid,
+      metadata:
+        Map.merge(
           %{
             "connection_name" => connection.name,
             "direction" => connection.direction,
             "status" => connection.status
-          }
-          |> Map.merge(extra_metadata)
-
-        PhoenixKit.Activity.log(%{
-          action: "sync.connection.#{action}",
-          module: "sync",
-          mode: "manual",
-          actor_uuid: Keyword.get(opts, :actor_uuid),
-          resource_type: "sync_connection",
-          resource_uuid: connection.uuid,
-          metadata: metadata
-        })
-      rescue
-        # Activity table might not exist in a minimal test setup; don't
-        # let an audit-log failure propagate into the caller's result.
-        # Log the failure so a broken activity backend in production is
-        # visible to operators rather than silently dropping audit rows.
-        e ->
-          Logger.warning(
-            "[Sync.Connections] activity log failed " <>
-              "| action=sync.connection.#{action} " <>
-              "| connection_uuid=#{connection.uuid} " <>
-              "| error=#{Exception.message(e)}"
-          )
-
-          :ok
-      end
-    end
+          },
+          extra_metadata
+        )
+    )
 
     :ok
   end

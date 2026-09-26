@@ -21,12 +21,19 @@ defmodule PhoenixKitSync.CorePinConformanceTest do
   does not compile. `mix.lock` is not published to Hex, so the requirement is
   the only thing standing between a consumer and that failure — which is why
   the floor is asserted here and not merely documented.
+
+  The floor is `>= 2.38.0 and < 3.0.0` now: the actor and the activity log
+  come from `PhoenixKitWeb.Actor` and `Activity.log/3`, first shipped in core
+  2.38.0 and no longer feature-detected — an older core does not compile the
+  package. Any earlier floor's reasons above still hold below it. Keep the
+  compound form: patch-precise at the bottom, open through every later 2.x
+  minor at the top.
   """
 
-  @must_admit ["2.13.6", "2.14.0", "2.21.5"]
-  @must_reject ["1.7.189", "1.7.236", "2.0.0", "2.13.5", "3.0.0"]
+  @must_admit ["2.38.0", "2.38.1", "2.39.0", "2.99.4"]
+  @must_reject ["1.7.236", "2.0.0", "2.13.6", "2.14.0", "2.21.5", "2.37.5", "3.0.0"]
 
-  test "the :phoenix_kit requirement admits every core from the floor up, and nothing else" do
+  test "the :phoenix_kit requirement admits every core >= 2.38.0 minor and nothing else" do
     requirement = core_requirement()
 
     assert match?({:ok, _parsed}, Version.parse_requirement(requirement)),

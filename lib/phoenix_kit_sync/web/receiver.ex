@@ -39,7 +39,9 @@ defmodule PhoenixKitSync.Web.Receiver do
 
     socket =
       socket
-      |> assign(:page_title, "Receive Data")
+      |> assign(:page_section, gettext("Sync"))
+      |> assign(:page_section_path, Routes.path("/admin/sync", locale: locale))
+      |> assign(:page_title, gettext("Receive Data"))
       |> assign(:project_title, project_title)
       |> assign(:site_url, site_url)
       |> assign(:current_user, current_user)
