@@ -1,3 +1,25 @@
+## 0.2.3 - 2026-09-26
+
+### Changed
+
+- **Requires `phoenix_kit >= 2.38.0 and < 3.0.0`.** Connection and transfer
+  pages read the acting admin through `PhoenixKitWeb.Actor`. Activity rows
+  go through `PhoenixKit.Activity.log/3`: admin actions stay `mode: "manual"`,
+  and the import worker still logs `mode: "auto"` with no actor. Core never
+  raises from that call, so a missing activities table no longer fails the
+  operation (#17).
+- **Admin header trails.** Overview, Connections, History, Send and Receive
+  feed core's header bar: the section is Sync (except Overview, which is the
+  landing page) and the title is only this page. Opening, editing or syncing
+  a connection keeps the levels above it — `Sync / Connections / <name> / Edit`.
+- The connections sync tab strip uses core's `<.nav_tabs>` (#15).
+- Locked `phoenix_kit` 2.40.1.
+
+### Fixed
+
+- **`sync.connection.created` now records the creator.** The connection row
+  already stored `created_by_uuid`; the activity was logged with no actor.
+
 ## 0.2.2 - 2026-08-21
 
 ### Changed
