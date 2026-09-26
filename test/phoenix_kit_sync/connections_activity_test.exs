@@ -124,7 +124,7 @@ defmodule PhoenixKitSync.ConnectionsActivityTest do
         Connections.update_connection(
           connection,
           %{"max_records_per_request" => (connection.max_records_per_request || 10_000) + 1},
-          actor_uuid: UUIDv7.generate()
+          actor_uuid: PhoenixKitSync.TestActor.uuid()
         )
 
       after_count = activity_count_for(connection.uuid, "sync.connection.updated")

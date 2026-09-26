@@ -41,7 +41,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
       socket
       |> assign(:page_section, gettext("Sync"))
       |> assign(:page_section_path, Routes.path("/admin/sync", locale: locale))
-      |> assign(:page_title, gettext("Connections"))
+      |> assign_trail(:list)
       |> assign(:project_title, project_title)
       |> assign(:current_locale, locale)
       |> assign(:current_path, Routes.path("/admin/sync/connections", locale: locale))
@@ -86,6 +86,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     socket
     |> assign(:view_mode, :new)
     |> assign_form(changeset)
+    |> assign_trail(:new)
   end
 
   # Iron Law (F1'): handle_params/3 fires on both the dead render and the
@@ -110,6 +111,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     |> assign(:selected_connection, nil)
     |> assign_form(nil)
     |> assign(:direction_filter, params["direction"])
+    |> assign_trail(:list)
     |> maybe_load_connections()
   end
 
@@ -128,6 +130,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         socket
         |> put_flash(:error, gettext("Connection not found"))
         |> assign(:view_mode, :list)
+        |> assign(:selected_connection, nil)
+        |> assign_trail(:list)
         |> load_connections()
 
       connection ->
@@ -142,12 +146,14 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     |> assign(:view_mode, :edit)
     |> assign(:selected_connection, connection)
     |> assign_form(changeset)
+    |> assign_trail(:edit)
   end
 
   defp setup_connection_view(socket, connection, :show) do
     socket
     |> assign(:view_mode, :show)
     |> assign(:selected_connection, connection)
+    |> assign_trail(:show)
   end
 
   defp handle_sync_action(socket, id) do
@@ -156,6 +162,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         socket
         |> put_flash(:error, gettext("Connection not found"))
         |> assign(:view_mode, :list)
+        |> assign(:selected_connection, nil)
+        |> assign_trail(:list)
         |> load_connections()
 
       connection ->
@@ -169,6 +177,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     socket
     |> assign(:view_mode, :sync)
     |> assign(:selected_connection, connection)
+    |> assign_trail(:sync)
     |> assign(:sync_tables, [])
     |> assign(:sync_local_counts, %{})
     |> assign(:sync_local_checksums, %{})
@@ -2788,6 +2797,61 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
       bytes >= 1024 -> "#{Float.round(bytes / 1024, 1)} KB"
       true -> "#{bytes} B"
     end
+  end
+
+  # Header bar: `Sync / Connections`, and under that `New connection`,
+  # the record's name, `Edit`, or `Sync data`. Crumbs use `patch` because
+  # every level is this LiveView. A deep-linked show/edit/sync stays on the
+  # list trail until the socket connects — the record name needs a query,
+  # and that query is gated on `connected?/1`.
+  defp assign_trail(socket, :list) do
+    socket
+    |> assign(:page_title, gettext("Connections"))
+    |> assign(:page_crumbs, [])
+  end
+
+  defp assign_trail(socket, :new) do
+    socket
+    |> assign(:page_title, gettext("New connection"))
+    |> assign(:page_crumbs, [connections_crumb()])
+  end
+
+  defp assign_trail(socket, :show) do
+    connection = socket.assigns.selected_connection
+
+    socket
+    |> assign(:page_title, connection.name)
+    |> assign(:page_crumbs, [connections_crumb()])
+  end
+
+  defp assign_trail(socket, :edit) do
+    connection = socket.assigns.selected_connection
+
+    socket
+    |> assign(:page_title, gettext("Edit"))
+    |> assign(:page_crumbs, [
+      connections_crumb(),
+      %{label: connection.name, patch: connection_patch("show", connection.uuid)}
+    ])
+  end
+
+  defp assign_trail(socket, :sync) do
+    connection = socket.assigns.selected_connection
+
+    socket
+    |> assign(:page_title, gettext("Sync data"))
+    |> assign(:page_crumbs, [
+      connections_crumb(),
+      %{label: connection.name, patch: connection_patch("show", connection.uuid)}
+    ])
+  end
+
+  defp connections_crumb do
+    %{label: gettext("Connections"), patch: path_with_params("/admin/sync/connections", %{})}
+  end
+
+  defp connection_patch(action, uuid) do
+    path_with_params("/admin/sync/connections", %{action: action, id: uuid})
   end
 
   defp path_with_params(base_path, params) when map_size(params) == 0 do

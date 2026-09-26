@@ -321,4 +321,104 @@ defmodule PhoenixKitSync.Web.ConnectionsLiveTest do
       _ = connection
     end
   end
+
+  describe "admin header trail" do
+    test "the list is Sync / Connections with no crumbs", %{conn: conn} do
+      conn = put_test_scope(conn, fake_scope())
+      {:ok, view, _html} = live(conn, "/en/admin/sync/connections")
+
+      assert %{
+               page_section: "Sync",
+               page_title: "Connections",
+               page_crumbs: []
+             } = header(view)
+
+      assert header(view).page_section_path =~ "/admin/sync"
+    end
+
+    test "new is Sync / Connections / New connection", %{conn: conn} do
+      conn = put_test_scope(conn, fake_scope())
+      {:ok, view, _html} = live(conn, "/en/admin/sync/connections?action=new")
+
+      assert %{
+               page_section: "Sync",
+               page_title: "New connection",
+               page_crumbs: [%{label: "Connections", patch: patch}]
+             } = header(view)
+
+      assert patch =~ "/admin/sync/connections"
+      refute patch =~ "action="
+    end
+
+    test "show, edit and sync keep the connection in the trail", %{conn: conn} do
+      connection = create_connection(%{"name" => "Trail Peer", "direction" => "receiver"})
+      conn = put_test_scope(conn, fake_scope())
+
+      {:ok, show, _html} =
+        live(conn, "/en/admin/sync/connections?action=show&id=#{connection.uuid}")
+
+      assert %{
+               page_title: "Trail Peer",
+               page_crumbs: [%{label: "Connections", patch: list_patch}]
+             } = header(show)
+
+      refute list_patch =~ "action="
+
+      {:ok, edit, _html} =
+        live(conn, "/en/admin/sync/connections?action=edit&id=#{connection.uuid}")
+
+      assert %{
+               page_title: "Edit",
+               page_crumbs: [
+                 %{label: "Connections"},
+                 %{label: "Trail Peer", patch: show_patch}
+               ]
+             } = header(edit)
+
+      assert show_patch =~ "action=show"
+      assert show_patch =~ connection.uuid
+
+      {:ok, sync, _html} =
+        live(conn, "/en/admin/sync/connections?action=sync&id=#{connection.uuid}")
+
+      assert %{
+               page_title: "Sync data",
+               page_crumbs: [
+                 %{label: "Connections"},
+                 %{label: "Trail Peer", patch: sync_show_patch}
+               ]
+             } = header(sync)
+
+      assert sync_show_patch =~ "action=show"
+    end
+
+    test "cancel from edit returns to the list trail", %{conn: conn} do
+      connection = create_connection(%{"name" => "Cancel Trail"})
+      conn = put_test_scope(conn, fake_scope())
+
+      {:ok, view, _html} =
+        live(conn, "/en/admin/sync/connections?action=edit&id=#{connection.uuid}")
+
+      view |> element("button[phx-click='cancel']") |> render_click()
+
+      assert %{page_title: "Connections", page_crumbs: []} = header(view)
+    end
+
+    test "a missing connection falls back to the list trail", %{conn: conn} do
+      conn = put_test_scope(conn, fake_scope())
+      missing = UUIDv7.generate()
+
+      {:ok, view, _html} =
+        live(conn, "/en/admin/sync/connections?action=show&id=#{missing}")
+
+      assert %{page_title: "Connections", page_crumbs: []} = header(view)
+      assert render(view) =~ "Connection not found"
+    end
+  end
+
+  defp header(view) do
+    %{socket: %{assigns: assigns}} = :sys.get_state(view.pid)
+
+    Map.take(assigns, [:page_section, :page_section_path, :page_title, :page_crumbs])
+  end
 end

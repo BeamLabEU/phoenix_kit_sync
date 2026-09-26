@@ -184,7 +184,7 @@ defmodule PhoenixKitSync.Connections do
             "| status=#{connection.status}"
         )
 
-        log_sync_activity("created", connection, [])
+        log_sync_activity("created", connection, actor_uuid: connection.created_by_uuid)
         broadcast({:connection_created, connection.uuid})
         {:ok, connection, token}
 

@@ -571,13 +571,33 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
           "site_url" => "https://act-create-#{System.unique_integer([:positive])}.com"
         })
 
+      entry =
+        assert_activity_logged("sync.connection.created",
+          resource_uuid: conn.uuid,
+          metadata_has: %{
+            "connection_name" => conn.name,
+            "direction" => "sender",
+            "status" => "pending"
+          }
+        )
+
+      assert entry.module == "sync"
+      assert entry.mode == "manual"
+      assert is_nil(entry.actor_uuid)
+    end
+
+    test "create_connection logs created_by_uuid as the actor" do
+      admin_uuid = PhoenixKitSync.TestActor.uuid()
+
+      conn =
+        create_connection(%{
+          "site_url" => "https://act-creator-#{System.unique_integer([:positive])}.com",
+          "created_by_uuid" => admin_uuid
+        })
+
       assert_activity_logged("sync.connection.created",
         resource_uuid: conn.uuid,
-        metadata_has: %{
-          "connection_name" => conn.name,
-          "direction" => "sender",
-          "status" => "pending"
-        }
+        actor_uuid: admin_uuid
       )
     end
 
