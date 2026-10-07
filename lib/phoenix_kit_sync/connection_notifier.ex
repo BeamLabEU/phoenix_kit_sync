@@ -846,7 +846,12 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         reject_local_table(transfer, :no_primary_key, "No primary key on #{table_name}")
 
       {:ok, %{primary_key: pk_cols, columns: columns}} ->
-        {:ok, %{pk_cols: pk_cols, columns: MapSet.new(columns, & &1.name)}}
+        {:ok,
+         %{
+           pk_cols: pk_cols,
+           columns: MapSet.new(columns, & &1.name),
+           not_null: for(col <- columns, col.nullable == false, into: MapSet.new(), do: col.name)
+         }}
 
       {:error, :not_found} ->
         reject_local_table(
@@ -1498,11 +1503,11 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         _ -> []
       end
 
-    # Cache the set of numeric/decimal columns once per table so the per-value
-    # decimal-string detection in prepare_value/3 stays scoped to the columns
-    # where a "3.14" really is meant to become a %Decimal{}. Applying the
-    # regex to every string column would mis-cast version numbers or text
-    # labels and trip Postgrex type errors.
+    # Cache the numeric columns and their kind once per table, so the
+    # per-value parsing in prepare_value/3 stays scoped to the columns where
+    # a "3.14" really is a number: a %Decimal{} for numeric/decimal, a float
+    # for double precision/real. Parsing every string column would mis-cast
+    # version numbers or text labels and trip Postgrex type errors.
     numeric_cols = fetch_numeric_columns(table_name)
 
     import_ctx = %{
@@ -1547,7 +1552,13 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   end
 
   defp import_single_record_with_remap(%{pk_cols: [pk_col]} = ctx, record, acc, remap) do
-    {match_action, remap} = match_existing_record(ctx, pk_col, record, remap)
+    # FKs are remapped once, before matching: a unique set often holds an
+    # FK (UNIQUE (parent_uuid, slug)), and only the remapped value can match
+    # the local row. Remapping again at insert would follow a chain
+    # (42 -> 7 -> 3) when one local key is also another row's sender key.
+    sender_pk = get_record_field(record, pk_col)
+    record = apply_fk_remap(record, ctx.fk_columns, remap)
+    {match_action, remap} = match_existing_record(ctx, pk_col, record, sender_pk, remap)
 
     case match_action do
       :skip_matched ->
@@ -1559,10 +1570,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         # through the key conflict, per the strategy.
         record
         |> put_record_field(pk_col, local_pk)
-        |> then(&insert_with_remap(ctx, &1, acc, remap))
+        |> then(&insert_remapped(ctx, &1, acc, remap))
 
       :import ->
-        insert_with_remap(ctx, record, acc, remap)
+        insert_remapped(ctx, record, acc, remap)
     end
   end
 
@@ -1589,14 +1600,13 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {updated_acc, remap}
   end
 
-  defp insert_with_remap(ctx, record, acc, remap) do
-    remapped_record = apply_fk_remap(record, ctx.fk_columns, remap)
-
+  # The record's FKs are already remapped.
+  defp insert_remapped(ctx, record, acc, remap) do
     updated_acc =
       insert_record(
         ctx.repo,
         ctx.table_name,
-        remapped_record,
+        record,
         ctx.conflict_strategy,
         ctx.numeric_cols,
         ctx.target
@@ -1612,8 +1622,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   # it. What happens to a matched row depends on the strategy: skip (and
   # append) leave it alone; overwrite and merge write the sender's values
   # onto it. Returns {:import | :skip_matched | {:update_matched, local_pk},
-  # remap}.
-  defp match_existing_record(ctx, pk_col, record, remap) do
+  # remap}. The remap is keyed by the sender's own key (`sender_pk`), which
+  # is what other tables' FKs carry.
+  defp match_existing_record(ctx, pk_col, record, sender_pk, remap) do
     %{repo: repo, table_name: table_name, unique_sets: unique_sets} = ctx
     record_pk = get_record_field(record, pk_col)
     updates? = ctx.conflict_strategy in ["overwrite", "merge"]
@@ -1624,7 +1635,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       case find_match_by_unique(repo, table_name, pk_col, record, unique_sets) do
         {:ok, local_pk} ->
           Logger.info("Sync: Matched a #{table_name} record by unique columns")
-          remap = Map.put(remap, {table_name, remap_key(record_pk)}, local_pk)
+          remap = Map.put(remap, {table_name, remap_key(sender_pk)}, local_pk)
           {unique_match_action(updates?, local_pk), remap}
 
         :no_match ->
@@ -1641,8 +1652,12 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   # base64-wrapped 16-byte binary (or as raw bytes, or as text in any case),
   # an integer as a number. Both sides of the remap go through this. The
   # remap's values stay as the local row has them, ready to insert.
-  defp remap_key(%{"__phoenix_kit_binary__" => _} = wrapped),
-    do: remap_key(prepare_value(wrapped))
+  defp remap_key(%{"__phoenix_kit_binary__" => encoded}) when is_binary(encoded) do
+    case Base.decode64(encoded) do
+      {:ok, bytes} -> remap_key(bytes)
+      :error -> nil
+    end
+  end
 
   # Ecto.UUID.cast/1 takes both forms: 16 raw bytes and the 36-character
   # text, which it returns in lower case.
@@ -1808,7 +1823,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
           columns,
           conflict_strategy,
           numeric_cols,
-          pk_cols
+          target
         )
 
       unknown ->
@@ -1828,7 +1843,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          columns,
          conflict_strategy,
          numeric_cols,
-         pk_cols
+         %{pk_cols: pk_cols} = target
        ) do
     values =
       Enum.map(columns, fn col ->
@@ -1838,15 +1853,42 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     placeholders =
       columns
       |> Enum.with_index(1)
-      |> Enum.map_join(", ", fn {_col, idx} -> "$#{idx}" end)
+      |> Enum.map_join(
+        ", ",
+        &placeholder(&1, record, columns, conflict_strategy, table_name, target)
+      )
 
     columns_str = Enum.map_join(columns, ", ", &~s["#{&1}"])
     on_conflict = build_on_conflict_clause(conflict_strategy, table_name, pk_cols, columns)
 
     sql = ~s[INSERT INTO "#{table_name}" (#{columns_str}) VALUES (#{placeholders}) #{on_conflict}]
 
-    execute_insert(repo, sql, values)
+    execute_insert(repo, sql, values, conflict_strategy)
   end
+
+  # Under merge a NULL means "keep what is here", but Postgres checks NOT
+  # NULL on the proposed row before ON CONFLICT, so a NULL bound for a NOT
+  # NULL column would fail a row the update was going to keep. Such a value
+  # reads the local one instead: for an existing row the check passes and
+  # the update keeps it; for a new row the subquery is NULL and the row
+  # fails NOT NULL, as it should. The key's own placeholders are reused.
+  defp placeholder({col, idx}, record, columns, "merge", table_name, target) do
+    %{pk_cols: pk_cols, not_null: not_null} = target
+
+    if is_nil(Map.get(record, col)) and MapSet.member?(not_null, col) and
+         Enum.all?(pk_cols, &(&1 in columns)) do
+      key_match =
+        Enum.map_join(pk_cols, " AND ", fn pk ->
+          ~s["#{pk}" = $#{Enum.find_index(columns, &(&1 == pk)) + 1}]
+        end)
+
+      ~s[COALESCE($#{idx}, (SELECT "#{col}" FROM "#{table_name}" WHERE #{key_match}))]
+    else
+      "$#{idx}"
+    end
+  end
+
+  defp placeholder({_col, idx}, _record, _columns, _strategy, _table_name, _target), do: "$#{idx}"
 
   # overwrite takes every value the sender sent; merge keeps the local value
   # where the sender's is NULL. Both update through the key conflict.
@@ -1867,12 +1909,19 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   defp build_on_conflict_clause(_strategy, _table_name, _pk_cols, _columns),
     do: "ON CONFLICT DO NOTHING"
 
-  defp execute_insert(repo, sql, values) do
+  defp execute_insert(repo, sql, values, conflict_strategy) do
     case SQL.query(repo, sql, values) do
       {:ok, %{num_rows: 1}} ->
         :ok
 
       {:ok, %{num_rows: 0}} ->
+        :skipped
+
+      # overwrite and merge update through the key; a conflict on another
+      # unique column is a row that is already here under another key, and
+      # is skipped as skip's ON CONFLICT DO NOTHING would.
+      {:error, %{postgres: %{code: :unique_violation}}}
+      when conflict_strategy in ["overwrite", "merge"] ->
         :skipped
 
       {:error, %{postgres: %{code: code, message: msg}}} ->

@@ -209,7 +209,7 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
              ]
     end
 
-    test "merge keeps the local value where the sender's is empty", %{
+    test "merge keeps the local value where the sender's is NULL", %{
       connection: connection
     } do
       insert_parent("p1", "shelves")
@@ -332,6 +332,27 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
 
       %{rows: rows} = repo().query!("SELECT code, name FROM #{@parents}")
       assert rows == [["p1", "shelves"]]
+    end
+  end
+
+  describe "a conflict on a unique column other than the key" do
+    # The pull without remap (Precise Transfer) does no unique matching: a
+    # new key whose unique column is taken locally conflicts on that column.
+    # As before overwrite and merge updated through the key, that row is
+    # skipped, not an error.
+    for strategy <- ["overwrite", "merge"] do
+      test "is skipped under #{strategy}", %{connection: connection} do
+        insert_parent("p1", "shelves")
+        StubRemote.put_data(@parents, [%{"code" => "p9", "name" => "shelves"}])
+
+        assert {:ok, %{imported: 0, skipped: 1, errors: 0}} =
+                 ConnectionNotifier.pull_table_data(connection, @parents,
+                   conflict_strategy: unquote(strategy)
+                 )
+
+        %{rows: rows} = repo().query!("SELECT code, name FROM #{@parents}")
+        assert rows == [["p1", "shelves"]]
+      end
     end
   end
 

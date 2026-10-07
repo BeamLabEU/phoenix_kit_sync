@@ -38,6 +38,23 @@ defmodule PhoenixKitSync.Integration.PullRemapKeysTest do
     """)
 
     repo().query!("""
+    CREATE TABLE IF NOT EXISTS rk_slugs (
+      uuid uuid PRIMARY KEY,
+      parent_uuid uuid NOT NULL REFERENCES rk_uuid_parents(uuid),
+      slug text NOT NULL,
+      note text,
+      UNIQUE (parent_uuid, slug)
+    )
+    """)
+
+    repo().query!("""
+    CREATE TABLE IF NOT EXISTS rk_slug_refs (
+      uuid uuid PRIMARY KEY,
+      slug_uuid uuid REFERENCES rk_slugs(uuid)
+    )
+    """)
+
+    repo().query!("""
     CREATE TABLE IF NOT EXISTS rk_items (
       code text PRIMARY KEY,
       name text NOT NULL UNIQUE,
@@ -128,6 +145,75 @@ defmodule PhoenixKitSync.Integration.PullRemapKeysTest do
     end
   end
 
+  describe "a malformed binary wrapper" do
+    # The wrapper is the sender's data: a wrapper around something that is
+    # not base64 text must end as a failed record, never hang the import.
+    for {label, inner} <- [{"null", nil}, {"a number", 1}, {"not base64", "%%%"}] do
+      test "in an FK column (#{label}) fails the record and returns", %{connection: connection} do
+        StubRemote.put_data("rk_uuid_children", [
+          %{
+            "uuid" => wire_uuid(UUIDv7.generate()),
+            "parent_uuid" => %{"__phoenix_kit_binary__" => unquote(inner)}
+          }
+        ])
+
+        task = Task.async(fn -> pull(connection, "rk_uuid_children", %{}, "skip") end)
+
+        assert {:ok, {:ok, %{imported: 0, errors: 1}, %{}}} = Task.yield(task, 5_000),
+               "the import did not return"
+      end
+    end
+  end
+
+  describe "a unique set that holds a remapped FK" do
+    # rk_slugs is unique on (parent_uuid, slug). The sender's slug points at
+    # the sender's parent; only after the FK is remapped does it match the
+    # local slug, which a grandchild then has to reach.
+    for strategy <- ["skip", "overwrite", "merge"] do
+      test "matches the local row, and a grandchild follows it (#{strategy})", %{
+        connection: connection
+      } do
+        strategy = unquote(strategy)
+        [lp, rp, lc, rc] = for _ <- 1..4, do: UUIDv7.generate()
+
+        repo().query!("INSERT INTO rk_uuid_parents VALUES ($1, 'shelves')", [Ecto.UUID.dump!(lp)])
+
+        repo().query!("INSERT INTO rk_slugs VALUES ($1, $2, 'oak', 'local')", [
+          Ecto.UUID.dump!(lc),
+          Ecto.UUID.dump!(lp)
+        ])
+
+        StubRemote.put_data("rk_uuid_parents", [%{"uuid" => wire_uuid(rp), "name" => "shelves"}])
+
+        StubRemote.put_data("rk_slugs", [
+          %{
+            "uuid" => wire_uuid(rc),
+            "parent_uuid" => wire_uuid(rp),
+            "slug" => "oak",
+            "note" => "remote"
+          }
+        ])
+
+        StubRemote.put_data("rk_slug_refs", [
+          %{"uuid" => wire_uuid(UUIDv7.generate()), "slug_uuid" => wire_uuid(rc)}
+        ])
+
+        {:ok, _, remap} = pull(connection, "rk_uuid_parents", %{}, strategy)
+        assert {:ok, %{errors: 0}, remap} = pull(connection, "rk_slugs", remap, strategy)
+        assert Map.has_key?(remap, {"rk_slugs", rc})
+
+        assert {:ok, %{imported: 1, errors: 0}, _} =
+                 pull(connection, "rk_slug_refs", remap, strategy)
+
+        %{rows: [[uuid, note]]} = repo().query!("SELECT uuid::text, note FROM rk_slugs")
+        assert uuid == lc
+        assert note == if(strategy == "skip", do: "local", else: "remote")
+
+        assert %{rows: [[^lc]]} = repo().query!("SELECT slug_uuid::text FROM rk_slug_refs")
+      end
+    end
+  end
+
   describe "integer keys" do
     test "a child's integer FK follows its parent's remap", %{connection: connection} do
       repo().query!("INSERT INTO rk_int_parents VALUES (7, 'shelves')")
@@ -143,6 +229,18 @@ defmodule PhoenixKitSync.Integration.PullRemapKeysTest do
 
       assert %{rows: [[7]]} = repo().query!("SELECT parent_id FROM rk_int_children")
     end
+
+    test "a remapped FK is not remapped a second time", %{connection: connection} do
+      # A caller's remap where one local key is also another sender key:
+      # a child of sender 42 must end at 7, not follow the chain on to 3.
+      repo().query!("INSERT INTO rk_int_parents VALUES (7, 'a'), (3, 'b')")
+      StubRemote.put_data("rk_int_children", [%{"id" => 1, "parent_id" => 42}])
+
+      remap = %{{"rk_int_parents", "42"} => 7, {"rk_int_parents", "7"} => 3}
+
+      assert {:ok, %{imported: 1}, _} = pull(connection, "rk_int_children", remap, "skip")
+      assert %{rows: [[7]]} = repo().query!("SELECT parent_id FROM rk_int_children")
+    end
   end
 
   describe "overwrite and merge on a single-column key" do
@@ -150,7 +248,29 @@ defmodule PhoenixKitSync.Integration.PullRemapKeysTest do
       repo().query!("SELECT code, name, note, extra FROM rk_items ORDER BY code").rows
     end
 
-    test "merge keeps local values the sender leaves empty", %{connection: connection} do
+    test "merge keeps the local value where the sender sends NULL to a NOT NULL column", %{
+      connection: connection
+    } do
+      repo().query!("INSERT INTO rk_items VALUES ('i1', 'shelf', 'local note', 'old')")
+
+      StubRemote.put_data("rk_items", [
+        %{"code" => "i1", "name" => nil, "note" => "new", "extra" => nil}
+      ])
+
+      assert {:ok, %{imported: 1, errors: 0}, _} = pull(connection, "rk_items", %{}, "merge")
+      assert items() == [["i1", "shelf", "new", "old"]]
+    end
+
+    test "merge still refuses a NULL in a NOT NULL column of a new row", %{
+      connection: connection
+    } do
+      StubRemote.put_data("rk_items", [%{"code" => "new", "name" => nil, "note" => "x"}])
+
+      assert {:ok, %{imported: 0, errors: 1}, _} = pull(connection, "rk_items", %{}, "merge")
+      assert items() == []
+    end
+
+    test "merge keeps local values where the sender sends NULL", %{connection: connection} do
       repo().query!("INSERT INTO rk_items VALUES ('i1', 'shelf', 'local note', 'old')")
 
       StubRemote.put_data("rk_items", [
@@ -179,7 +299,7 @@ defmodule PhoenixKitSync.Integration.PullRemapKeysTest do
       assert items() == [["local", "shelf", nil, "new"]]
     end
 
-    test "merge on a unique-column match keeps the local key and empty-field values", %{
+    test "merge on a unique-column match keeps the local key and NULL-field values", %{
       connection: connection
     } do
       repo().query!("INSERT INTO rk_items VALUES ('local', 'shelf', 'local note', 'old')")

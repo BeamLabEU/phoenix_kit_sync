@@ -16,7 +16,8 @@ defmodule PhoenixKitSync.Integration.PullFloatColumnsTest do
       code text PRIMARY KEY,
       ratio double precision,
       weight real,
-      price numeric(10,2)
+      price numeric(10,2),
+      exact numeric(30,5)
     )
     """)
 
@@ -35,8 +36,39 @@ defmodule PhoenixKitSync.Integration.PullFloatColumnsTest do
 
   defp repo, do: PhoenixKit.RepoHelper.repo()
 
-  test "numeric_columns/1 lists double precision, real and numeric columns" do
-    assert Enum.sort(Prepare.numeric_columns("fc_measures")) == ["price", "ratio", "weight"]
+  test "numeric_column_types/1 tells decimal columns from float ones" do
+    assert Prepare.numeric_column_types("fc_measures") == %{
+             "exact" => :decimal,
+             "price" => :decimal,
+             "ratio" => :float,
+             "weight" => :float
+           }
+  end
+
+  test "a high-precision numeric string keeps every digit", %{connection: connection} do
+    StubRemote.put_data("fc_measures", [%{"code" => "p", "exact" => "12345678901234.56789"}])
+
+    assert {:ok, %{imported: 1, errors: 0}, _} =
+             ConnectionNotifier.pull_table_data_with_remap(connection, "fc_measures", %{},
+               conflict_strategy: "skip"
+             )
+
+    assert %{rows: [["12345678901234.56789"]]} =
+             repo().query!("SELECT exact::text FROM fc_measures")
+  end
+
+  test "a float string out of range fails its record, not the import", %{
+    connection: connection
+  } do
+    StubRemote.put_data("fc_measures", [
+      %{"code" => "big", "ratio" => "1e400"},
+      %{"code" => "ok", "ratio" => "0.5"}
+    ])
+
+    assert {:ok, %{imported: 1, errors: 1}, _} =
+             ConnectionNotifier.pull_table_data_with_remap(connection, "fc_measures", %{},
+               conflict_strategy: "skip"
+             )
   end
 
   test "float columns import from numbers and from numeric strings", %{connection: connection} do
