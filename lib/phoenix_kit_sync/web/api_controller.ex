@@ -1001,7 +1001,7 @@ defmodule PhoenixKitSync.Web.ApiController do
 
   defp get_actual_row_count(repo, table_name) do
     # Validate table name to prevent SQL injection
-    if Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9_]*$/, table_name) do
+    if SchemaInspector.valid_identifier?(table_name) do
       count_query = "SELECT COUNT(*) FROM #{quote_ident(table_name)}"
 
       case SQL.query(repo, count_query, []) do

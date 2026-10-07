@@ -31,6 +31,7 @@ defmodule PhoenixKitSync.Errors do
           | :disconnected
           | :download_limit_reached
           | :econnrefused
+          | :empty_schema
           | :fetch_failed
           | :import_failed
           | :incoming_denied
@@ -59,6 +60,7 @@ defmodule PhoenixKitSync.Errors do
           | :password_required
           | :pull_failed
           | :record_limit_reached
+          | :schema_without_primary_key
           | :table_missing_locally
           | :table_not_found
           | :timeout
@@ -82,6 +84,7 @@ defmodule PhoenixKitSync.Errors do
   def message(:disconnected), do: gettext("Disconnected")
   def message(:download_limit_reached), do: gettext("Download limit reached")
   def message(:econnrefused), do: gettext("Could not connect to the remote site")
+  def message(:empty_schema), do: gettext("The sender's schema lists no columns")
   def message(:fetch_failed), do: gettext("Fetch failed")
 
   def message(:import_failed),
@@ -129,6 +132,12 @@ defmodule PhoenixKitSync.Errors do
 
   def message(:table_not_allowed),
     do: gettext("This connection is not authorised to access that table")
+
+  def message(:schema_without_primary_key),
+    do:
+      gettext(
+        "The sender did not report a primary key for this table. Update sync on the source site, or create the table here by hand"
+      )
 
   def message(:table_missing_locally),
     do:

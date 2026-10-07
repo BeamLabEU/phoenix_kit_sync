@@ -642,8 +642,11 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     if table && schema do
       socket = assign(socket, :creating_table, true)
 
-      # Create the table locally based on schema
-      case SchemaInspector.create_table(table, schema) do
+      # Create the table locally based on schema. A sender from before
+      # table-schema carried primary_key reports none: a table created from
+      # that would have no key, and every pull of it is refused, so it is
+      # not created at all.
+      case create_table_with_key(table, schema) do
         :ok ->
           socket =
             socket
@@ -1096,6 +1099,13 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   def handle_info(msg, socket) do
     Logger.debug("[ConnectionsLive] unhandled message | msg=#{inspect(msg)}")
     {:noreply, socket}
+  end
+
+  defp create_table_with_key(table, schema) do
+    case SchemaInspector.normalize_schema_def(schema) do
+      %{"primary_key" => []} -> {:error, :schema_without_primary_key}
+      _with_key -> SchemaInspector.create_table(table, schema)
+    end
   end
 
   # Runs one table's pull inside its supervised task. Whatever the pull

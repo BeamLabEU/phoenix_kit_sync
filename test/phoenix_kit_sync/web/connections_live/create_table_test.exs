@@ -87,10 +87,11 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.CreateTableTest do
     assert assigns(view).local_table_exists
   end
 
-  test "creates the table from an older sender's schema without primary_key", %{
+  test "an older sender's schema without primary_key is refused, saying why", %{
     conn: conn,
     connection: connection
   } do
+    # Created without a key, the table could never be pulled into.
     StubRemote.put_schema(@table, %{
       "table_name" => @table,
       "columns" => [column("code", "text", false)]
@@ -99,7 +100,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.CreateTableTest do
     view = open_table_details(conn, connection)
     render_click(view, "create_detail_table", %{})
 
-    assert SchemaInspector.table_exists?(@table)
+    assert has_element?(view, "#flash-error", Errors.message(:schema_without_primary_key))
+    refute SchemaInspector.table_exists?(@table)
   end
 
   test "a refused schema shows the translated reason", %{conn: conn, connection: connection} do

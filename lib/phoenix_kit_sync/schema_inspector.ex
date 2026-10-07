@@ -270,6 +270,7 @@ defmodule PhoenixKitSync.SchemaInspector do
     types = Enum.map(columns, &map_column_type(&1["type"]))
 
     cond do
+      columns == [] -> {:error, :empty_schema}
       not Enum.all?(names ++ primary_key, &valid_identifier?/1) -> {:error, :invalid_column_name}
       not Enum.all?(types, &valid_column_type?/1) -> {:error, :invalid_column_type}
       true -> :ok
@@ -328,7 +329,11 @@ defmodule PhoenixKitSync.SchemaInspector do
   """
   @spec normalize_schema_def(map()) :: %{String.t() => list()}
   def normalize_schema_def(schema_def) when is_map(schema_def) do
-    columns = List.wrap(schema_field(schema_def, "columns"))
+    columns =
+      case schema_field(schema_def, "columns") do
+        columns when is_list(columns) -> columns
+        _not_a_list -> []
+      end
 
     primary_key =
       case schema_field(schema_def, "primary_key") do

@@ -181,6 +181,12 @@ defmodule PhoenixKitSync.Integration.SenderIdentifiersTest do
       refute SchemaInspector.valid_column_type?("text\n")
       assert SchemaInspector.valid_identifier?(String.duplicate("a", 63))
       refute SchemaInspector.valid_identifier?(String.duplicate("a", 64))
+
+      # The API's entry guard follows the same rule.
+      alias PhoenixKitSync.Web.ApiController.Validators
+      refute Validators.valid_table_name?("users\n")
+      refute Validators.valid_table_name?(String.duplicate("a", 64))
+      assert Validators.valid_table_name?("users")
     end
   end
 
@@ -250,6 +256,39 @@ defmodule PhoenixKitSync.Integration.SenderIdentifiersTest do
       assert %{nullable: false, max_length: 12} = code
       assert %{nullable: true} = Enum.find(columns, &(&1.name == "note"))
       assert %{nullable: false} = Enum.find(columns, &(&1.name == "title"))
+    end
+
+    test "takes the key from the columns' flags when the schema has no list" do
+      schema = %{"columns" => [col("id", "bigint", true), col("note", "text")]}
+
+      assert %{"primary_key" => ["id"]} = SchemaInspector.normalize_schema_def(schema)
+      assert :ok = SchemaInspector.create_table("ident_created", schema)
+      assert {:ok, ["id"]} = SchemaInspector.get_primary_key("ident_created")
+    end
+
+    test "a key listed only in primary_key still gets a serial default" do
+      schema = %{
+        "columns" => [%{"name" => "id", "type" => "bigint", "nullable" => false}],
+        "primary_key" => ["id"]
+      }
+
+      assert :ok = SchemaInspector.create_table("ident_created", schema)
+
+      assert %{rows: [[default]]} =
+               repo().query!("""
+               SELECT column_default FROM information_schema.columns
+               WHERE table_name = 'ident_created' AND column_name = 'id'
+               """)
+
+      assert default =~ "nextval"
+    end
+
+    test "a schema without columns is refused" do
+      for schema <- [%{}, %{"columns" => nil}, %{"columns" => %{}}, %{"columns" => []}] do
+        assert {:error, :empty_schema} = SchemaInspector.create_table("ident_created", schema)
+      end
+
+      refute SchemaInspector.table_exists?("ident_created")
     end
 
     test "still accepts the types information_schema reports" do
