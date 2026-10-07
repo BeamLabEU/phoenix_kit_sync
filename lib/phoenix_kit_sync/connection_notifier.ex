@@ -1915,7 +1915,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     do: Prepare.value(value, column, numeric_cols)
 
   defp prepare_value(value), do: Prepare.value(value)
-  defp fetch_numeric_columns(table_name), do: Prepare.numeric_columns(table_name)
+  defp fetch_numeric_columns(table_name), do: Prepare.numeric_column_types(table_name)
 
   defp get_record_field(record, field), do: Prepare.get_field(record, field)
   defp put_record_field(record, field, value), do: Prepare.put_field(record, field, value)

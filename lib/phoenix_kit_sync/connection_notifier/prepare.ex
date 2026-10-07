@@ -32,11 +32,24 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   # value/3 — scopes decimal coercion to numeric columns
   # ===========================================
 
-  @spec value(any(), String.t(), list(String.t())) :: any()
+  # The third argument is either a list of numeric column names (every
+  # numeric string becomes a %Decimal{}) or the map numeric_column_types/1
+  # returns, which sends a numeric string in a double precision / real
+  # column to a float instead: Postgrex takes neither a string nor a
+  # Decimal there.
+  @spec value(any(), String.t(), list(String.t()) | %{String.t() => :decimal | :float}) ::
+          any()
   def value(value, column, numeric_cols)
       when is_binary(value) and is_binary(column) and is_list(numeric_cols) do
     parse_datetime_string(value) || parse_date_string(value) || parse_time_string(value) ||
       if(column in numeric_cols, do: parse_decimal_string(value)) ||
+      value
+  end
+
+  def value(value, column, column_types)
+      when is_binary(value) and is_binary(column) and is_map(column_types) do
+    parse_datetime_string(value) || parse_date_string(value) || parse_time_string(value) ||
+      parse_numeric_string(value, Map.get(column_types, column)) ||
       value
   end
 
@@ -65,16 +78,30 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   # Column-type caching
   # ===========================================
 
+  # "double precision" is one type name of two words.
+  @numeric_types %{
+    "numeric" => :decimal,
+    "decimal" => :decimal,
+    "double precision" => :float,
+    "real" => :float
+  }
+
   @spec numeric_columns(String.t()) :: list(String.t())
-  def numeric_columns(table_name) do
+  def numeric_columns(table_name), do: table_name |> numeric_column_types() |> Map.keys()
+
+  @doc """
+  Maps each numeric column of `table_name` to the term a numeric string in
+  it should become: `:decimal` for numeric/decimal, `:float` for double
+  precision/real. Empty map on error.
+  """
+  @spec numeric_column_types(String.t()) :: %{String.t() => :decimal | :float}
+  def numeric_column_types(table_name) do
     case SchemaInspector.get_schema(table_name) do
       {:ok, %{columns: columns}} ->
-        columns
-        |> Enum.filter(fn col -> col.type in ~w[numeric decimal double precision real] end)
-        |> Enum.map(& &1.name)
+        for col <- columns, kind = @numeric_types[col.type], into: %{}, do: {col.name, kind}
 
       _ ->
-        []
+        %{}
     end
   end
 
@@ -160,6 +187,19 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   # "123" (no dot) are left as strings — Postgrex handles integer→numeric
   # binds natively.
   @decimal_regex ~r/^-?\d+\.\d+$/
+  defp parse_numeric_string(value, :decimal), do: parse_decimal_string(value)
+  defp parse_numeric_string(value, :float), do: parse_float_string(value)
+  defp parse_numeric_string(_value, nil), do: nil
+
+  @float_regex ~r/\A-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\z/
+
+  defp parse_float_string(value) do
+    if Regex.match?(@float_regex, value) do
+      {float, ""} = Float.parse(value)
+      float
+    end
+  end
+
   defp parse_decimal_string(value) do
     if Regex.match?(@decimal_regex, value) do
       Decimal.new(value)
