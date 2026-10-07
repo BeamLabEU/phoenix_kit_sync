@@ -833,7 +833,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             |> assign(:loading_preview, false)
             |> put_flash(
               :error,
-              gettext("Failed to load preview: %{reason}", reason: inspect(reason))
+              gettext("Failed to load preview: %{reason}", reason: Errors.message(reason))
             )
         end
 
@@ -1165,7 +1165,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               :pull_failed,
               :sender_ignores_filters,
               :table_missing_locally,
-              :unsupported_key_type
+              :unsupported_key_type,
+              :filter_needs_single_key
             ],
        do: Errors.message(reason)
 

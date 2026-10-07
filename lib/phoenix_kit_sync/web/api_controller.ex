@@ -463,6 +463,8 @@ defmodule PhoenixKitSync.Web.ApiController do
     end
   end
 
+  @filter_errors [:invalid_filter, :unsupported_key_type, :filter_needs_single_key]
+
   @doc """
   Pulls data for a specific table.
 
@@ -532,7 +534,7 @@ defmodule PhoenixKitSync.Web.ApiController do
       |> put_status(200)
       |> json(response)
     else
-      {:error, filter_error} when filter_error in [:invalid_filter, :unsupported_key_type] ->
+      {:error, filter_error} when filter_error in @filter_errors ->
         render_filter_error(conn, filter_error)
 
       {:error, :module_disabled} ->
@@ -641,8 +643,12 @@ defmodule PhoenixKitSync.Web.ApiController do
   - `ids` (optional) - List of specific IDs to fetch
   - `id_start`, `id_end` (optional) - ID range filter
 
+  The filter is pull-data's (`PhoenixKitSync.PullFilter`).
+
   Returns:
-  - 200 OK with records
+  - 200 OK with records, ordered by the key
+  - 400 Bad Request - An invalid filter, a key type that takes no filter,
+    or a table without a single-column key (`error_code` says which)
   - 401 Unauthorized
   - 404 Not Found
   """
@@ -663,7 +669,7 @@ defmodule PhoenixKitSync.Web.ApiController do
           |> put_status(200)
           |> json(%{success: true, records: records})
 
-        {:error, filter_error} when filter_error in [:invalid_filter, :unsupported_key_type] ->
+        {:error, filter_error} when filter_error in @filter_errors ->
           render_filter_error(conn, filter_error)
 
         {:error, :not_found} ->
@@ -705,16 +711,19 @@ defmodule PhoenixKitSync.Web.ApiController do
     end
   end
 
-  defp render_filter_error(conn, :invalid_filter) do
-    conn
-    |> put_status(400)
-    |> json(%{success: false, error: "Invalid filter"})
-  end
+  # A filter refusal carries "error_code" for the receiver to act on; the
+  # "error" text is for people.
+  defp render_filter_error(conn, code) do
+    text =
+      case code do
+        :invalid_filter -> "Invalid filter"
+        :unsupported_key_type -> "Filter not supported for this key type"
+        :filter_needs_single_key -> "Filter needs a single-column primary key"
+      end
 
-  defp render_filter_error(conn, :unsupported_key_type) do
     conn
     |> put_status(400)
-    |> json(%{success: false, error: "Filter not supported for this key type"})
+    |> json(%{success: false, error: text, error_code: Atom.to_string(code)})
   end
 
   # --- Private Functions ---
@@ -1108,8 +1117,13 @@ defmodule PhoenixKitSync.Web.ApiController do
           {:ok, " WHERE " <> where <> " ORDER BY #{quote_ident(pk)}", binds}
         end
 
+      # A composite key, no key, or a view (views are not in pg_tables and
+      # have no key): there is no single column to filter on.
       {:ok, _composite_or_no_key} ->
-        {:error, :invalid_filter}
+        {:error, :filter_needs_single_key}
+
+      {:error, :not_found} ->
+        {:error, :filter_needs_single_key}
 
       {:error, reason} ->
         {:error, reason}

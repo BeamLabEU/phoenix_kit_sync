@@ -748,7 +748,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
        ) do
     reason =
       case Jason.decode(body) do
-        {:ok, %{"error" => "Filter not supported for this key type"}} -> :unsupported_key_type
+        {:ok, %{"error_code" => "unsupported_key_type"}} -> :unsupported_key_type
+        {:ok, %{"error_code" => "filter_needs_single_key"}} -> :filter_needs_single_key
+        # "invalid_filter", or a sender that predates error_code.
         _ -> :invalid_filter
       end
 
@@ -1039,15 +1041,18 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:error, reason}` - Failed to fetch records
   """
   def fetch_table_records(connection, table_name, opts \\ []) do
-    with {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
-      do_fetch_table_records(site_url, auth_token_hash, table_name, opts)
+    # The same filter rules as the pull, so a preview and a transfer of the
+    # same input agree (an empty ID list is refused by both).
+    with {:ok, filter_body} <- PullFilter.body(Keyword.take(opts, [:ids, :id_range])),
+         {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
+      do_fetch_table_records(site_url, auth_token_hash, table_name, filter_body, opts)
     end
   end
 
-  defp do_fetch_table_records(site_url, auth_token_hash, table_name, opts) do
+  defp do_fetch_table_records(site_url, auth_token_hash, table_name, filter_body, opts) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     api_url = build_records_url(site_url)
-    body = build_records_request_body(auth_token_hash, table_name, opts)
+    body = Map.merge(filter_body, build_records_request_body(auth_token_hash, table_name, opts))
 
     case make_http_request(api_url, body, timeout) do
       {:ok, %{status: 200, body: resp_body}} ->
@@ -1065,8 +1070,6 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       "limit" => Keyword.get(opts, :limit, 10),
       "offset" => Keyword.get(opts, :offset, 0)
     }
-    |> maybe_add_ids(Keyword.get(opts, :ids))
-    |> maybe_add_id_range(Keyword.get(opts, :id_range))
   end
 
   defp parse_records_response(resp_body) do
@@ -1075,16 +1078,6 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       {:ok, %{"success" => false, "error" => error}} -> {:error, error}
       _ -> {:error, :invalid_response}
     end
-  end
-
-  defp maybe_add_ids(body, nil), do: body
-  defp maybe_add_ids(body, []), do: body
-  defp maybe_add_ids(body, ids), do: Map.put(body, "ids", ids)
-
-  defp maybe_add_id_range(body, nil), do: body
-
-  defp maybe_add_id_range(body, {start_id, end_id}) do
-    Map.merge(body, %{"id_start" => start_id, "id_end" => end_id})
   end
 
   # --- Connection Info Helpers ---

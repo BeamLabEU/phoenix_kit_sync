@@ -21,6 +21,7 @@ defmodule PhoenixKitSync.Integration.PullFiltersSenderTest do
     repo.query!("CREATE TABLE pf_codes (code varchar(20) PRIMARY KEY, label text)")
     repo.query!("INSERT INTO pf_codes VALUES ('a', 'A'), ('b', 'B'), ('7', 'seven')")
     repo.query!("CREATE TABLE pf_days (day date PRIMARY KEY, label text)")
+    repo.query!("CREATE VIEW pf_items_view AS SELECT * FROM pf_items")
     repo.query!(~s[CREATE TABLE "PfCase" ("Order" int PRIMARY KEY, label text)])
     repo.query!(~s[INSERT INTO "PfCase" VALUES (3, 'c'), (1, 'a'), (2, 'b')])
 
@@ -127,13 +128,38 @@ defmodule PhoenixKitSync.Integration.PullFiltersSenderTest do
     end
   end
 
+  test "a view answers a filter with 400, not as an unknown token", %{conn: conn, hash: hash} do
+    body = conn |> pull(hash, "pf_items_view", %{}) |> json_response(200)
+    assert length(body["data"]) == 6
+
+    assert %{"error_code" => "filter_needs_single_key"} =
+             conn |> pull(hash, "pf_items_view", %{"ids" => [1]}) |> json_response(400)
+  end
+
+  test "table-records without a filter pages in key order", %{conn: conn, hash: hash} do
+    PhoenixKit.RepoHelper.repo().query!("INSERT INTO pf_codes VALUES ('0', 'zero')")
+
+    body =
+      conn
+      |> post("/sync/api/table-records", %{
+        "auth_token_hash" => hash,
+        "table_name" => "pf_codes",
+        "limit" => 2,
+        "offset" => 1
+      })
+      |> json_response(200)
+
+    # Keys "0", "7", "a", "b": the second page of two starts at "7".
+    assert Enum.map(body["records"], & &1["label"]) == ["seven", "A"]
+  end
+
   test "a NUL in an id is a 400, not a 500", %{conn: conn, hash: hash} do
     assert %{"error" => "Invalid filter"} =
              conn |> pull(hash, "pf_codes", %{"ids" => ["a\u0000b"]}) |> json_response(400)
   end
 
   test "a key type outside integer, uuid and text is refused", %{conn: conn, hash: hash} do
-    assert %{"error" => "Filter not supported for this key type"} =
+    assert %{"error_code" => "unsupported_key_type"} =
              conn |> pull(hash, "pf_days", %{"ids" => ["2026-01-01"]}) |> json_response(400)
   end
 
@@ -166,7 +192,7 @@ defmodule PhoenixKitSync.Integration.PullFiltersSenderTest do
     assert %{"success" => false, "error" => "Invalid filter"} =
              conn |> pull(hash, "pf_uuid_items", %{"id_start" => 1}) |> json_response(400)
 
-    assert %{"success" => false} =
+    assert %{"error_code" => "filter_needs_single_key"} =
              conn |> pull(hash, "pf_pairs", %{"ids" => [1]}) |> json_response(400)
 
     assert %{"success" => false} =

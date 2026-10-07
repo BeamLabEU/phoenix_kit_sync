@@ -33,6 +33,7 @@ defmodule PhoenixKitSync.Errors do
           | :econnrefused
           | :empty_schema
           | :fetch_failed
+          | :filter_needs_single_key
           | :import_failed
           | :incoming_denied
           | :invalid_code
@@ -90,6 +91,12 @@ defmodule PhoenixKitSync.Errors do
   def message(:empty_schema), do: gettext("The sender's schema lists no columns")
   def message(:fetch_failed), do: gettext("Fetch failed")
 
+  def message(:filter_needs_single_key),
+    do:
+      gettext(
+        "The source table has no single-column primary key (a view has none), so it takes no ID filter"
+      )
+
   def message(:import_failed),
     do: gettext("Importing this table failed; see the server log for details")
 
@@ -105,7 +112,7 @@ defmodule PhoenixKitSync.Errors do
   def message(:invalid_filter),
     do:
       gettext(
-        "Invalid record filter: enter at least one ID (up to 1000), or a range with at least one bound; a range needs an integer key"
+        "Invalid record filter: enter at least one ID (up to 1000), or a range with at least one bound. An integer key takes only whole-number IDs, and a range needs an integer key"
       )
 
   def message(:invalid_identifier), do: gettext("Invalid identifier")

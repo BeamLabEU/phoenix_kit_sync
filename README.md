@@ -284,7 +284,12 @@ Cross-site communication endpoints (under the configured URL prefix):
   and records the send as completed, although nothing was kept. The
   filter is compared in the key's own type (integer, uuid or text keys;
   a range needs an integer key); a filter the sender cannot apply is a
-  400. `table-records` takes the same filter.
+  400 whose `error_code` says why (`invalid_filter`,
+  `unsupported_key_type`, `filter_needs_single_key`). `table-records`
+  takes the same filter. This narrows what `table-records` accepted for
+  previews: a filter on a table with a composite key or none (a view
+  included), an empty `ids` list, or `ids` together with a range is now a
+  400, where it used to filter on the first key column or on `id`.
 - `POST /sync/api/table-schema` — Get table schema
 - `POST /sync/api/table-records` — Get table records
 - `GET /sync/api/status` — Check module status

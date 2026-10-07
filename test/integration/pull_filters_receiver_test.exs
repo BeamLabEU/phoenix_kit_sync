@@ -190,6 +190,39 @@ defmodule PhoenixKitSync.Integration.PullFiltersReceiverTest do
     assert %{status: "completed", records_transferred: 2} = transfer_for(@table)
   end
 
+  test "the sender's error_code picks the reason; an older 400 is :invalid_filter", %{
+    connection: connection
+  } do
+    repo().query!("CREATE TABLE IF NOT EXISTS pfr_days (day date PRIMARY KEY)")
+    repo().query!("CREATE TABLE IF NOT EXISTS pfr_pairs (a int, b int, PRIMARY KEY (a, b))")
+    peer = self_peer()
+
+    assert {:error, :filter_needs_single_key} =
+             ConnectionNotifier.pull_table_data(peer, "pfr_pairs",
+               conflict_strategy: "skip",
+               ids: [1]
+             )
+
+    assert {:error, :unsupported_key_type} =
+             ConnectionNotifier.pull_table_data(peer, "pfr_days",
+               conflict_strategy: "skip",
+               ids: ["2026-01-01"]
+             )
+
+    StubRemote.put_raw(@table, 400, %{"success" => false, "error" => "Invalid filter"})
+
+    assert {:error, :invalid_filter} =
+             ConnectionNotifier.pull_table_data(connection, @table,
+               conflict_strategy: "skip",
+               ids: [1]
+             )
+  end
+
+  test "a preview takes the pull's filter rules", %{connection: connection} do
+    assert {:error, :invalid_filter} =
+             ConnectionNotifier.fetch_table_records(connection, @table, ids: [], limit: 10)
+  end
+
   test "a filter the sender cannot apply comes back as :invalid_filter" do
     repo().query!("CREATE TABLE IF NOT EXISTS pfr_uuid_items (uuid uuid PRIMARY KEY)")
 
