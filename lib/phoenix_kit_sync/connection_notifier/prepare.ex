@@ -15,6 +15,8 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
      is `numeric`/`decimal`/`double precision`/`real` for a given table.
      Used by the importer to scope decimal-string detection. Cached once
      per table-import; empty list on error (safe "don't coerce" fallback).
+     `primary_key_columns/1` sits next to it: the key columns the importer
+     builds its ON CONFLICT target from, composite keys included.
   3. **Record field helpers** (`get_field/2`, `put_field/3`, `drop_field/2`,
      `normalize_keys/1`) — records arrive with either string or atom keys
      depending on whether they came through JSON or internal code. These
@@ -22,10 +24,12 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
      untrusted data.
 
   Extracted from `ConnectionNotifier` in 2026-04. All functions are pure
-  or depend only on `SchemaInspector` (for column introspection) — none
-  touch HTTP, the socket, or the websocket client.
+  or only introspect the local schema (`SchemaInspector`, or a catalog
+  query for the primary key) — none touch HTTP, the socket, or the
+  websocket client.
   """
 
+  alias PhoenixKit.RepoHelper
   alias PhoenixKitSync.SchemaInspector
 
   # ===========================================
@@ -76,6 +80,31 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
       _ ->
         []
     end
+  end
+
+  @doc """
+  Returns the primary key columns of `table_name` in key order: one name
+  for a single-column key, several for a composite key, `[]` when the
+  table has none or does not exist.
+
+  Resolved through `to_regclass/1`, so the table is found on the search
+  path like the unqualified INSERT that follows. Unlike core's
+  `PhoenixKit.RepoHelper.get_pk_column/1` it does not raise on a
+  composite key; a failed query still raises.
+  """
+  @spec primary_key_columns(String.t()) :: [String.t()]
+  def primary_key_columns(table_name) when is_binary(table_name) do
+    sql = """
+    SELECT a.attname
+    FROM pg_index i
+    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+    WHERE i.indrelid = to_regclass($1)
+    AND i.indisprimary
+    ORDER BY array_position(i.indkey, a.attnum)
+    """
+
+    %{rows: rows} = RepoHelper.query!(sql, [table_name])
+    Enum.map(rows, fn [col] -> col end)
   end
 
   # ===========================================

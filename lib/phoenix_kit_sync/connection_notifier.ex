@@ -742,6 +742,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     })
 
     {:ok, import_result}
+  catch
+    kind, reason -> {:error, fail_import(transfer, table_name, kind, reason, __STACKTRACE__)}
   end
 
   defp complete_pull_transfer_with_remap(
@@ -762,7 +764,31 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     })
 
     {:ok, import_result, updated_remap}
+  catch
+    kind, reason ->
+      {:error, fail_import(transfer, table_name, kind, reason, __STACKTRACE__), uuid_remap}
   end
+
+  # An import that raises or exits must not leave its transfer in_progress
+  # or take the caller down with it. The log gets the details; the transfer
+  # row and the returned reason get only the table and the exception type,
+  # since an exception message can quote row values.
+  defp fail_import(transfer, table_name, kind, reason, stacktrace) do
+    Logger.error(
+      "Sync: Import of #{table_name} failed - " <>
+        Exception.format(kind, reason, stacktrace)
+    )
+
+    Transfers.fail_transfer(
+      transfer,
+      "Import of #{table_name} failed (#{error_kind(kind, reason)})"
+    )
+
+    :import_failed
+  end
+
+  defp error_kind(:error, reason) when is_exception(reason), do: inspect(reason.__struct__)
+  defp error_kind(kind, _reason), do: Atom.to_string(kind)
 
   @doc """
   Fetch table schema from a sender site via HTTP API.
@@ -1284,6 +1310,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   defp import_table_data(table_name, data, conflict_strategy) when is_list(data) do
     repo = PhoenixKit.RepoHelper.repo()
     numeric_cols = fetch_numeric_columns(table_name)
+    pk_cols = primary_key_columns(table_name)
 
     Logger.info("Sync: Importing #{length(data)} records into #{table_name}")
 
@@ -1291,7 +1318,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     results =
       Enum.reduce(data, %{imported: 0, skipped: 0, errors: 0, error_sample: nil}, fn record,
                                                                                      acc ->
-        insert_record(repo, table_name, record, conflict_strategy, numeric_cols)
+        insert_record(repo, table_name, record, conflict_strategy, numeric_cols, pk_cols)
         |> accumulate_import_result(acc)
       end)
 
@@ -1313,7 +1340,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   defp import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap)
        when is_list(data) do
     repo = PhoenixKit.RepoHelper.repo()
-    pk_col = PhoenixKit.RepoHelper.get_pk_column(table_name)
+    pk_cols = primary_key_columns(table_name)
 
     Logger.info("Sync: Importing #{length(data)} records into #{table_name} (with remap)")
 
@@ -1341,7 +1368,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     import_ctx = %{
       repo: repo,
       table_name: table_name,
-      pk_col: pk_col,
+      pk_cols: pk_cols,
       fk_columns: fk_columns,
       unique_sets: unique_sets,
       numeric_cols: numeric_cols,
@@ -1378,11 +1405,11 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {%{imported: 0, skipped: 0, errors: 0}, uuid_remap}
   end
 
-  defp import_single_record_with_remap(ctx, record, acc, remap) do
-    record_pk = get_record_field(record, ctx.pk_col)
+  defp import_single_record_with_remap(%{pk_cols: [pk_col]} = ctx, record, acc, remap) do
+    record_pk = get_record_field(record, pk_col)
 
     {match_action, remap} =
-      match_existing_record(ctx.repo, ctx.table_name, ctx.pk_col, record, ctx.unique_sets, remap)
+      match_existing_record(ctx.repo, ctx.table_name, pk_col, record, ctx.unique_sets, remap)
 
     case match_action do
       :skip_matched ->
@@ -1398,12 +1425,35 @@ defmodule PhoenixKitSync.ConnectionNotifier do
             ctx.table_name,
             remapped_record,
             ctx.conflict_strategy,
-            ctx.numeric_cols
+            ctx.numeric_cols,
+            ctx.pk_cols
           )
           |> accumulate_import_result(acc)
 
         {updated_acc, remap}
     end
+  end
+
+  # Composite primary key (or none). The remap is keyed by a single sender
+  # PK, so there is nothing of this row's own to translate and nothing to
+  # add to the remap; nothing references a composite key through it either.
+  # Only the FK columns are rewritten, then the insert resolves conflicts on
+  # the whole key through ON CONFLICT, per the strategy.
+  defp import_single_record_with_remap(ctx, record, acc, remap) do
+    remapped_record = apply_fk_remap(record, ctx.fk_columns, remap)
+
+    updated_acc =
+      insert_record(
+        ctx.repo,
+        ctx.table_name,
+        remapped_record,
+        ctx.conflict_strategy,
+        ctx.numeric_cols,
+        ctx.pk_cols
+      )
+      |> accumulate_import_result(acc)
+
+    {updated_acc, remap}
   end
 
   # Try to match a record by unique columns to an existing local record.
@@ -1542,16 +1592,15 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     %{acc | errors: acc.errors + 1}
   end
 
-  defp insert_record(repo, table_name, record, conflict_strategy, numeric_cols)
+  defp insert_record(repo, table_name, record, conflict_strategy, numeric_cols, pk_cols)
        when is_map(record) do
-    pk_col = PhoenixKit.RepoHelper.get_pk_column(table_name)
-
-    # For append strategy, strip primary key to let DB auto-generate new ID
+    # For append strategy, strip a single-column primary key to let the DB
+    # generate a new one. A composite key is natural data (lang + value),
+    # which the DB cannot generate, so it stays.
     record =
-      if conflict_strategy == "append" do
-        drop_record_field(record, pk_col)
-      else
-        record
+      case {conflict_strategy, pk_cols} do
+        {"append", [pk_col]} -> drop_record_field(record, pk_col)
+        _ -> record
       end
 
     # Normalize all keys to strings for consistent SQL generation
@@ -1569,7 +1618,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       |> Enum.map_join(", ", fn {_col, idx} -> "$#{idx}" end)
 
     columns_str = Enum.map_join(columns, ", ", &~s["#{&1}"])
-    on_conflict = build_on_conflict_clause(conflict_strategy, pk_col, columns)
+    on_conflict = build_on_conflict_clause(conflict_strategy, pk_cols, columns)
 
     sql = ~s[INSERT INTO "#{table_name}" (#{columns_str}) VALUES (#{placeholders}) #{on_conflict}]
 
@@ -1579,14 +1628,21 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       {:error, Exception.message(e)}
   end
 
-  defp insert_record(_repo, _table_name, _record, _strategy, _numeric_cols), do: :error
+  defp insert_record(_repo, _table_name, _record, _strategy, _numeric_cols, _pk_cols), do: :error
 
-  defp build_on_conflict_clause("overwrite", pk_col, columns) do
-    ~s[ON CONFLICT ("#{pk_col}") DO UPDATE SET #{build_update_clause(columns, pk_col)}]
+  defp build_on_conflict_clause("overwrite", [_ | _] = pk_cols, columns) do
+    case build_update_clause(columns, pk_cols) do
+      "" ->
+        "ON CONFLICT DO NOTHING"
+
+      update ->
+        conflict_target = Enum.map_join(pk_cols, ", ", &~s["#{&1}"])
+        ~s[ON CONFLICT (#{conflict_target}) DO UPDATE SET #{update}]
+    end
   end
 
-  defp build_on_conflict_clause("append", _pk_col, _columns), do: ""
-  defp build_on_conflict_clause(_strategy, _pk_col, _columns), do: "ON CONFLICT DO NOTHING"
+  defp build_on_conflict_clause("append", [_pk_col], _columns), do: ""
+  defp build_on_conflict_clause(_strategy, _pk_cols, _columns), do: "ON CONFLICT DO NOTHING"
 
   defp execute_insert(repo, sql, values) do
     case SQL.query(repo, sql, values) do
@@ -1604,9 +1660,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
-  defp build_update_clause(columns, pk_col) do
+  defp build_update_clause(columns, pk_cols) do
     columns
-    |> Enum.reject(&(to_string(&1) == pk_col))
+    |> Enum.reject(&(to_string(&1) in pk_cols))
     |> Enum.map_join(", ", fn col -> ~s["#{col}" = EXCLUDED."#{col}"] end)
   end
 
@@ -1632,6 +1688,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp prepare_value(value), do: Prepare.value(value)
   defp fetch_numeric_columns(table_name), do: Prepare.numeric_columns(table_name)
+  defp primary_key_columns(table_name), do: Prepare.primary_key_columns(table_name)
   defp get_record_field(record, field), do: Prepare.get_field(record, field)
   defp put_record_field(record, field, value), do: Prepare.put_field(record, field, value)
   defp drop_record_field(record, field), do: Prepare.drop_field(record, field)

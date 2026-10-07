@@ -18,6 +18,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   alias PhoenixKitSync.Connection
   alias PhoenixKitSync.ConnectionNotifier
   alias PhoenixKitSync.Connections
+  alias PhoenixKitSync.Errors
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitWeb.Actor
 
@@ -848,22 +849,26 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     # mid-flight would leave partial imports. Let it run to completion and
     # report its result even if the admin navigated away.
     notify_remote_async(fn ->
-      opts =
-        case filter.mode do
-          :all ->
-            [conflict_strategy: strategy]
+      result =
+        guard_pull(table, {:error, :pull_failed}, fn ->
+          opts =
+            case filter.mode do
+              :all ->
+                [conflict_strategy: strategy]
 
-          :ids ->
-            [conflict_strategy: strategy, ids: parse_id_list(filter.ids)]
+              :ids ->
+                [conflict_strategy: strategy, ids: parse_id_list(filter.ids)]
 
-          :range ->
-            [
-              conflict_strategy: strategy,
-              id_range: {parse_int(filter.range_start), parse_int(filter.range_end)}
-            ]
-        end
+              :range ->
+                [
+                  conflict_strategy: strategy,
+                  id_range: {parse_int(filter.range_start), parse_int(filter.range_end)}
+                ]
+            end
 
-      result = ConnectionNotifier.pull_table_data(connection, table, opts)
+          ConnectionNotifier.pull_table_data(connection, table, opts)
+        end)
+
       send(liveview_pid, {:sync_table_complete, table, result})
     end)
 
@@ -943,12 +948,16 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     # Supervised: same reason as detail sync above — importer writes to the
     # local DB and must finish even if the LV dies.
     notify_remote_async(fn ->
-      case ConnectionNotifier.pull_table_data_with_remap(
-             connection,
-             table,
-             uuid_remap,
-             conflict_strategy: strategy
-           ) do
+      pull = fn ->
+        ConnectionNotifier.pull_table_data_with_remap(
+          connection,
+          table,
+          uuid_remap,
+          conflict_strategy: strategy
+        )
+      end
+
+      case guard_pull(table, {:error, :pull_failed, uuid_remap}, pull) do
         {:ok, import_result, updated_remap} ->
           send(
             liveview_pid,
@@ -1089,6 +1098,23 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     {:noreply, socket}
   end
 
+  # Runs one table's pull inside its supervised task. Whatever the pull
+  # does — return, raise or exit — the task ends with a result to send,
+  # so the LiveView always hears back and `sync_in_progress` clears. A
+  # crash gives `failed`: the log gets the details, the page only the
+  # error atom (an exception message can quote row values).
+  defp guard_pull(table, failed, fun) do
+    fun.()
+  catch
+    kind, reason ->
+      Logger.error(
+        "[ConnectionsLive] Pull of #{table} crashed - " <>
+          Exception.format(kind, reason, __STACKTRACE__)
+      )
+
+      failed
+  end
+
   @doc false
   # Public-but-not-API: exposed so tests can pin the gettext-translated
   # error strings without driving a full sync flow. Used internally by
@@ -1101,25 +1127,25 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
       {:ok, %{imported: count}} ->
         {count, 0, 0, nil}
 
-      {:error, :offline} ->
-        {0, 0, 0, gettext("Sender is offline")}
-
-      {:error, :unauthorized} ->
-        {0, 0, 0, gettext("Unauthorized - check connection token")}
-
-      {:error, :table_not_found} ->
-        {0, 0, 0, gettext("Table not found on sender")}
-
-      {:error, reason} when is_binary(reason) ->
-        {0, 0, 0, reason}
-
       {:error, reason} ->
-        {0, 0, 0, gettext("Sync failed: %{reason}", reason: inspect(reason))}
+        {0, 0, 0, sync_error_message(reason)}
 
       _ ->
         {0, 0, 0, gettext("Unknown error")}
     end
   end
+
+  defp sync_error_message(:offline), do: gettext("Sender is offline")
+  defp sync_error_message(:unauthorized), do: gettext("Unauthorized - check connection token")
+  defp sync_error_message(:table_not_found), do: gettext("Table not found on sender")
+
+  defp sync_error_message(reason) when reason in [:import_failed, :pull_failed],
+    do: Errors.message(reason)
+
+  defp sync_error_message(reason) when is_binary(reason), do: reason
+
+  defp sync_error_message(reason),
+    do: gettext("Sync failed: %{reason}", reason: inspect(reason))
 
   # Process a single table's sync result: extract counts, merge with retries, update progress
   defp process_table_sync_result(socket, table, result) do
@@ -1238,8 +1264,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     end
   end
 
-  # Sort tables so dependencies come first (topological sort)
-  defp sort_by_dependencies(table_names, tables) do
+  @doc false
+  # Public-but-not-API, like extract_sync_counts/1: sorts the selected
+  # tables so dependencies come first (topological sort), each table once.
+  def sort_by_dependencies(table_names, tables) do
     # Build a dependency graph for selected tables only
     selected_set = MapSet.new(table_names)
 
@@ -1281,9 +1309,11 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   defp visit_unvisited_node(graph, node, sorted, visited, path) do
     deps = Map.get(graph, node, [])
 
-    # Guard against cycles
+    # A node already on the path is being visited further up (a self
+    # reference or an FK cycle); that visit appends it once its own
+    # dependencies are in, so appending here too would list it twice.
     if MapSet.member?(path, node) do
-      {sorted ++ [node], MapSet.put(visited, node)}
+      {sorted, visited}
     else
       path = MapSet.put(path, node)
 

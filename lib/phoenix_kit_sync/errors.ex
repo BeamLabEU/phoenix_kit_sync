@@ -32,6 +32,7 @@ defmodule PhoenixKitSync.Errors do
           | :download_limit_reached
           | :econnrefused
           | :fetch_failed
+          | :import_failed
           | :incoming_denied
           | :invalid_code
           | :invalid_identifier
@@ -53,6 +54,7 @@ defmodule PhoenixKitSync.Errors do
           | :offline
           | :outside_allowed_hours
           | :password_required
+          | :pull_failed
           | :record_limit_reached
           | :table_not_found
           | :timeout
@@ -77,6 +79,10 @@ defmodule PhoenixKitSync.Errors do
   def message(:download_limit_reached), do: gettext("Download limit reached")
   def message(:econnrefused), do: gettext("Could not connect to the remote site")
   def message(:fetch_failed), do: gettext("Fetch failed")
+
+  def message(:import_failed),
+    do: gettext("Importing this table failed; see the server log for details")
+
   def message(:incoming_denied), do: gettext("Incoming connections are not allowed")
   def message(:invalid_code), do: gettext("Invalid session code")
   def message(:invalid_identifier), do: gettext("Invalid identifier")
@@ -97,6 +103,10 @@ defmodule PhoenixKitSync.Errors do
   def message(:offline), do: gettext("Remote site is offline")
   def message(:outside_allowed_hours), do: gettext("Outside allowed connection hours")
   def message(:password_required), do: gettext("Password required")
+
+  def message(:pull_failed),
+    do: gettext("Pulling this table failed; see the server log for details")
+
   def message(:record_limit_reached), do: gettext("Record limit reached")
 
   def message(:table_not_allowed),
