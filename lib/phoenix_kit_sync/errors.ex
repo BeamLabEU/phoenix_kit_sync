@@ -49,6 +49,7 @@ defmodule PhoenixKitSync.Errors do
           | :missing_code
           | :missing_connection_info
           | :module_disabled
+          | :no_primary_key
           | :not_found
           | :nxdomain
           | :offline
@@ -98,6 +99,13 @@ defmodule PhoenixKitSync.Errors do
   def message(:missing_code), do: gettext("Missing session code")
   def message(:missing_connection_info), do: gettext("Missing connection info")
   def message(:module_disabled), do: gettext("Sync module is disabled")
+
+  def message(:no_primary_key),
+    do:
+      gettext(
+        "Not imported: the table has no primary key here (or does not exist), so repeat pulls would duplicate its rows"
+      )
+
   def message(:not_found), do: gettext("Not found")
   def message(:nxdomain), do: gettext("Could not resolve the remote site's domain")
   def message(:offline), do: gettext("Remote site is offline")

@@ -21,6 +21,8 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
   @slugs "cpk_slugs"
   @owners "cpk_owners"
   @owner_slugs "cpk_owner_slugs"
+  @links "cpk_links"
+  @no_pk "cpk_no_pk"
 
   setup do
     repo().query!("""
@@ -50,6 +52,16 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
       PRIMARY KEY (lang, value)
     )
     """)
+
+    repo().query!("""
+    CREATE TABLE IF NOT EXISTS #{@links} (
+      left_code text NOT NULL,
+      right_code text NOT NULL,
+      PRIMARY KEY (left_code, right_code)
+    )
+    """)
+
+    repo().query!("CREATE TABLE IF NOT EXISTS #{@no_pk} (code text, note text)")
 
     StubRemote.reset()
     on_exit(&StubRemote.reset/0)
@@ -219,6 +231,27 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
              ]
     end
 
+    test "overwrite on a key-only table (a join table) skips existing rows", %{
+      connection: connection
+    } do
+      repo().query!("INSERT INTO #{@links} VALUES ('a', 'b')")
+
+      StubRemote.put_data(@links, [
+        %{"left_code" => "a", "right_code" => "b"},
+        %{"left_code" => "a", "right_code" => "c"}
+      ])
+
+      # No non-key column to update: ON CONFLICT DO UPDATE SET <nothing> is
+      # invalid SQL, so the existing row is skipped instead.
+      assert {:ok, %{imported: 1, skipped: 1, errors: 0}, _} =
+               ConnectionNotifier.pull_table_data_with_remap(connection, @links, %{},
+                 conflict_strategy: "overwrite"
+               )
+
+      %{rows: rows} = repo().query!("SELECT * FROM #{@links} ORDER BY right_code")
+      assert rows == [["a", "b"], ["a", "c"]]
+    end
+
     test "the pull without remap imports composite-key rows too", %{connection: connection} do
       insert_parent("p1", "shelves")
       insert_slug("en", "shelves", "p1", "local")
@@ -256,13 +289,17 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
       assert rows == [["remote-hooks", "hooks"], ["local-shelves", "shelves"]]
     end
 
-    test "a row whose primary key exists is skipped, as before", %{connection: connection} do
+    # Known limitation, fixed separately: the remap path skips a row whose PK
+    # already exists before it tries to insert, whatever the strategy, so
+    # overwrite and merge behave like skip here. Pinned so the separate fix
+    # changes this test on purpose.
+    test "known limitation: an existing primary key is skipped even with overwrite", %{
+      connection: connection
+    } do
       insert_parent("p1", "shelves")
 
       StubRemote.put_data(@parents, [%{"code" => "p1", "name" => "renamed"}])
 
-      # The remap path skips a row whose PK exists before trying to insert,
-      # whatever the strategy, so the local row stays as it was.
       assert {:ok, %{imported: 0, skipped: 1, errors: 0}, %{}} =
                ConnectionNotifier.pull_table_data_with_remap(connection, @parents, %{},
                  conflict_strategy: "overwrite"
@@ -270,6 +307,58 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
 
       %{rows: rows} = repo().query!("SELECT code, name FROM #{@parents}")
       assert rows == [["p1", "shelves"]]
+    end
+  end
+
+  describe "a table without a primary key" do
+    test "is not imported, so repeat pulls cannot duplicate its rows", %{connection: connection} do
+      StubRemote.put_data(@no_pk, [%{"code" => "a", "note" => "x"}])
+
+      for _ <- 1..3 do
+        assert {:error, :no_primary_key, %{}} =
+                 ConnectionNotifier.pull_table_data_with_remap(connection, @no_pk, %{},
+                   conflict_strategy: "skip"
+                 )
+      end
+
+      assert %{rows: [[0]]} = repo().query!("SELECT count(*)::int FROM #{@no_pk}")
+      assert %{status: "failed"} = transfer_for(@no_pk)
+    end
+
+    test "is not imported by the pull without remap either", %{connection: connection} do
+      StubRemote.put_data(@no_pk, [%{"code" => "a", "note" => "x"}])
+
+      assert {:error, :no_primary_key} =
+               ConnectionNotifier.pull_table_data(connection, @no_pk, conflict_strategy: "skip")
+
+      assert %{rows: [[0]]} = repo().query!("SELECT count(*)::int FROM #{@no_pk}")
+    end
+  end
+
+  describe "a remote error that is not a string" do
+    test "fails the transfer as an invalid response without echoing it", %{
+      connection: connection
+    } do
+      StubRemote.put_error(@parents, %{"detail" => "secret-ish payload"})
+      remap = %{{"other", "a"} => "b"}
+
+      assert {:error, :invalid_response, ^remap} =
+               ConnectionNotifier.pull_table_data_with_remap(connection, @parents, remap,
+                 conflict_strategy: "skip"
+               )
+
+      transfer = transfer_for(@parents)
+      assert transfer.status == "failed"
+      refute transfer.error_message =~ "secret-ish"
+    end
+
+    test "does the same on the pull without remap", %{connection: connection} do
+      StubRemote.put_error(@parents, ["a", "list"])
+
+      assert {:error, :invalid_response} =
+               ConnectionNotifier.pull_table_data(connection, @parents, conflict_strategy: "skip")
+
+      assert %{status: "failed"} = transfer_for(@parents)
     end
   end
 

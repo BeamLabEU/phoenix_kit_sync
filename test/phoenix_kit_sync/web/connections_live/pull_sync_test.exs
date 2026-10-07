@@ -4,6 +4,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.PullSyncTest do
   import Ecto.Query
 
   alias PhoenixKitSync.Connections
+  alias PhoenixKitSync.Errors
   alias PhoenixKitSync.Test.StubRemote
   alias PhoenixKitSync.Transfer
 
@@ -107,9 +108,17 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.PullSyncTest do
     assert [%{table: @parents, error_message: message}, %{table: @tree, imported: 1}] =
              assigns.sync_progress.table_results
 
-    assert is_binary(message)
-    refute message =~ "not a record"
+    assert message == Errors.message(:import_failed)
     assert in_progress_transfers() == 0
+
+    # The failed table has no per-record errors to count; the page must
+    # still say the run did not finish cleanly, and why, on that table's row.
+    html = render(view)
+    assert html =~ "Sync Completed with Errors"
+    refute html =~ "Sync Complete!"
+    assert has_element?(view, ~s([data-table-error="#{@parents}"]), message)
+    refute has_element?(view, ~s([data-table-error="#{@tree}"]))
+    refute html =~ "not a record"
   end
 
   test "a crash before the transfer exists still reports back to the page", %{
@@ -131,7 +140,29 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.PullSyncTest do
     assert [%{table: @parents, error_message: m1}, %{table: @tree, error_message: m2}] =
              assigns.sync_progress.table_results
 
-    assert is_binary(m1) and is_binary(m2)
+    assert m1 == Errors.message(:pull_failed)
+    assert m2 == Errors.message(:pull_failed)
     assert in_progress_transfers() == 0
+  end
+
+  test "a crash on the single-table (precise) transfer still reports back", %{
+    conn: conn,
+    connection: connection
+  } do
+    StubRemote.put_data(@parents, [])
+
+    view = open_sync_page(conn, connection)
+    render_click(view, "switch_sync_tab", %{"tab" => "details"})
+    render_click(view, "select_detail_table", %{"table" => @parents})
+    render_change(view, "change_conflict_strategy", %{"strategy" => "bogus"})
+    render_click(view, "transfer_detail_table", %{})
+    assigns = wait_for(view, &(&1.sync_in_progress == false))
+
+    refute assigns.sync_in_progress
+    assert [%{table: @parents, error_message: message}] = assigns.sync_progress.table_results
+    assert message == Errors.message(:pull_failed)
+
+    assert render(view) =~ "Transfer Completed with Errors"
+    assert has_element?(view, ~s([data-table-error="#{@parents}"]), message)
   end
 end

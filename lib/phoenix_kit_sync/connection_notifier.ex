@@ -526,6 +526,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   - `{:ok, result}` - Map with :records_imported, :records_skipped, etc.
   - `{:error, :offline}` - Sender is offline
+  - `{:error, :no_primary_key}` - The local table has no primary key (or is
+    missing); it is not imported, since repeat pulls would duplicate rows
+  - `{:error, :import_failed}` - Handling the response raised or exited; the
+    transfer is marked failed and the details are in the log
   - `{:error, reason}` - Failed to pull
   """
   def pull_table_data(connection, table_name, opts \\ []) do
@@ -544,7 +548,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   @doc """
   Same as pull_table_data but accepts and returns a uuid_remap for FK remapping across tables.
-  Returns {:ok, import_result, updated_remap} or {:error, reason, unchanged_remap}.
+  Returns {:ok, import_result, updated_remap} or {:error, reason, unchanged_remap},
+  with the same error reasons as `pull_table_data/3`.
   """
   def pull_table_data_with_remap(connection, table_name, uuid_remap, opts \\ []) do
     case extract_connection_info(connection) do
@@ -593,8 +598,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       "conflict_strategy" => conflict_strategy
     }
 
-    result = make_http_request(api_url, body, timeout)
-    handle_pull_response(result, transfer, table_name, conflict_strategy)
+    guard_transfer(transfer, table_name, &{:error, &1}, fn ->
+      result = make_http_request(api_url, body, timeout)
+      handle_pull_response(result, transfer, table_name, conflict_strategy)
+    end)
   end
 
   defp do_pull_table_data_with_remap(
@@ -626,8 +633,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       "conflict_strategy" => conflict_strategy
     }
 
-    result = make_http_request(api_url, body, timeout)
-    handle_pull_response_with_remap(result, transfer, table_name, conflict_strategy, uuid_remap)
+    guard_transfer(transfer, table_name, &{:error, &1, uuid_remap}, fn ->
+      result = make_http_request(api_url, body, timeout)
+      handle_pull_response_with_remap(result, transfer, table_name, conflict_strategy, uuid_remap)
+    end)
   end
 
   defp create_pull_transfer(
@@ -657,10 +666,13 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       {:ok, %{"success" => true, "data" => data}} ->
         complete_pull_transfer(transfer, table_name, data, strategy)
 
-      {:ok, %{"success" => false, "error" => error}} ->
+      {:ok, %{"success" => false, "error" => error}} when is_binary(error) ->
         Logger.error("Sync: Pull failed - remote error: #{error}")
         Transfers.fail_transfer(transfer, error)
         {:error, error}
+
+      {:ok, %{"success" => false}} ->
+        fail_unreadable_remote_error(transfer)
 
       other ->
         Logger.error("Sync: Pull failed - invalid response format: #{inspect(other)}")
@@ -712,10 +724,14 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       {:ok, %{"success" => true, "data" => data}} ->
         complete_pull_transfer_with_remap(transfer, table_name, data, strategy, uuid_remap)
 
-      {:ok, %{"success" => false, "error" => error}} ->
+      {:ok, %{"success" => false, "error" => error}} when is_binary(error) ->
         Logger.error("Sync: Pull failed - remote error: #{error}")
         Transfers.fail_transfer(transfer, error)
         {:error, error, uuid_remap}
+
+      {:ok, %{"success" => false}} ->
+        {:error, reason} = fail_unreadable_remote_error(transfer)
+        {:error, reason, uuid_remap}
 
       other ->
         Logger.error("Sync: Pull failed - invalid response format: #{inspect(other)}")
@@ -731,19 +747,31 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
+  # A remote error that is not a string (a map, a list) is not shown or
+  # stored: it is the sender's payload, and interpolating it would raise.
+  defp fail_unreadable_remote_error(transfer) do
+    Logger.error("Sync: Pull failed - remote sent an error that is not a string")
+    Transfers.fail_transfer(transfer, "Invalid response from remote site")
+    {:error, :invalid_response}
+  end
+
   defp complete_pull_transfer(transfer, table_name, data, conflict_strategy) do
-    import_result = import_table_data(table_name, data, conflict_strategy)
+    case primary_key_columns(table_name) do
+      [] ->
+        {:error, fail_no_primary_key(transfer, table_name)}
 
-    Transfers.complete_transfer(transfer, %{
-      records_transferred: length(data),
-      records_created: import_result.imported,
-      records_skipped: import_result.skipped,
-      records_failed: import_result.errors
-    })
+      pk_cols ->
+        import_result = import_table_data(table_name, data, conflict_strategy, pk_cols)
 
-    {:ok, import_result}
-  catch
-    kind, reason -> {:error, fail_import(transfer, table_name, kind, reason, __STACKTRACE__)}
+        Transfers.complete_transfer(transfer, %{
+          records_transferred: length(data),
+          records_created: import_result.imported,
+          records_skipped: import_result.skipped,
+          records_failed: import_result.errors
+        })
+
+        {:ok, import_result}
+    end
   end
 
   defp complete_pull_transfer_with_remap(
@@ -753,26 +781,50 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          conflict_strategy,
          uuid_remap
        ) do
-    {import_result, updated_remap} =
-      import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap)
+    case primary_key_columns(table_name) do
+      [] ->
+        {:error, fail_no_primary_key(transfer, table_name), uuid_remap}
 
-    Transfers.complete_transfer(transfer, %{
-      records_transferred: length(data),
-      records_created: import_result.imported,
-      records_skipped: import_result.skipped,
-      records_failed: import_result.errors
-    })
+      pk_cols ->
+        {import_result, updated_remap} =
+          import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap, pk_cols)
 
-    {:ok, import_result, updated_remap}
-  catch
-    kind, reason ->
-      {:error, fail_import(transfer, table_name, kind, reason, __STACKTRACE__), uuid_remap}
+        Transfers.complete_transfer(transfer, %{
+          records_transferred: length(data),
+          records_created: import_result.imported,
+          records_skipped: import_result.skipped,
+          records_failed: import_result.errors
+        })
+
+        {:ok, import_result, updated_remap}
+    end
   end
 
-  # An import that raises or exits must not leave its transfer in_progress
-  # or take the caller down with it. The log gets the details; the transfer
-  # row and the returned reason get only the table and the exception type,
-  # since an exception message can quote row values.
+  # Without a primary key there is nothing to detect a row that is already
+  # here: every pull would insert the same rows again. Such a table (or one
+  # missing locally) is not imported at all.
+  defp fail_no_primary_key(transfer, table_name) do
+    Logger.warning("Sync: #{table_name} has no primary key here; not importing it")
+    Transfers.fail_transfer(transfer, "No primary key on #{table_name}; not imported")
+    :no_primary_key
+  end
+
+  # Everything after the transfer row exists runs under this: a response
+  # handler or an import that raises or exits fails the transfer instead of
+  # leaving it in_progress, and the caller gets `wrap_error.(:import_failed)`
+  # instead of a crash.
+  defp guard_transfer(transfer, table_name, wrap_error, fun) do
+    fun.()
+  catch
+    kind, reason ->
+      wrap_error.(fail_import(transfer, table_name, kind, reason, __STACKTRACE__))
+  end
+
+  # The log gets the details; the transfer row and the returned reason get
+  # only the table and the exception type, since an exception message can
+  # quote row values. Rows inserted before the failure stay (each INSERT is
+  # its own statement), and the transfer records no counts for them: those
+  # counts lived in the import loop that raised.
   defp fail_import(transfer, table_name, kind, reason, stacktrace) do
     Logger.error(
       "Sync: Import of #{table_name} failed - " <>
@@ -1307,10 +1359,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       :ok
   end
 
-  defp import_table_data(table_name, data, conflict_strategy) when is_list(data) do
+  defp import_table_data(table_name, data, conflict_strategy, pk_cols) when is_list(data) do
     repo = PhoenixKit.RepoHelper.repo()
     numeric_cols = fetch_numeric_columns(table_name)
-    pk_cols = primary_key_columns(table_name)
 
     Logger.info("Sync: Importing #{length(data)} records into #{table_name}")
 
@@ -1333,14 +1384,13 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     Map.drop(results, [:error_sample])
   end
 
-  defp import_table_data(_table_name, _data, _strategy) do
+  defp import_table_data(_table_name, _data, _strategy, _pk_cols) do
     %{imported: 0, skipped: 0, errors: 0}
   end
 
-  defp import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap)
+  defp import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap, pk_cols)
        when is_list(data) do
     repo = PhoenixKit.RepoHelper.repo()
-    pk_cols = primary_key_columns(table_name)
 
     Logger.info("Sync: Importing #{length(data)} records into #{table_name} (with remap)")
 
@@ -1401,7 +1451,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {Map.drop(results, [:error_sample]), updated_remap}
   end
 
-  defp import_table_data_with_remap(_table_name, _data, _strategy, uuid_remap) do
+  defp import_table_data_with_remap(_table_name, _data, _strategy, uuid_remap, _pk_cols) do
     {%{imported: 0, skipped: 0, errors: 0}, uuid_remap}
   end
 
@@ -1434,11 +1484,14 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
-  # Composite primary key (or none). The remap is keyed by a single sender
-  # PK, so there is nothing of this row's own to translate and nothing to
-  # add to the remap; nothing references a composite key through it either.
-  # Only the FK columns are rewritten, then the insert resolves conflicts on
-  # the whole key through ON CONFLICT, per the strategy.
+  # Composite primary key (a table without one never gets here). The remap
+  # is keyed by a single sender PK, so there is nothing of this row's own to
+  # translate and nothing to add to the remap; nothing references a
+  # composite key through it either. FK columns go through apply_fk_remap/3
+  # as on the single-key path, which today rewrites only string-valued keys
+  # (text columns): a uuid FK arrives as a wrapped binary and passes through
+  # unchanged. Then the insert resolves conflicts on the whole key through
+  # ON CONFLICT, per the strategy.
   defp import_single_record_with_remap(ctx, record, acc, remap) do
     remapped_record = apply_fk_remap(record, ctx.fk_columns, remap)
 
@@ -1688,7 +1741,14 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp prepare_value(value), do: Prepare.value(value)
   defp fetch_numeric_columns(table_name), do: Prepare.numeric_columns(table_name)
-  defp primary_key_columns(table_name), do: Prepare.primary_key_columns(table_name)
+
+  defp primary_key_columns(table_name) do
+    case SchemaInspector.get_primary_key(table_name) do
+      {:ok, pk_cols} -> pk_cols
+      {:error, reason} -> raise "primary key lookup for #{table_name} failed: #{inspect(reason)}"
+    end
+  end
+
   defp get_record_field(record, field), do: Prepare.get_field(record, field)
   defp put_record_field(record, field, value), do: Prepare.put_field(record, field, value)
   defp drop_record_field(record, field), do: Prepare.drop_field(record, field)

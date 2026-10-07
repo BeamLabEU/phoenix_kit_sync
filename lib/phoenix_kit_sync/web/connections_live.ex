@@ -1139,13 +1139,37 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   defp sync_error_message(:unauthorized), do: gettext("Unauthorized - check connection token")
   defp sync_error_message(:table_not_found), do: gettext("Table not found on sender")
 
-  defp sync_error_message(reason) when reason in [:import_failed, :pull_failed],
+  defp sync_error_message(reason) when reason in [:import_failed, :no_primary_key, :pull_failed],
     do: Errors.message(reason)
 
   defp sync_error_message(reason) when is_binary(reason), do: reason
 
   defp sync_error_message(reason),
     do: gettext("Sync failed: %{reason}", reason: inspect(reason))
+
+  # A table that failed as a whole (offline sender, import that raised, no
+  # primary key) has no per-record errors to count, only an error_message.
+  # The run still finished, but not cleanly.
+  defp sync_has_errors?(progress) do
+    Map.get(progress, :records_errors, 0) > 0 or
+      Enum.any?(Map.get(progress, :table_results, []), &table_failed?/1)
+  end
+
+  defp table_failed?(table_result), do: is_binary(Map.get(table_result, :error_message))
+
+  attr :table_result, :map, required: true
+
+  defp table_error_line(assigns) do
+    ~H"""
+    <div
+      :if={table_failed?(@table_result)}
+      class="font-sans text-error whitespace-normal"
+      data-table-error={@table_result.table}
+    >
+      {@table_result.error_message}
+    </div>
+    """
+  end
 
   # Process a single table's sync result: extract counts, merge with retries, update progress
   defp process_table_sync_result(socket, table, result) do
@@ -2077,7 +2101,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           <%= if @active_tab == :bulk do %>
             <%!-- ========== BULK TRANSFER TAB ========== --%>
             <%= if @progress && Map.get(@progress, :status) == :completed do %>
-              <% has_errors = Map.get(@progress, :records_errors, 0) > 0 %>
+              <% has_errors = sync_has_errors?(@progress) %>
               <div class="flex flex-col items-center justify-center py-12">
                 <%= if has_errors do %>
                   <div class="text-6xl mb-4">⚠️</div>
@@ -2110,6 +2134,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                           <td class="font-mono text-xs">
                             {tr.table}
                             {if Map.get(tr, :retried), do: " ↻"}
+                            <.table_error_line table_result={tr} />
                           </td>
                           <td class="text-right">
                             <span class={
@@ -2429,7 +2454,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           <% else %>
             <%!-- ========== PRECISE TRANSFER TAB ========== --%>
             <%= if @progress && Map.get(@progress, :status) == :completed do %>
-              <% has_errors = Map.get(@progress, :records_errors, 0) > 0 %>
+              <% has_errors = sync_has_errors?(@progress) %>
               <div class="flex flex-col items-center justify-center py-12">
                 <%= if has_errors do %>
                   <div class="text-6xl mb-4">⚠️</div>
@@ -2453,7 +2478,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                     <tbody>
                       <%= for tr <- Map.get(@progress, :table_results, []) do %>
                         <tr>
-                          <td class="font-mono text-xs">{tr.table}</td>
+                          <td class="font-mono text-xs">
+                            {tr.table}
+                            <.table_error_line table_result={tr} />
+                          </td>
                           <td class="text-right">
                             <span class={
                               if tr.imported > 0, do: "text-success font-semibold", else: ""

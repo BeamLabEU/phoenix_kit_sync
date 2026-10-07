@@ -31,6 +31,9 @@ defmodule PhoenixKitSync.Test.StubRemote do
   @doc "Sets the records `pull-data` returns for `table`."
   def put_data(table, records), do: update(&put_in(&1, [:data, table], records))
 
+  @doc "Makes `pull-data` for `table` answer `success: false` with `error` as given."
+  def put_error(table, error), do: update(&put_in(&1, [:data, table], {:error, error}))
+
   def reset, do: Application.delete_env(:phoenix_kit_sync, @env_key)
 
   defp state, do: Application.get_env(:phoenix_kit_sync, @env_key, %{tables: [], data: %{}})
@@ -51,6 +54,7 @@ defmodule PhoenixKitSync.Test.StubRemote do
           table = conn.body_params["table_name"]
 
           case Map.fetch(state().data, table) do
+            {:ok, {:error, error}} -> %{success: false, error: error}
             {:ok, records} -> %{success: true, table: table, data: records}
             :error -> %{success: false, error: "Table not found"}
           end

@@ -37,6 +37,8 @@ defmodule PhoenixKitSync.ErrorsTest do
       {:missing_code, "Missing session code"},
       {:missing_connection_info, "Missing connection info"},
       {:module_disabled, "Sync module is disabled"},
+      {:no_primary_key,
+       "Not imported: the table has no primary key here (or does not exist), so repeat pulls would duplicate its rows"},
       {:not_found, "Not found"},
       {:nxdomain, "Could not resolve the remote site's domain"},
       {:offline, "Remote site is offline"},
