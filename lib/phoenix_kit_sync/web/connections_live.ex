@@ -659,7 +659,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             |> assign(:creating_table, false)
             |> put_flash(
               :error,
-              gettext("Failed to create table: %{reason}", reason: inspect(reason))
+              gettext("Failed to create table: %{reason}", reason: Errors.message(reason))
             )
 
           {:noreply, socket}
@@ -1140,7 +1140,14 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   defp sync_error_message(:table_not_found), do: gettext("Table not found on sender")
 
   defp sync_error_message(reason)
-       when reason in [:import_failed, :no_primary_key, :pull_failed, :table_missing_locally],
+       when reason in [
+              :import_failed,
+              :invalid_column_name,
+              :invalid_table_name,
+              :no_primary_key,
+              :pull_failed,
+              :table_missing_locally
+            ],
        do: Errors.message(reason)
 
   defp sync_error_message(reason) when is_binary(reason), do: reason

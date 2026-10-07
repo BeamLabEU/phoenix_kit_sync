@@ -35,6 +35,8 @@ defmodule PhoenixKitSync.Errors do
           | :import_failed
           | :incoming_denied
           | :invalid_code
+          | :invalid_column_name
+          | :invalid_column_type
           | :invalid_identifier
           | :invalid_json
           | :invalid_password
@@ -87,6 +89,14 @@ defmodule PhoenixKitSync.Errors do
 
   def message(:incoming_denied), do: gettext("Incoming connections are not allowed")
   def message(:invalid_code), do: gettext("Invalid session code")
+
+  def message(:invalid_column_name),
+    do:
+      gettext("Not imported: the sender's data has a column name that is not a valid identifier")
+
+  def message(:invalid_column_type),
+    do: gettext("The sender's schema has a column type that is not a plain type name")
+
   def message(:invalid_identifier), do: gettext("Invalid identifier")
   def message(:invalid_json), do: gettext("Invalid JSON")
   def message(:invalid_password), do: gettext("Invalid password")

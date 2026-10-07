@@ -230,16 +230,18 @@ defmodule PhoenixKitSync.SchemaInspector do
   @spec create_table(String.t(), map(), keyword()) :: :ok | {:error, any()}
   def create_table(table_name, schema_def, opts \\ []) do
     db_schema = Keyword.get(opts, :schema, "public")
+    columns = Map.get(schema_def, "columns") || Map.get(schema_def, :columns) || []
+    primary_key = Map.get(schema_def, "primary_key") || Map.get(schema_def, :primary_key) || []
 
-    if valid_identifier?(table_name) do
-      columns = Map.get(schema_def, "columns") || Map.get(schema_def, :columns) || []
-      primary_key = Map.get(schema_def, "primary_key") || Map.get(schema_def, :primary_key) || []
-
+    # The schema comes from the sender: every name and type is checked
+    # before it goes into the DDL, which cannot take bind parameters.
+    with :ok <- check_create_table_name(table_name, db_schema),
+         :ok <- check_create_columns(columns, primary_key) do
       column_defs = Enum.map_join(columns, ",\n  ", &column_to_sql/1)
 
       pk_constraint =
         if primary_key != [] do
-          pk_cols = Enum.join(primary_key, ", ")
+          pk_cols = Enum.map_join(primary_key, ", ", &~s["#{&1}"])
           ",\n  PRIMARY KEY (#{pk_cols})"
         else
           ""
@@ -255,10 +257,51 @@ defmodule PhoenixKitSync.SchemaInspector do
         {:ok, _} -> :ok
         {:error, reason} -> {:error, reason}
       end
-    else
-      {:error, :invalid_table_name}
     end
   end
+
+  defp check_create_table_name(table_name, db_schema) do
+    if valid_identifier?(table_name) and valid_identifier?(db_schema),
+      do: :ok,
+      else: {:error, :invalid_table_name}
+  end
+
+  defp check_create_columns(columns, primary_key) do
+    names = Enum.map(columns, &(&1["name"] || &1[:name]))
+    types = Enum.map(columns, &map_column_type(&1["type"] || &1[:type]))
+
+    cond do
+      not Enum.all?(names ++ primary_key, &valid_identifier?/1) -> {:error, :invalid_identifier}
+      not Enum.all?(types, &valid_column_type?/1) -> {:error, :invalid_column_type}
+      true -> :ok
+    end
+  end
+
+  # Words that may follow another word in a multi-word type name
+  # ("character varying", "timestamp with time zone", "double precision").
+  @type_words ~w(character varying bit double precision timestamp time with without zone)
+
+  # A column type as information_schema reports it: one type name, or a
+  # multi-word name made only of @type_words, optionally with a numeric
+  # modifier ("(20)", "(10,2)") and array brackets. A second free word would
+  # let a sender append clauses such as REFERENCES or DEFAULT, so it is
+  # refused.
+  @doc false
+  @spec valid_column_type?(term()) :: boolean()
+  def valid_column_type?(type) when is_binary(type) do
+    case Regex.run(~r/^([a-z][a-z0-9_]*(?: [a-z]+)*)(?:\(\d+(?:,\s*\d+)?\))?(?:\[\])*$/i, type) do
+      [_, name | _] ->
+        case String.split(name, " ") do
+          [_single] -> true
+          words -> Enum.all?(words, &(String.downcase(&1) in @type_words))
+        end
+
+      nil ->
+        false
+    end
+  end
+
+  def valid_column_type?(_), do: false
 
   defp column_to_sql(column) do
     name = column["name"] || column[:name]
@@ -280,8 +323,7 @@ defmodule PhoenixKitSync.SchemaInspector do
 
   defp map_column_type("character varying"), do: "varchar(255)"
 
-  defp map_column_type("character varying(" <> rest),
-    do: "varchar(#{String.trim_trailing(rest, ")")}"
+  defp map_column_type("character varying(" <> rest), do: "varchar(" <> rest
 
   defp map_column_type("timestamp without time zone"), do: "timestamp"
   defp map_column_type("timestamp with time zone"), do: "timestamptz"
