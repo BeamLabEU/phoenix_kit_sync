@@ -91,8 +91,7 @@ defmodule PhoenixKitSync.Errors do
   def message(:invalid_code), do: gettext("Invalid session code")
 
   def message(:invalid_column_name),
-    do:
-      gettext("Not imported: the sender's data has a column name that is not a valid identifier")
+    do: gettext("The sender sent a column name that is not a valid identifier")
 
   def message(:invalid_column_type),
     do: gettext("The sender's schema has a column type that is not a plain type name")

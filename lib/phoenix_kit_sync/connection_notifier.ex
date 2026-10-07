@@ -524,8 +524,15 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   ## Returns
 
-  - `{:ok, result}` - Map with :records_imported, :records_skipped, etc.
+  - `{:ok, result}` - Map with `:imported`, `:skipped`, `:errors`, plus
+    `:unknown_columns` when some records carried columns the local table
+    lacks (those records count as errors)
   - `{:error, :offline}` - Sender is offline
+  - `{:error, :invalid_table_name}` - The name is not a plain identifier;
+    nothing is recorded or requested
+  - `{:error, :invalid_column_name}` - The sender's data has a key that is
+    not a plain identifier; no row of the table is written
+  - `{:error, :invalid_response}` - The sender's answer could not be read
   - `{:error, :table_missing_locally}` - The table does not exist on this
     site; nothing is requested from the sender
   - `{:error, :no_primary_key}` - The local table has no primary key; it is
@@ -535,7 +542,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:error, reason}` - Failed to pull
   """
   def pull_table_data(connection, table_name, opts \\ []) do
-    with {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
+    with :ok <- check_table_name(table_name),
+         {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
       connection_uuid = Map.get(connection, :uuid)
 
       do_pull_table_data(
@@ -554,6 +562,25 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   with the same error reasons as `pull_table_data/3`.
   """
   def pull_table_data_with_remap(connection, table_name, uuid_remap, opts \\ []) do
+    case check_table_name(table_name) do
+      :ok -> pull_checked_table_with_remap(connection, table_name, uuid_remap, opts)
+      {:error, reason} -> {:error, reason, uuid_remap}
+    end
+  end
+
+  # The table name comes from the sender's table list. It goes into the
+  # transfer row, the log and the INSERT, so anything but a plain identifier
+  # (at most 63 bytes, like every Postgres name) stops here, unechoed.
+  defp check_table_name(table_name) do
+    if SchemaInspector.valid_identifier?(table_name) do
+      :ok
+    else
+      Logger.warning("Sync: refusing to pull a table whose name is not a valid identifier")
+      {:error, :invalid_table_name}
+    end
+  end
+
+  defp pull_checked_table_with_remap(connection, table_name, uuid_remap, opts) do
     case extract_connection_info(connection) do
       {:ok, site_url, auth_token_hash} ->
         connection_uuid = Map.get(connection, :uuid)
@@ -814,24 +841,24 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   # here: every pull would insert the same rows again, so such a table is
   # not imported at all.
   defp check_local_table(transfer, table_name) do
-    cond do
-      # The name comes from the sender's table list: it is spliced into the
-      # INSERT, so anything but a plain identifier stops here, unechoed.
-      not SchemaInspector.valid_identifier?(table_name) ->
-        reject_local_table(transfer, :invalid_table_name, "Invalid table name")
+    case SchemaInspector.get_schema(table_name) do
+      {:ok, %{primary_key: []}} ->
+        reject_local_table(transfer, :no_primary_key, "No primary key on #{table_name}")
 
-      not SchemaInspector.table_exists?(table_name) ->
+      {:ok, %{primary_key: pk_cols, columns: columns}} ->
+        {:ok, %{pk_cols: pk_cols, columns: MapSet.new(columns, & &1.name)}}
+
+      {:error, :not_found} ->
         reject_local_table(
           transfer,
           :table_missing_locally,
           "Table #{table_name} does not exist here"
         )
 
-      true ->
-        case primary_key_columns(table_name) do
-          [] -> reject_local_table(transfer, :no_primary_key, "No primary key on #{table_name}")
-          pk_cols -> {:ok, %{pk_cols: pk_cols, columns: local_column_names(table_name)}}
-        end
+      # A failed lookup is not a missing table; guard_transfer turns this
+      # into :import_failed.
+      {:error, reason} ->
+        raise "schema lookup for #{table_name} failed: #{inspect(reason)}"
     end
   end
 
@@ -928,9 +955,17 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp parse_schema_response(resp_body) do
     case Jason.decode(resp_body) do
-      {:ok, %{"success" => true, "schema" => schema}} -> {:ok, schema}
-      {:ok, %{"success" => false, "error" => error}} -> {:error, error}
-      _ -> {:error, :invalid_response}
+      {:ok, %{"success" => true, "schema" => schema}} when is_map(schema) ->
+        # Older senders describe columns as column_name/data_type/is_nullable
+        # and send no primary key; normalise so the page and create_table/3
+        # read one shape.
+        {:ok, Map.merge(schema, SchemaInspector.normalize_schema_def(schema))}
+
+      {:ok, %{"success" => false, "error" => error}} ->
+        {:error, error}
+
+      _ ->
+        {:error, :invalid_response}
     end
   end
 
@@ -1423,8 +1458,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     # Execute raw SQL insert for each record
     results =
-      Enum.reduce(data, %{imported: 0, skipped: 0, errors: 0, error_sample: nil}, fn record,
-                                                                                     acc ->
+      Enum.reduce(data, new_import_acc(), fn record, acc ->
         insert_record(repo, table_name, record, conflict_strategy, numeric_cols, target)
         |> accumulate_import_result(acc)
       end)
@@ -1437,7 +1471,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       Logger.warning("Sync: Sample error for #{table_name}: #{results.error_sample}")
     end
 
-    Map.drop(results, [:error_sample])
+    finish_import_acc(results)
   end
 
   defp import_table_data(_table_name, _data, _strategy, _target) do
@@ -1485,7 +1519,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {results, updated_remap} =
       Enum.reduce(
         data,
-        {%{imported: 0, skipped: 0, errors: 0, error_sample: nil}, uuid_remap},
+        {new_import_acc(), uuid_remap},
         fn record, {acc, remap} ->
           import_single_record_with_remap(import_ctx, record, acc, remap)
         end
@@ -1505,7 +1539,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       Logger.info("Sync: Added #{remap_additions} UUID remap(s) from #{table_name}")
     end
 
-    {Map.drop(results, [:error_sample]), updated_remap}
+    {finish_import_acc(results), updated_remap}
   end
 
   defp import_table_data_with_remap(_table_name, _data, _strategy, uuid_remap, _target) do
@@ -1693,9 +1727,33 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
+  defp new_import_acc,
+    do: %{imported: 0, skipped: 0, errors: 0, error_sample: nil, unknown_columns: MapSet.new()}
+
+  # The error sample stays in the log: a database message can quote a row
+  # value. Unknown column names already passed valid_identifier?/1 and say
+  # nothing about the data, so they go back to the page.
+  defp finish_import_acc(acc) do
+    result = Map.drop(acc, [:error_sample, :unknown_columns])
+
+    case Enum.sort(acc.unknown_columns) do
+      [] -> result
+      columns -> Map.put(result, :unknown_columns, columns)
+    end
+  end
+
   defp accumulate_import_result(:ok, acc), do: %{acc | imported: acc.imported + 1}
   defp accumulate_import_result(:skipped, acc), do: %{acc | skipped: acc.skipped + 1}
   defp accumulate_import_result(:error, acc), do: %{acc | errors: acc.errors + 1}
+
+  defp accumulate_import_result({:error, {:unknown_columns, columns}}, acc) do
+    acc = %{acc | unknown_columns: MapSet.union(acc.unknown_columns, MapSet.new(columns))}
+
+    accumulate_import_result(
+      {:error, "columns not in the local table: #{Enum.join(columns, ", ")}"},
+      acc
+    )
+  end
 
   defp accumulate_import_result({:error, reason}, acc) do
     acc = if is_nil(acc.error_sample), do: %{acc | error_sample: reason}, else: acc
@@ -1735,7 +1793,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         )
 
       unknown ->
-        {:error, "columns not in the local table: #{Enum.join(unknown, ", ")}"}
+        {:error, {:unknown_columns, unknown}}
     end
   rescue
     e ->
@@ -1829,20 +1887,6 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp prepare_value(value), do: Prepare.value(value)
   defp fetch_numeric_columns(table_name), do: Prepare.numeric_columns(table_name)
-
-  defp local_column_names(table_name) do
-    case SchemaInspector.get_schema(table_name) do
-      {:ok, %{columns: columns}} -> MapSet.new(columns, & &1.name)
-      {:error, reason} -> raise "column lookup for #{table_name} failed: #{inspect(reason)}"
-    end
-  end
-
-  defp primary_key_columns(table_name) do
-    case SchemaInspector.get_primary_key(table_name) do
-      {:ok, pk_cols} -> pk_cols
-      {:error, reason} -> raise "primary key lookup for #{table_name} failed: #{inspect(reason)}"
-    end
-  end
 
   defp get_record_field(record, field), do: Prepare.get_field(record, field)
   defp put_record_field(record, field, value), do: Prepare.put_field(record, field, value)

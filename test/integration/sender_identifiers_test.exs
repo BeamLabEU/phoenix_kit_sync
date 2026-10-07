@@ -7,6 +7,8 @@ defmodule PhoenixKitSync.Integration.SenderIdentifiersTest do
   alias PhoenixKitSync.Test.StubRemote
   alias PhoenixKitSync.Transfer
 
+  import Ecto.Query
+
   # Column names, column types and table names that come from the sender
   # are data, not SQL. A pull or a "create table" must never splice one
   # into a statement unchecked: an invalid name is refused before any SQL
@@ -54,8 +56,6 @@ defmodule PhoenixKitSync.Integration.SenderIdentifiersTest do
   end
 
   defp transfer_for(table) do
-    import Ecto.Query
-
     repo().one!(
       from(t in Transfer,
         where: t.table_name == ^table,
@@ -126,7 +126,7 @@ defmodule PhoenixKitSync.Integration.SenderIdentifiersTest do
 
       on_exit(fn -> :telemetry.detach(handler) end)
 
-      assert {:ok, %{imported: 1, skipped: 0, errors: 1}, %{}} =
+      assert {:ok, %{imported: 1, skipped: 0, errors: 1, unknown_columns: ["extra"]}, %{}} =
                ConnectionNotifier.pull_table_data_with_remap(connection, @target, %{},
                  conflict_strategy: "skip"
                )
@@ -137,6 +137,24 @@ defmodule PhoenixKitSync.Integration.SenderIdentifiersTest do
       queries = for {:sql, query} <- flush_mailbox(), do: query
       assert Enum.any?(queries, &(&1 =~ "INSERT INTO"))
       refute Enum.any?(queries, &(&1 =~ ~s["extra"]))
+    end
+  end
+
+  describe "a table name that is too long to be a Postgres name" do
+    test "is refused before a transfer row is written", %{connection: connection} do
+      table = String.duplicate("t", 300)
+      before = repo().aggregate(Transfer, :count)
+
+      assert {:error, :invalid_table_name, %{}} =
+               ConnectionNotifier.pull_table_data_with_remap(connection, table, %{},
+                 conflict_strategy: "skip"
+               )
+
+      assert {:error, :invalid_table_name} =
+               ConnectionNotifier.pull_table_data(connection, table, conflict_strategy: "skip")
+
+      assert repo().aggregate(Transfer, :count) == before
+      assert StubRemote.pull_count(table) == 0
     end
   end
 
@@ -152,12 +170,23 @@ defmodule PhoenixKitSync.Integration.SenderIdentifiersTest do
 
       assert StubRemote.pull_count(table) == 0
       assert victim_intact?()
+      # Checked before the transfer row: nothing records the raw name.
+      refute repo().exists?(from(t in Transfer, where: t.table_name == ^table))
+    end
+  end
+
+  describe "name and type checks" do
+    test "a trailing newline does not pass for a valid name or type" do
+      refute SchemaInspector.valid_identifier?("users\n")
+      refute SchemaInspector.valid_column_type?("text\n")
+      assert SchemaInspector.valid_identifier?(String.duplicate("a", 63))
+      refute SchemaInspector.valid_identifier?(String.duplicate("a", 64))
     end
   end
 
   describe "create_table/2 with a sender's schema" do
     test "refuses a column name that is not a valid identifier" do
-      assert {:error, :invalid_identifier} =
+      assert {:error, :invalid_column_name} =
                create([col("id", "bigint", true), col(@injection, "text")])
 
       assert victim_intact?()
@@ -185,11 +214,42 @@ defmodule PhoenixKitSync.Integration.SenderIdentifiersTest do
     end
 
     test "refuses a primary key column that is not a valid identifier" do
-      assert {:error, :invalid_identifier} =
+      assert {:error, :invalid_column_name} =
                create([col("id", "bigint", true)], ["id); DROP TABLE ident_victim; --"])
 
       assert victim_intact?()
       refute SchemaInspector.table_exists?("ident_created")
+    end
+
+    test "quotes primary key columns, so a mixed-case key keeps its name" do
+      assert :ok = create([col("Id", "bigint", true), col("note", "text")], ["Id"])
+      assert {:ok, ["Id"]} = SchemaInspector.get_primary_key("ident_created")
+    end
+
+    test "accepts the shape the table-schema API sends" do
+      schema = %{
+        "table_name" => "ident_created",
+        "columns" => [
+          %{
+            "column_name" => "code",
+            "data_type" => "character varying",
+            "is_nullable" => "NO",
+            "character_maximum_length" => 12
+          },
+          %{"column_name" => "note", "data_type" => "text", "is_nullable" => "YES"},
+          %{"column_name" => "title", "data_type" => "text", "is_nullable" => "NO"}
+        ],
+        "primary_key" => ["code"]
+      }
+
+      assert :ok = SchemaInspector.create_table("ident_created", schema)
+      assert {:ok, ["code"]} = SchemaInspector.get_primary_key("ident_created")
+
+      {:ok, %{columns: columns}} = SchemaInspector.get_schema("ident_created")
+      code = Enum.find(columns, &(&1.name == "code"))
+      assert %{nullable: false, max_length: 12} = code
+      assert %{nullable: true} = Enum.find(columns, &(&1.name == "note"))
+      assert %{nullable: false} = Enum.find(columns, &(&1.name == "title"))
     end
 
     test "still accepts the types information_schema reports" do

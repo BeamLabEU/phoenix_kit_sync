@@ -51,10 +51,17 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.ExtractSyncCountsTest do
 
     test "invalid names from the sender say what was refused" do
       {0, 0, 0, msg} = ConnectionsLive.extract_sync_counts({:error, :invalid_column_name})
-      assert msg =~ "column name that is not a valid identifier"
+      assert msg == "The sender sent a column name that is not a valid identifier"
 
       {0, 0, 0, msg} = ConnectionsLive.extract_sync_counts({:error, :invalid_table_name})
       assert msg == "Invalid table name"
+    end
+
+    test "unknown columns are named, alongside the counts" do
+      assert {1, 0, 2, "Columns not in the local table: a, b"} =
+               ConnectionsLive.extract_sync_counts(
+                 {:ok, %{imported: 1, skipped: 0, errors: 2, unknown_columns: ["a", "b"]}}
+               )
     end
 
     test ":table_missing_locally points at creating the table" do

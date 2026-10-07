@@ -1121,6 +1121,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   # process_table_sync_result/3.
   def extract_sync_counts(result) do
     case result do
+      {:ok, %{imported: imported, skipped: skipped, errors: errors, unknown_columns: columns}} ->
+        message =
+          gettext("Columns not in the local table: %{columns}", columns: Enum.join(columns, ", "))
+
+        {imported, skipped, errors, message}
+
       {:ok, %{imported: imported, skipped: skipped, errors: errors}} ->
         {imported, skipped, errors, nil}
 

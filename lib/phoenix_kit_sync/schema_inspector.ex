@@ -230,8 +230,7 @@ defmodule PhoenixKitSync.SchemaInspector do
   @spec create_table(String.t(), map(), keyword()) :: :ok | {:error, any()}
   def create_table(table_name, schema_def, opts \\ []) do
     db_schema = Keyword.get(opts, :schema, "public")
-    columns = Map.get(schema_def, "columns") || Map.get(schema_def, :columns) || []
-    primary_key = Map.get(schema_def, "primary_key") || Map.get(schema_def, :primary_key) || []
+    %{"columns" => columns, "primary_key" => primary_key} = normalize_schema_def(schema_def)
 
     # The schema comes from the sender: every name and type is checked
     # before it goes into the DDL, which cannot take bind parameters.
@@ -267,11 +266,11 @@ defmodule PhoenixKitSync.SchemaInspector do
   end
 
   defp check_create_columns(columns, primary_key) do
-    names = Enum.map(columns, &(&1["name"] || &1[:name]))
-    types = Enum.map(columns, &map_column_type(&1["type"] || &1[:type]))
+    names = Enum.map(columns, & &1["name"])
+    types = Enum.map(columns, &map_column_type(&1["type"]))
 
     cond do
-      not Enum.all?(names ++ primary_key, &valid_identifier?/1) -> {:error, :invalid_identifier}
+      not Enum.all?(names ++ primary_key, &valid_identifier?/1) -> {:error, :invalid_column_name}
       not Enum.all?(types, &valid_column_type?/1) -> {:error, :invalid_column_type}
       true -> :ok
     end
@@ -289,7 +288,7 @@ defmodule PhoenixKitSync.SchemaInspector do
   @doc false
   @spec valid_column_type?(term()) :: boolean()
   def valid_column_type?(type) when is_binary(type) do
-    case Regex.run(~r/^([a-z][a-z0-9_]*(?: [a-z]+)*)(?:\(\d+(?:,\s*\d+)?\))?(?:\[\])*$/i, type) do
+    case Regex.run(~r/\A([a-z][a-z0-9_]*(?: [a-z]+)*)(?:\(\d+(?:,\s*\d+)?\))?(?:\[\])*\z/i, type) do
       [_, name | _] ->
         case String.split(name, " ") do
           [_single] -> true
@@ -303,16 +302,94 @@ defmodule PhoenixKitSync.SchemaInspector do
 
   def valid_column_type?(_), do: false
 
+  @schema_fields %{
+    "columns" => :columns,
+    "primary_key" => :primary_key,
+    "name" => :name,
+    "type" => :type,
+    "nullable" => :nullable,
+    "max_length" => :max_length,
+    "column_name" => :column_name,
+    "data_type" => :data_type,
+    "is_nullable" => :is_nullable,
+    "character_maximum_length" => :character_maximum_length
+  }
+
+  @doc """
+  Brings a table schema to the shape `create_table/3` builds from:
+  `"columns"` as `%{"name", "type", "nullable", "primary_key"}` maps and
+  `"primary_key"` as a list of column names.
+
+  Accepts what `get_schema/2` returns (structs, or their JSON) and what the
+  `table-schema` API sends (`column_name`, `data_type`, `is_nullable`,
+  `character_maximum_length`, and `primary_key` from senders that include
+  it), so schemas from older and newer senders both work. Names and types
+  are not checked here; `create_table/3` does that.
+  """
+  @spec normalize_schema_def(map()) :: %{String.t() => list()}
+  def normalize_schema_def(schema_def) when is_map(schema_def) do
+    columns = List.wrap(schema_field(schema_def, "columns"))
+
+    primary_key =
+      case schema_field(schema_def, "primary_key") do
+        [_ | _] = pk -> pk
+        _ -> for col <- columns, schema_field(col, "primary_key") == true, do: column_name(col)
+      end
+
+    %{
+      "columns" => Enum.map(columns, &normalize_column(&1, primary_key)),
+      "primary_key" => primary_key
+    }
+  end
+
+  defp normalize_column(col, primary_key) do
+    name = column_name(col)
+
+    %{
+      "name" => name,
+      "type" => column_type(col),
+      "nullable" => column_nullable?(col),
+      "primary_key" => schema_field(col, "primary_key") == true or name in primary_key
+    }
+  end
+
+  defp column_name(col), do: schema_field(col, "name") || schema_field(col, "column_name")
+
+  defp column_type(col) do
+    type = schema_field(col, "type") || schema_field(col, "data_type")
+    max_length = schema_field(col, "max_length") || schema_field(col, "character_maximum_length")
+
+    if type == "character varying" and is_integer(max_length),
+      do: "character varying(#{max_length})",
+      else: type
+  end
+
+  defp column_nullable?(col) do
+    case {schema_field(col, "nullable"), schema_field(col, "is_nullable")} do
+      {nullable, _} when is_boolean(nullable) -> nullable
+      {_, is_nullable} -> is_nullable == "YES"
+    end
+  end
+
+  defp schema_field(map, key) when is_map(map) do
+    case Map.get(map, key) do
+      nil -> Map.get(map, Map.fetch!(@schema_fields, key))
+      value -> value
+    end
+  end
+
+  defp schema_field(_other, _key), do: nil
+
   defp column_to_sql(column) do
-    name = column["name"] || column[:name]
-    type = map_column_type(column["type"] || column[:type])
-    nullable = column["nullable"] || column[:nullable]
+    name = column["name"]
+    type = map_column_type(column["type"])
+    nullable = column["nullable"]
 
     null_constraint = if nullable, do: "", else: " NOT NULL"
 
     # Handle auto-increment for bigint primary keys
     type_with_serial =
-      if !!(column["primary_key"] || column[:primary_key]) and type in ["bigint", "integer"] do
+      if column["primary_key"] == true and type in ["bigint", "integer"] do
         if type == "bigint", do: "bigserial", else: "serial"
       else
         type
@@ -525,8 +602,10 @@ defmodule PhoenixKitSync.SchemaInspector do
   """
   @spec valid_identifier?(term()) :: boolean()
   def valid_identifier?(name) when is_binary(name) do
-    # Only allow alphanumeric and underscores, must start with letter or underscore
-    Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9_]*$/, name)
+    # Only alphanumerics and underscores, starting with a letter or
+    # underscore, and no longer than Postgres keeps (63 bytes): a longer name
+    # would be truncated into a different one.
+    byte_size(name) <= 63 and Regex.match?(~r/\A[a-zA-Z_][a-zA-Z0-9_]*\z/, name)
   end
 
   def valid_identifier?(_), do: false
