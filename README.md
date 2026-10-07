@@ -279,8 +279,12 @@ Cross-site communication endpoints (under the configured URL prefix):
   either bound may be left out), on a table with a single-column key. A
   sender that applied the filter adds `"filtered": true` to the answer; a
   receiver that sent a filter and gets an answer without it (a sender from
-  before filters) imports nothing and reports it. A filter the sender
-  cannot apply is a 400.
+  before filters) imports nothing and reports it. Such a sender still
+  counts the whole table in its `downloads_used` / `records_downloaded`
+  and records the send as completed, although nothing was kept. The
+  filter is compared in the key's own type (integer, uuid or text keys;
+  a range needs an integer key); a filter the sender cannot apply is a
+  400. `table-records` takes the same filter.
 - `POST /sync/api/table-schema` — Get table schema
 - `POST /sync/api/table-records` — Get table records
 - `GET /sync/api/status` — Check module status

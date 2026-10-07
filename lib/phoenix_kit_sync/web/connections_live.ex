@@ -1164,7 +1164,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               :no_primary_key,
               :pull_failed,
               :sender_ignores_filters,
-              :table_missing_locally
+              :table_missing_locally,
+              :unsupported_key_type
             ],
        do: Errors.message(reason)
 
@@ -2957,26 +2958,32 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
   defp format_number(num), do: "#{num}"
 
+  # IDs as typed: a whole integer stays an integer, anything else (a uuid,
+  # a text key) is sent as the string. Integer.parse/1 alone would read
+  # "01923abc-…" as 1923 and drop a uuid that starts with a letter.
   defp parse_id_list(ids_string) when is_binary(ids_string) do
     ids_string
     |> String.split(",")
     |> Enum.map(&String.trim/1)
-    |> Enum.filter(&(&1 != ""))
-    |> Enum.map(fn id ->
-      case Integer.parse(id) do
-        {int, _} -> int
-        :error -> nil
-      end
-    end)
-    |> Enum.filter(&(&1 != nil))
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(&parse_id/1)
   end
 
   defp parse_id_list(_), do: []
 
+  defp parse_id(id) do
+    case Integer.parse(id) do
+      {int, ""} -> int
+      _ -> id
+    end
+  end
+
+  # A range bound: blank is open, a whole integer is the bound, anything
+  # else goes as typed and is refused as an invalid filter.
   defp parse_int(val) when is_binary(val) do
-    case Integer.parse(val) do
-      {int, _} -> int
-      :error -> nil
+    case String.trim(val) do
+      "" -> nil
+      trimmed -> parse_id(trimmed)
     end
   end
 

@@ -110,6 +110,7 @@ lib/phoenix_kit_sync/
 ├── data_exporter.ex                       # paginated + streamed export
 ├── data_importer.ex                       # import with conflict strategies; parameterised SQL, batched find_existing
 ├── connection_notifier.ex (+ /prepare.ex) # HTTP client to the remote site; value/record transformation, FK remap
+├── pull_filter.ex                         # precise-pull ID filter: wire format, validation, SQL in the key's type
 ├── session_store.ex                       # ETS + GenServer for code-based sessions (owner monitoring)
 ├── async_tasks.ex                         # notify_remote_async/1
 ├── column_info.ex / table_schema.ex       # structs

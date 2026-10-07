@@ -42,14 +42,17 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.PreciseFilterTest do
     end)
   end
 
-  defp transfer_ids(conn, connection, ids) do
+  defp transfer_ids(conn, connection, ids),
+    do: transfer(conn, connection, %{"mode" => "ids", "ids" => ids})
+
+  defp transfer(conn, connection, filter) do
     {:ok, view, _html} =
       live(conn, "/en/admin/sync/connections?action=sync&id=#{connection.uuid}")
 
     wait_for(view, &(&1.sync_loading == false))
     render_click(view, "switch_sync_tab", %{"tab" => "details"})
     render_click(view, "select_detail_table", %{"table" => @table})
-    render_change(view, "update_detail_filter", %{"mode" => "ids", "ids" => ids})
+    render_change(view, "update_detail_filter", filter)
     render_click(view, "transfer_detail_table", %{})
     {view, wait_for(view, &(&1.sync_in_progress == false))}
   end
@@ -83,5 +86,32 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.PreciseFilterTest do
              assigns.sync_progress.table_results
 
     assert has_element?(view, ~s([data-table-error="#{@table}"]), "ignored the record filter")
+  end
+
+  test "uuids and other non-integer ids go as typed", %{conn: conn, connection: connection} do
+    StubRemote.put_data(@table, [])
+    StubRemote.put_response_extra(@table, %{"filtered" => true})
+    uuid = "0192e0a4-5a6b-7c8d-9e0f-a1b2c3d4e5f6"
+
+    transfer_ids(conn, connection, "#{uuid}, 01923abc-x, 42")
+
+    assert %{"ids" => [^uuid, "01923abc-x", 42]} = StubRemote.last_pull_body(@table)
+  end
+
+  for {label, filter} <- [
+        {"blank ids", %{"mode" => "ids", "ids" => " , "}},
+        {"an empty range", %{"mode" => "range", "range_start" => "", "range_end" => ""}},
+        {"a non-integer bound", %{"mode" => "range", "range_start" => "abc", "range_end" => ""}}
+      ] do
+    test "#{label} is refused before anything is pulled", %{conn: conn, connection: connection} do
+      StubRemote.put_data(@table, for(id <- 1..4, do: %{"id" => id, "label" => "x"}))
+
+      {view, assigns} = transfer(conn, connection, unquote(Macro.escape(filter)))
+
+      message = Errors.message(:invalid_filter)
+      assert [%{table: @table, error_message: ^message}] = assigns.sync_progress.table_results
+      assert has_element?(view, ~s([data-table-error="#{@table}"]), "at least one ID")
+      assert StubRemote.pull_count(@table) == 0
+    end
   end
 end

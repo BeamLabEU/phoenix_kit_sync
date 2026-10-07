@@ -84,58 +84,18 @@ defmodule PhoenixKitSync.Web.ApiController.Validators do
     end
   end
 
-  @max_filter_ids 1000
-  @max_filter_id_bytes 255
-
-  @doc """
-  Validates pull-data params. Besides the table, a request may carry one
-  record filter: `ids` (a list of up to #{@max_filter_ids} key values,
-  integers or strings of at most #{@max_filter_id_bytes} bytes) or an
-  integer range `id_start` / `id_end` (either bound may be left out). The
-  filter comes back as `nil`, `{:ids, [String.t()]}` or
-  `{:range, start | nil, end | nil}`; anything else is `:invalid_filter`.
-  """
   @spec validate_pull_data(map()) ::
-          {:ok, map()}
-          | {:error, :missing_fields, list(String.t())}
-          | {:error, :invalid_filter}
+          {:ok, map()} | {:error, :missing_fields, list(String.t())}
   def validate_pull_data(params) do
-    with :ok <- require_all(params, ["auth_token_hash", "table_name"]),
-         {:ok, filter} <- pull_filter(params["ids"], params["id_start"], params["id_end"]) do
+    with :ok <- require_all(params, ["auth_token_hash", "table_name"]) do
       {:ok,
        %{
          auth_token_hash: params["auth_token_hash"],
          table_name: params["table_name"],
-         conflict_strategy: params["conflict_strategy"] || "skip",
-         filter: filter
+         conflict_strategy: params["conflict_strategy"] || "skip"
        }}
     end
   end
-
-  @doc "The most ids one filtered pull-data request may carry."
-  @spec max_filter_ids() :: pos_integer()
-  def max_filter_ids, do: @max_filter_ids
-
-  defp pull_filter(nil, nil, nil), do: {:ok, nil}
-
-  defp pull_filter(ids, nil, nil) when is_list(ids) and ids != [] do
-    if length(ids) <= @max_filter_ids and Enum.all?(ids, &filter_id?/1),
-      do: {:ok, {:ids, Enum.map(ids, &to_string/1)}},
-      else: {:error, :invalid_filter}
-  end
-
-  defp pull_filter(nil, id_start, id_end)
-       when (is_integer(id_start) or is_nil(id_start)) and (is_integer(id_end) or is_nil(id_end)),
-       do: {:ok, {:range, id_start, id_end}}
-
-  defp pull_filter(_ids, _id_start, _id_end), do: {:error, :invalid_filter}
-
-  defp filter_id?(id) when is_integer(id), do: true
-
-  defp filter_id?(id) when is_binary(id),
-    do: byte_size(id) in 1..@max_filter_id_bytes and String.valid?(id)
-
-  defp filter_id?(_id), do: false
 
   @spec validate_schema(map()) ::
           {:ok, %{auth_token_hash: String.t(), table_name: String.t()}}
@@ -159,10 +119,7 @@ defmodule PhoenixKitSync.Web.ApiController.Validators do
          auth_token_hash: params["auth_token_hash"],
          table_name: params["table_name"],
          limit: parse_int(params["limit"], 10),
-         offset: parse_int(params["offset"], 0),
-         ids: params["ids"],
-         id_start: params["id_start"],
-         id_end: params["id_end"]
+         offset: parse_int(params["offset"], 0)
        }}
     end
   end

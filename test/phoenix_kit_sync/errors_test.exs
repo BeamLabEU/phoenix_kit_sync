@@ -29,7 +29,7 @@ defmodule PhoenixKitSync.ErrorsTest do
       {:invalid_column_type,
        "The sender's schema has a column type that is not a plain type name"},
       {:invalid_filter,
-       "Invalid record filter: up to 1000 IDs, or an ID range on a table with a single integer key"},
+       "Invalid record filter: enter at least one ID (up to 1000), or a range with at least one bound; a range needs an integer key"},
       {:invalid_identifier, "Invalid identifier"},
       {:invalid_json, "Invalid JSON"},
       {:invalid_password, "Invalid password"},
@@ -63,6 +63,8 @@ defmodule PhoenixKitSync.ErrorsTest do
       {:timeout, "Request timed out"},
       {:unauthorized, "Unauthorized"},
       {:unavailable, "Unavailable"},
+      {:unsupported_key_type,
+       "This table's key type does not take an ID filter (it takes integer, uuid or text keys)"},
       {:unexpected_response, "Unexpected response from remote site"}
     ]
 

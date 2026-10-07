@@ -35,9 +35,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   alias PhoenixKit.Settings
   alias PhoenixKit.Utils.Date, as: UtilsDate
   alias PhoenixKitSync.Connections
+  alias PhoenixKitSync.PullFilter
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Transfers
-  alias PhoenixKitSync.Web.ApiController.Validators
 
   @default_timeout 30_000
   @connect_timeout 10_000
@@ -522,6 +522,12 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `opts` - Options:
     - `:timeout` - HTTP request timeout (default: 60_000ms for large data)
     - `:conflict_strategy` - How to handle existing records ("skip", "overwrite", "merge")
+    - `:ids` - Only the rows with these key values (1 to 1000)
+    - `:id_range` - `{start, end}`: only the rows of an integer key range;
+      one bound may be nil, not both
+
+  A filter goes to the sender with the request; an answer that does not
+  carry `"filtered": true` (a sender from before filters) is not imported.
 
   ## Returns
 
@@ -534,6 +540,11 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:error, :invalid_column_name}` - The sender's data has a key that is
     not a plain identifier; no row of the table is written
   - `{:error, :invalid_response}` - The sender's answer could not be read
+  - `{:error, :invalid_filter}` - An empty, oversized or malformed filter
+    (refused before the request), or one the sender refused
+  - `{:error, :unsupported_key_type}` - The sender's key type takes no filter
+  - `{:error, :sender_ignores_filters}` - The sender ignored the filter;
+    nothing is imported
   - `{:error, :table_missing_locally}` - The table does not exist on this
     site; nothing is requested from the sender
   - `{:error, :no_primary_key}` - The local table has no primary key; it is
@@ -544,7 +555,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   """
   def pull_table_data(connection, table_name, opts \\ []) do
     with :ok <- check_table_name(table_name),
-         {:ok, filter_body} <- pull_filter_body(opts),
+         {:ok, filter_body} <- PullFilter.body(opts),
          {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
       connection_uuid = Map.get(connection, :uuid)
 
@@ -556,22 +567,6 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         Keyword.put(opts, :filter_body, filter_body)
       )
     end
-  end
-
-  # The precise pull's record filter, as pull-data takes it: "ids", or an
-  # integer range as "id_start" / "id_end" with an open bound left out.
-  # Too many ids are refused here rather than by the sender.
-  defp pull_filter_body(opts) do
-    {id_start, id_end} = Keyword.get(opts, :id_range) || {nil, nil}
-
-    body =
-      %{"ids" => Keyword.get(opts, :ids), "id_start" => id_start, "id_end" => id_end}
-      |> Enum.reject(fn {_key, value} -> value in [nil, []] end)
-      |> Map.new()
-
-    if length(Map.get(body, "ids", [])) <= Validators.max_filter_ids(),
-      do: {:ok, body},
-      else: {:error, :invalid_filter}
   end
 
   @doc """
@@ -745,10 +740,21 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   # A sender that knows filters answers a filter it cannot apply (a range
   # on a non-integer key, a composite key) with 400.
-  defp handle_pull_response({:ok, %{status: 400}}, transfer, _table_name, {_, _, true}) do
-    Logger.error("Sync: Pull failed - the sender refused the record filter")
+  defp handle_pull_response(
+         {:ok, %{status: 400, body: body}},
+         transfer,
+         _table_name,
+         {_, _, true}
+       ) do
+    reason =
+      case Jason.decode(body) do
+        {:ok, %{"error" => "Filter not supported for this key type"}} -> :unsupported_key_type
+        _ -> :invalid_filter
+      end
+
+    Logger.error("Sync: Pull failed - the sender refused the record filter (#{reason})")
     Transfers.fail_transfer(transfer, "The sender refused the record filter")
-    {:error, :invalid_filter}
+    {:error, reason}
   end
 
   defp handle_pull_response({:ok, %{status: 401}}, transfer, _table_name, _import_spec) do

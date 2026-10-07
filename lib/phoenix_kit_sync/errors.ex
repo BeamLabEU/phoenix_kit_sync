@@ -69,6 +69,7 @@ defmodule PhoenixKitSync.Errors do
           | :unauthorized
           | :unavailable
           | :unexpected_response
+          | :unsupported_key_type
 
   @doc """
   Returns a human-readable message for an error atom, changeset, or other
@@ -104,7 +105,7 @@ defmodule PhoenixKitSync.Errors do
   def message(:invalid_filter),
     do:
       gettext(
-        "Invalid record filter: up to 1000 IDs, or an ID range on a table with a single integer key"
+        "Invalid record filter: enter at least one ID (up to 1000), or a range with at least one bound; a range needs an integer key"
       )
 
   def message(:invalid_identifier), do: gettext("Invalid identifier")
@@ -164,6 +165,12 @@ defmodule PhoenixKitSync.Errors do
   def message(:unauthorized), do: gettext("Unauthorized")
   def message(:unavailable), do: gettext("Unavailable")
   def message(:unexpected_response), do: gettext("Unexpected response from remote site")
+
+  def message(:unsupported_key_type),
+    do:
+      gettext(
+        "This table's key type does not take an ID filter (it takes integer, uuid or text keys)"
+      )
 
   def message({:error, reason}), do: message(reason)
 

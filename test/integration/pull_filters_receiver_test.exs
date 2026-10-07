@@ -94,6 +94,39 @@ defmodule PhoenixKitSync.Integration.PullFiltersReceiverTest do
     assert %{status: "failed"} = transfer_for(@table)
   end
 
+  test "an answer marked filtered: false is refused like an unmarked one", %{
+    connection: connection
+  } do
+    StubRemote.put_data(@table, all_rows())
+    StubRemote.put_response_extra(@table, %{"filtered" => false})
+
+    assert {:error, :sender_ignores_filters} =
+             ConnectionNotifier.pull_table_data(connection, @table,
+               conflict_strategy: "skip",
+               ids: [2]
+             )
+
+    assert rows() == []
+  end
+
+  test "an empty id list or an open range on both ends is refused before any request", %{
+    connection: connection
+  } do
+    StubRemote.put_data(@table, all_rows())
+
+    for opts <- [[ids: []], [id_range: {nil, nil}]] do
+      assert {:error, :invalid_filter} =
+               ConnectionNotifier.pull_table_data(
+                 connection,
+                 @table,
+                 [conflict_strategy: "skip"] ++ opts
+               )
+    end
+
+    assert StubRemote.pull_count(@table) == 0
+    assert rows() == []
+  end
+
   test "without a filter an older sender's answer imports as before", %{
     connection: connection
   } do
