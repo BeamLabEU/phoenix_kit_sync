@@ -1547,31 +1547,22 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   end
 
   defp import_single_record_with_remap(%{pk_cols: [pk_col]} = ctx, record, acc, remap) do
-    record_pk = get_record_field(record, pk_col)
-
-    {match_action, remap} =
-      match_existing_record(ctx.repo, ctx.table_name, pk_col, record, ctx.unique_sets, remap)
+    {match_action, remap} = match_existing_record(ctx, pk_col, record, remap)
 
     case match_action do
       :skip_matched ->
-        Logger.debug("Sync: Skipped #{ctx.table_name} record #{record_pk} (matched existing)")
+        Logger.debug("Sync: Skipped a #{ctx.table_name} record (matched existing)")
         {%{acc | skipped: acc.skipped + 1}, remap}
 
+      {:update_matched, local_pk} ->
+        # Same row under the local key: write the sender's values onto it
+        # through the key conflict, per the strategy.
+        record
+        |> put_record_field(pk_col, local_pk)
+        |> then(&insert_with_remap(ctx, &1, acc, remap))
+
       :import ->
-        remapped_record = apply_fk_remap(record, ctx.fk_columns, remap)
-
-        updated_acc =
-          insert_record(
-            ctx.repo,
-            ctx.table_name,
-            remapped_record,
-            ctx.conflict_strategy,
-            ctx.numeric_cols,
-            ctx.target
-          )
-          |> accumulate_import_result(acc)
-
-        {updated_acc, remap}
+        insert_with_remap(ctx, record, acc, remap)
     end
   end
 
@@ -1579,10 +1570,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   # is keyed by a single sender PK, so there is nothing of this row's own to
   # translate and nothing to add to the remap; nothing references a
   # composite key through it either. FK columns go through apply_fk_remap/3
-  # as on the single-key path, which today rewrites only string-valued keys
-  # (text columns): a uuid FK arrives as a wrapped binary and passes through
-  # unchanged. Then the insert resolves conflicts on the whole key through
-  # ON CONFLICT, per the strategy.
+  # as on the single-key path, then the insert resolves conflicts on the
+  # whole key through ON CONFLICT, per the strategy.
   defp import_single_record_with_remap(ctx, record, acc, remap) do
     remapped_record = apply_fk_remap(record, ctx.fk_columns, remap)
 
@@ -1600,42 +1589,72 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {updated_acc, remap}
   end
 
-  # Try to match a record by unique columns to an existing local record.
-  # If matched, adds a PK remap (sender_pk → local_pk) and returns :skip_matched.
-  # If no match, returns :import.
-  defp match_existing_record(repo, table_name, pk_col, record, unique_sets, remap) do
+  defp insert_with_remap(ctx, record, acc, remap) do
+    remapped_record = apply_fk_remap(record, ctx.fk_columns, remap)
+
+    updated_acc =
+      insert_record(
+        ctx.repo,
+        ctx.table_name,
+        remapped_record,
+        ctx.conflict_strategy,
+        ctx.numeric_cols,
+        ctx.target
+      )
+      |> accumulate_import_result(acc)
+
+    {updated_acc, remap}
+  end
+
+  # Matches a record against the local table, first by its own key, then by
+  # unique columns. A unique-column match is the same row under another key:
+  # it adds a remap (sender key -> local key) for the tables that reference
+  # it. What happens to a matched row depends on the strategy: skip (and
+  # append) leave it alone; overwrite and merge write the sender's values
+  # onto it. Returns {:import | :skip_matched | {:update_matched, local_pk},
+  # remap}.
+  defp match_existing_record(ctx, pk_col, record, remap) do
+    %{repo: repo, table_name: table_name, unique_sets: unique_sets} = ctx
     record_pk = get_record_field(record, pk_col)
+    updates? = ctx.conflict_strategy in ["overwrite", "merge"]
 
-    # First check if this PK already exists locally
-    case check_pk_exists(repo, table_name, pk_col, record_pk) do
-      true ->
-        # PK exists — skip, the ON CONFLICT clause would handle it anyway but
-        # this avoids an unnecessary INSERT attempt
-        {:skip_matched, remap}
+    if check_pk_exists(repo, table_name, pk_col, record_pk) do
+      if updates?, do: {:import, remap}, else: {:skip_matched, remap}
+    else
+      case find_match_by_unique(repo, table_name, pk_col, record, unique_sets) do
+        {:ok, local_pk} ->
+          Logger.info("Sync: Matched a #{table_name} record by unique columns")
+          remap = Map.put(remap, {table_name, remap_key(record_pk)}, local_pk)
+          {unique_match_action(updates?, local_pk), remap}
 
-      false ->
-        # PK doesn't exist — try to match by unique columns
-        case find_match_by_unique(repo, table_name, pk_col, record, unique_sets) do
-          {:ok, local_pk} ->
-            # Found a match! Record the remap and skip import
-            remap_key = {table_name, stringify_pk(record_pk)}
-            remap = Map.put(remap, remap_key, stringify_pk(local_pk))
-
-            Logger.info(
-              "Sync: Matched #{table_name} by unique columns: #{inspect(record_pk)} → #{inspect(local_pk)}"
-            )
-
-            {:skip_matched, remap}
-
-          :no_match ->
-            # No match — import as new record
-            {:import, remap}
-        end
+        :no_match ->
+          {:import, remap}
+      end
     end
   end
 
-  defp stringify_pk(pk) when is_binary(pk), do: pk
-  defp stringify_pk(pk), do: inspect(pk)
+  defp unique_match_action(true = _updates?, local_pk), do: {:update_matched, local_pk}
+  defp unique_match_action(false = _updates?, _local_pk), do: :skip_matched
+
+  # Remap keys are canonical strings, so a sender key and an FK that point
+  # at the same row meet however the value travelled: a uuid arrives as a
+  # base64-wrapped 16-byte binary (or as raw bytes, or as text in any case),
+  # an integer as a number. Both sides of the remap go through this. The
+  # remap's values stay as the local row has them, ready to insert.
+  defp remap_key(%{"__phoenix_kit_binary__" => _} = wrapped),
+    do: remap_key(prepare_value(wrapped))
+
+  # Ecto.UUID.cast/1 takes both forms: 16 raw bytes and the 36-character
+  # text, which it returns in lower case.
+  defp remap_key(value) when is_binary(value) do
+    case Ecto.UUID.cast(value) do
+      {:ok, uuid} -> uuid
+      :error -> value
+    end
+  end
+
+  defp remap_key(value) when is_integer(value), do: Integer.to_string(value)
+  defp remap_key(_value), do: nil
 
   defp check_pk_exists(repo, table_name, pk_col, pk_value) do
     if SchemaInspector.valid_identifier?(table_name) and
@@ -1711,19 +1730,19 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   end
 
   defp remap_single_fk(rec, col, ref_table, remap) do
-    fk_value = get_record_field(rec, col)
+    case remap_key(get_record_field(rec, col)) do
+      nil ->
+        rec
 
-    if fk_value && is_binary(fk_value) do
-      case Map.get(remap, {ref_table, fk_value}) do
-        nil ->
-          rec
+      key ->
+        case Map.fetch(remap, {ref_table, key}) do
+          {:ok, local_value} ->
+            Logger.debug("Sync: Remapped #{col} to a local #{ref_table} key")
+            put_record_field(rec, col, local_value)
 
-        local_value ->
-          Logger.debug("Sync: Remapped #{col}: #{fk_value} → #{local_value}")
-          put_record_field(rec, col, local_value)
-      end
-    else
-      rec
+          :error ->
+            rec
+        end
     end
   end
 
@@ -1822,15 +1841,18 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       |> Enum.map_join(", ", fn {_col, idx} -> "$#{idx}" end)
 
     columns_str = Enum.map_join(columns, ", ", &~s["#{&1}"])
-    on_conflict = build_on_conflict_clause(conflict_strategy, pk_cols, columns)
+    on_conflict = build_on_conflict_clause(conflict_strategy, table_name, pk_cols, columns)
 
     sql = ~s[INSERT INTO "#{table_name}" (#{columns_str}) VALUES (#{placeholders}) #{on_conflict}]
 
     execute_insert(repo, sql, values)
   end
 
-  defp build_on_conflict_clause("overwrite", [_ | _] = pk_cols, columns) do
-    case build_update_clause(columns, pk_cols) do
+  # overwrite takes every value the sender sent; merge keeps the local value
+  # where the sender's is NULL. Both update through the key conflict.
+  defp build_on_conflict_clause(strategy, table_name, [_ | _] = pk_cols, columns)
+       when strategy in ["overwrite", "merge"] do
+    case build_update_clause(strategy, table_name, columns, pk_cols) do
       "" ->
         "ON CONFLICT DO NOTHING"
 
@@ -1840,8 +1862,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
-  defp build_on_conflict_clause("append", [_pk_col], _columns), do: ""
-  defp build_on_conflict_clause(_strategy, _pk_cols, _columns), do: "ON CONFLICT DO NOTHING"
+  defp build_on_conflict_clause("append", _table_name, [_pk_col], _columns), do: ""
+
+  defp build_on_conflict_clause(_strategy, _table_name, _pk_cols, _columns),
+    do: "ON CONFLICT DO NOTHING"
 
   defp execute_insert(repo, sql, values) do
     case SQL.query(repo, sql, values) do
@@ -1859,10 +1883,15 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
-  defp build_update_clause(columns, pk_cols) do
+  defp build_update_clause(strategy, table_name, columns, pk_cols) do
     columns
     |> Enum.reject(&(to_string(&1) in pk_cols))
-    |> Enum.map_join(", ", fn col -> ~s["#{col}" = EXCLUDED."#{col}"] end)
+    |> Enum.map_join(", ", fn col ->
+      case strategy do
+        "merge" -> ~s["#{col}" = COALESCE(EXCLUDED."#{col}", "#{table_name}"."#{col}")]
+        "overwrite" -> ~s["#{col}" = EXCLUDED."#{col}"]
+      end
+    end)
   end
 
   # Caps a response body at 500 bytes before it lands in a log line. Response
