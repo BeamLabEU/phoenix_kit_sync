@@ -37,6 +37,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   alias PhoenixKitSync.Connections
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Transfers
+  alias PhoenixKitSync.Web.ApiController.Validators
 
   @default_timeout 30_000
   @connect_timeout 10_000
@@ -543,6 +544,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   """
   def pull_table_data(connection, table_name, opts \\ []) do
     with :ok <- check_table_name(table_name),
+         {:ok, filter_body} <- pull_filter_body(opts),
          {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
       connection_uuid = Map.get(connection, :uuid)
 
@@ -551,9 +553,25 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         auth_token_hash,
         connection_uuid,
         table_name,
-        opts
+        Keyword.put(opts, :filter_body, filter_body)
       )
     end
+  end
+
+  # The precise pull's record filter, as pull-data takes it: "ids", or an
+  # integer range as "id_start" / "id_end" with an open bound left out.
+  # Too many ids are refused here rather than by the sender.
+  defp pull_filter_body(opts) do
+    {id_start, id_end} = Keyword.get(opts, :id_range) || {nil, nil}
+
+    body =
+      %{"ids" => Keyword.get(opts, :ids), "id_start" => id_start, "id_end" => id_end}
+      |> Enum.reject(fn {_key, value} -> value in [nil, []] end)
+      |> Map.new()
+
+    if length(Map.get(body, "ids", [])) <= Validators.max_filter_ids(),
+      do: {:ok, body},
+      else: {:error, :invalid_filter}
   end
 
   @doc """
@@ -621,16 +639,20 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     api_url = build_pull_data_url(site_url)
 
-    body = %{
-      "auth_token_hash" => auth_token_hash,
-      "table_name" => table_name,
-      "conflict_strategy" => conflict_strategy
-    }
+    filter_body = Keyword.get(opts, :filter_body, %{})
+
+    body =
+      Map.merge(filter_body, %{
+        "auth_token_hash" => auth_token_hash,
+        "table_name" => table_name,
+        "conflict_strategy" => conflict_strategy
+      })
 
     guard_transfer(transfer, table_name, &{:error, &1}, fn ->
       with {:ok, target} <- check_local_table(transfer, table_name) do
         result = make_http_request(api_url, body, timeout)
-        handle_pull_response(result, transfer, table_name, {conflict_strategy, target})
+        import_spec = {conflict_strategy, target, filter_body != %{}}
+        handle_pull_response(result, transfer, table_name, import_spec)
       end
     end)
   end
@@ -701,8 +723,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          import_spec
        ) do
     case Jason.decode(resp_body) do
-      {:ok, %{"success" => true, "data" => data}} ->
-        complete_pull_transfer(transfer, table_name, data, import_spec)
+      {:ok, %{"success" => true, "data" => data} = response} ->
+        if filter_ignored?(import_spec, response),
+          do: fail_ignored_filter(transfer),
+          else: complete_pull_transfer(transfer, table_name, data, import_spec)
 
       {:ok, %{"success" => false, "error" => error}} when is_binary(error) ->
         Logger.error("Sync: Pull failed - remote error: #{error}")
@@ -717,6 +741,14 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         Transfers.fail_transfer(transfer, "Invalid response from remote site")
         {:error, :invalid_response}
     end
+  end
+
+  # A sender that knows filters answers a filter it cannot apply (a range
+  # on a non-integer key, a composite key) with 400.
+  defp handle_pull_response({:ok, %{status: 400}}, transfer, _table_name, {_, _, true}) do
+    Logger.error("Sync: Pull failed - the sender refused the record filter")
+    Transfers.fail_transfer(transfer, "The sender refused the record filter")
+    {:error, :invalid_filter}
   end
 
   defp handle_pull_response({:ok, %{status: 401}}, transfer, _table_name, _import_spec) do
@@ -793,7 +825,19 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {:error, :invalid_response}
   end
 
-  defp complete_pull_transfer(transfer, table_name, data, {conflict_strategy, target}) do
+  # Asked for some rows, got an answer without "filtered": true. A sender
+  # that predates filters ignores them and sends the whole table, so the
+  # answer is not imported at all.
+  defp filter_ignored?({_strategy, _target, true}, response), do: response["filtered"] != true
+  defp filter_ignored?(_import_spec, _response), do: false
+
+  defp fail_ignored_filter(transfer) do
+    Logger.error("Sync: Pull refused - the sender ignored the record filter")
+    Transfers.fail_transfer(transfer, "The sender ignored the record filter; not imported")
+    {:error, :sender_ignores_filters}
+  end
+
+  defp complete_pull_transfer(transfer, table_name, data, {conflict_strategy, target, _filtered}) do
     with :ok <- check_record_keys(transfer, data) do
       import_result = import_table_data(table_name, data, conflict_strategy, target)
 

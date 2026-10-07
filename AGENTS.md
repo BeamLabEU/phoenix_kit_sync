@@ -156,7 +156,7 @@ Full column lists: `docs/table_structure.md`.
 | POST | `/sync/api/update-status` | Update connection status | Module enabled + `sender_url` and `auth_token_hash` match |
 | POST | `/sync/api/get-connection-status` | Query connection status | Module enabled + `receiver_url` and `auth_token_hash` match a sender connection |
 | POST | `/sync/api/list-tables` | List available tables | Token hash + active connection; filtered by `table_allowed?/2` |
-| POST | `/sync/api/pull-data` | Pull table data | Token hash + active connection + table allowed |
+| POST | `/sync/api/pull-data` | Pull table data; optional `ids` / `id_start` / `id_end` filter, answered with `"filtered": true` | Token hash + active connection + table allowed |
 | POST | `/sync/api/table-schema` | Get table schema | Token hash + active connection + table allowed |
 | POST | `/sync/api/table-records` | Get table records | Token hash + active connection + table allowed |
 | GET | `/sync/api/status` | Check module status | None |
@@ -210,7 +210,7 @@ Support modules (`test/support/`):
 
 - `DataCase` (sandbox + `:integration`, imports `ChangesetHelpers.errors_on/1`), `ConnCase` (`Phoenix.ConnTest` against `Test.Endpoint`), `LiveCase` (`Phoenix.LiveViewTest`; `fake_scope/1` builds a `PhoenixKit.Users.Auth.Scope` with the `"sync"` permission, `put_test_scope/2` puts it in the session), `ChannelCase` (`Phoenix.ChannelTest` for `SyncSocket`/`SyncChannel`).
 - `Test.Endpoint` / `Test.Router` / `Test.Layouts` / `Test.Hooks`: the router mounts the LiveViews at `/en/admin/sync/*` (plus `/sync/send`, `/sync/receive`) inside a `live_session` whose `on_mount` hook assigns `:phoenix_kit_current_scope` from the session, and mirrors the API at both `/sync/api/*` and `/phoenix_kit/sync/api/*` plus the WebSocket forward at both prefixes. Flashes render with ids `flash-info`/`flash-error`/`flash-warning`.
-- `StubRemote`: a canned sender behind `Test.Router`'s `/stub-remote` forward, answering `list-tables` and `pull-data` from `put_tables/1` / `put_data/2` (app env, so `async: false`). Receiver-side pull tests use it as the connection's `site_url` because the real `ApiController` reads the same DB the receiver writes to. It sends values as given; a uuid column goes on the wire as the sender serialises it, `%{"__phoenix_kit_binary__" => base64}`.
+- `StubRemote`: a canned sender behind `Test.Router`'s `/stub-remote` forward, answering `list-tables`, `pull-data` and `table-schema` from `put_tables/1` / `put_data/2` / `put_schema/2` (app env, so `async: false`); `put_response_extra/2` adds fields such as `"filtered"` to a pull-data answer, and `last_pull_body/1` / `pull_count/1` show what the receiver sent. Receiver-side pull tests use it as the connection's `site_url` because the real `ApiController` reads the same DB the receiver writes to. It sends values as given; a uuid column goes on the wire as the sender serialises it, `%{"__phoenix_kit_binary__" => base64}`.
 - `TestActor.uuid/0`: a real registered user for actor FKs. `ActivityLogAssertions.assert_activity_logged/2`: exactly one activity row for an action, with `:resource_uuid`, `:actor_uuid`, `:metadata_has` filters.
 - `core_pin_conformance_test.exs` asserts the `:phoenix_kit` floor (2.13.6, see Landmines) and that the upper bound still admits every later 2.x — a requirement pinned to one minor breaks `mix deps.get` for hosts.
 

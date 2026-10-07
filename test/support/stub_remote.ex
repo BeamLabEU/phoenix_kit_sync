@@ -38,6 +38,13 @@ defmodule PhoenixKitSync.Test.StubRemote do
   @doc "Makes `pull-data` for `table` answer `success: false` with `error` as given."
   def put_error(table, error), do: update(&put_in(&1, [:data, table], {:error, error}))
 
+  @doc "Merges `extra` into every successful `pull-data` answer for `table`."
+  def put_response_extra(table, extra),
+    do: update(&put_in(&1, [Access.key(:extras, %{}), table], extra))
+
+  @doc "The body of the last `pull-data` request for `table`, or nil."
+  def last_pull_body(table), do: get_in(state(), [Access.key(:bodies, %{}), table])
+
   @doc "How many `pull-data` requests asked for `table` since `reset/0`."
   def pull_count(table), do: Map.get(Map.get(state(), :pulls, %{}), table, 0)
 
@@ -59,7 +66,12 @@ defmodule PhoenixKitSync.Test.StubRemote do
 
   @impl true
   def call(conn, _opts) do
-    body = respond(List.last(conn.path_info), conn.body_params["table_name"])
+    table = conn.body_params["table_name"]
+
+    if List.last(conn.path_info) == "pull-data",
+      do: update(&put_in(&1, [Access.key(:bodies, %{}), table], conn.body_params))
+
+    body = respond(List.last(conn.path_info), table)
 
     conn
     |> put_resp_content_type("application/json")
@@ -72,9 +84,15 @@ defmodule PhoenixKitSync.Test.StubRemote do
     count_pull(table)
 
     case Map.fetch(state().data, table) do
-      {:ok, {:error, error}} -> %{success: false, error: error}
-      {:ok, records} -> %{success: true, table: table, data: records}
-      :error -> %{success: false, error: "Table not found"}
+      {:ok, {:error, error}} ->
+        %{success: false, error: error}
+
+      {:ok, records} ->
+        extra = get_in(state(), [Access.key(:extras, %{}), table]) || %{}
+        Map.merge(%{success: true, table: table, data: records}, extra)
+
+      :error ->
+        %{success: false, error: "Table not found"}
     end
   end
 

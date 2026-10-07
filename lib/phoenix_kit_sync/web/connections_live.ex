@@ -1159,9 +1159,11 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
        when reason in [
               :import_failed,
               :invalid_column_name,
+              :invalid_filter,
               :invalid_table_name,
               :no_primary_key,
               :pull_failed,
+              :sender_ignores_filters,
               :table_missing_locally
             ],
        do: Errors.message(reason)

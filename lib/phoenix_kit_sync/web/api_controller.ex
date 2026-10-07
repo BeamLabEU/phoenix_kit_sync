@@ -485,7 +485,7 @@ defmodule PhoenixKitSync.Web.ApiController do
          {:ok, connection} <- find_sender_by_hash(validated.auth_token_hash),
          :ok <- check_connection_active(connection),
          :ok <- check_table_allowed(connection, validated.table_name),
-         {:ok, data} <- fetch_table_data(validated.table_name, connection) do
+         {:ok, data} <- fetch_table_data(validated.table_name, connection, validated.filter) do
       # Update connection stats
       record_count = length(data)
 
@@ -512,10 +512,21 @@ defmodule PhoenixKitSync.Web.ApiController do
 
       Logger.info("Sending #{record_count} records for table #{validated.table_name}")
 
+      # "filtered" tells the receiver the filter was applied: a sender that
+      # predates filters ignores them and leaves this out, and the receiver
+      # then refuses to import a whole table it asked a few rows of.
+      response = %{success: true, table: validated.table_name, data: data}
+      response = if validated.filter, do: Map.put(response, :filtered, true), else: response
+
       conn
       |> put_status(200)
-      |> json(%{success: true, table: validated.table_name, data: data})
+      |> json(response)
     else
+      {:error, :invalid_filter} ->
+        conn
+        |> put_status(400)
+        |> json(%{success: false, error: "Invalid filter"})
+
       {:error, :module_disabled} ->
         conn
         |> put_status(503)
@@ -1020,9 +1031,9 @@ defmodule PhoenixKitSync.Web.ApiController do
       0
   end
 
-  defp fetch_table_data(table_name, connection) do
+  defp fetch_table_data(table_name, connection, filter) do
     if valid_table_name?(table_name) do
-      do_fetch_table_data(table_name, connection)
+      do_fetch_table_data(table_name, connection, filter)
     else
       {:error, :table_not_found}
     end
@@ -1032,12 +1043,18 @@ defmodule PhoenixKitSync.Web.ApiController do
       {:error, :fetch_failed}
   end
 
-  defp do_fetch_table_data(table_name, connection) do
+  defp do_fetch_table_data(table_name, connection, filter) do
     repo = PhoenixKit.RepoHelper.repo()
+    limit = connection.max_records_per_request || 10_000
 
     case table_exists?(repo, table_name) do
+      {:ok, true} when is_nil(filter) ->
+        fetch_table_rows(repo, table_name, limit)
+
       {:ok, true} ->
-        fetch_table_rows(repo, table_name, connection.max_records_per_request || 10_000)
+        with {:ok, where, binds} <- filter_clause(table_name, filter) do
+          fetch_filtered_rows(repo, table_name, where, binds, limit)
+        end
 
       {:ok, false} ->
         {:error, :table_not_found}
@@ -1060,6 +1077,48 @@ defmodule PhoenixKitSync.Web.ApiController do
 
     case SQL.query(repo, query, [table_name]) do
       {:ok, %{rows: [[exists]]}} -> {:ok, exists}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # A filter needs a single-column key. ids compare as text, so they work
+  # whatever the key's type (a uuid travels as its text form); a range needs
+  # an integer key. Values are always binds, the key name always quoted.
+  defp filter_clause(table_name, filter) do
+    with {:ok, %{primary_key: [pk], columns: columns}} <- SchemaInspector.get_schema(table_name),
+         {:ok, where, binds} <- build_filter(filter, quote_ident(pk), key_type(columns, pk)) do
+      {:ok, " WHERE " <> where <> " ORDER BY #{quote_ident(pk)}", binds}
+    else
+      {:error, :invalid_filter} -> {:error, :invalid_filter}
+      {:ok, _composite_or_no_key} -> {:error, :invalid_filter}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp key_type(columns, pk), do: Enum.find_value(columns, &(&1.name == pk && &1.type))
+
+  defp build_filter({:ids, ids}, pk, _type), do: {:ok, "#{pk}::text = ANY($1)", [ids]}
+
+  defp build_filter({:range, id_start, id_end}, pk, type)
+       when type in ["smallint", "integer", "bigint"] do
+    bounds = Enum.reject([{">=", id_start}, {"<=", id_end}], fn {_op, v} -> is_nil(v) end)
+
+    where =
+      bounds
+      |> Enum.with_index(1)
+      |> Enum.map_join(" AND ", fn {{op, _v}, idx} -> "#{pk} #{op} $#{idx}" end)
+
+    {:ok, where, Enum.map(bounds, fn {_op, v} -> v end)}
+  end
+
+  defp build_filter(_filter, _pk, _type), do: {:error, :invalid_filter}
+
+  defp fetch_filtered_rows(repo, table_name, where, binds, limit) do
+    query =
+      "SELECT * FROM #{quote_ident(table_name)}#{where} LIMIT $#{length(binds) + 1}"
+
+    case SQL.query(repo, query, binds ++ [limit]) do
+      {:ok, %{rows: rows, columns: columns}} -> {:ok, rows_to_maps(rows, columns)}
       {:error, reason} -> {:error, reason}
     end
   end

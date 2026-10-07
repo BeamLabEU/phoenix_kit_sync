@@ -38,6 +38,7 @@ defmodule PhoenixKitSync.Errors do
           | :invalid_code
           | :invalid_column_name
           | :invalid_column_type
+          | :invalid_filter
           | :invalid_identifier
           | :invalid_json
           | :invalid_password
@@ -61,6 +62,7 @@ defmodule PhoenixKitSync.Errors do
           | :pull_failed
           | :record_limit_reached
           | :schema_without_primary_key
+          | :sender_ignores_filters
           | :table_missing_locally
           | :table_not_found
           | :timeout
@@ -99,6 +101,12 @@ defmodule PhoenixKitSync.Errors do
   def message(:invalid_column_type),
     do: gettext("The sender's schema has a column type that is not a plain type name")
 
+  def message(:invalid_filter),
+    do:
+      gettext(
+        "Invalid record filter: up to 1000 IDs, or an ID range on a table with a single integer key"
+      )
+
   def message(:invalid_identifier), do: gettext("Invalid identifier")
   def message(:invalid_json), do: gettext("Invalid JSON")
   def message(:invalid_password), do: gettext("Invalid password")
@@ -129,6 +137,12 @@ defmodule PhoenixKitSync.Errors do
     do: gettext("Pulling this table failed; see the server log for details")
 
   def message(:record_limit_reached), do: gettext("Record limit reached")
+
+  def message(:sender_ignores_filters),
+    do:
+      gettext(
+        "Not imported: the source site ignored the record filter. Update its sync module and try again"
+      )
 
   def message(:table_not_allowed),
     do: gettext("This connection is not authorised to access that table")

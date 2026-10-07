@@ -274,7 +274,13 @@ Cross-site communication endpoints (under the configured URL prefix):
 - `POST /sync/api/update-status` — Update connection status
 - `POST /sync/api/get-connection-status` — Query connection status
 - `POST /sync/api/list-tables` — List available tables
-- `POST /sync/api/pull-data` — Pull table data
+- `POST /sync/api/pull-data` — Pull table data. Optional record filter:
+  `ids` (up to 1000 key values) or `id_start` / `id_end` (an integer range;
+  either bound may be left out), on a table with a single-column key. A
+  sender that applied the filter adds `"filtered": true` to the answer; a
+  receiver that sent a filter and gets an answer without it (a sender from
+  before filters) imports nothing and reports it. A filter the sender
+  cannot apply is a 400.
 - `POST /sync/api/table-schema` — Get table schema
 - `POST /sync/api/table-records` — Get table records
 - `GET /sync/api/status` — Check module status
