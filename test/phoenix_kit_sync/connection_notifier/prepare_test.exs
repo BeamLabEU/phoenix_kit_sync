@@ -49,7 +49,7 @@ defmodule PhoenixKitSync.ConnectionNotifier.PrepareTest do
       assert Prepare.value(nil, "anything", %{}) == nil
     end
 
-    test "empty numeric_cols list disables coercion entirely" do
+    test "an empty column-type map disables coercion entirely" do
       assert Prepare.value("3.14", "anything", %{}) == "3.14"
     end
   end

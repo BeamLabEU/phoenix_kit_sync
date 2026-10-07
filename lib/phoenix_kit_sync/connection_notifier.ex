@@ -1558,6 +1558,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     # (42 -> 7 -> 3) when one local key is also another row's sender key.
     sender_pk = get_record_field(record, pk_col)
     record = apply_fk_remap(record, ctx.fk_columns, remap)
+    remap = remap_own_key(remap, ctx.table_name, sender_pk, get_record_field(record, pk_col))
     {match_action, remap} = match_existing_record(ctx, pk_col, record, sender_pk, remap)
 
     case match_action do
@@ -1641,6 +1642,17 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         :no_match ->
           {:import, remap}
       end
+    end
+  end
+
+  # A key that is also an FK (profiles keyed by their user) was just
+  # remapped with that FK, so the row lives here under another key: tables
+  # that reference it by the sender's key follow the same remap.
+  defp remap_own_key(remap, table_name, sender_pk, record_pk) do
+    case {remap_key(sender_pk), remap_key(record_pk)} do
+      {same, same} -> remap
+      {nil, _} -> remap
+      {sender_key, _} -> Map.put(remap, {table_name, sender_key}, record_pk)
     end
   end
 

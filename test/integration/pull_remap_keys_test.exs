@@ -55,6 +55,21 @@ defmodule PhoenixKitSync.Integration.PullRemapKeysTest do
     """)
 
     repo().query!("""
+    CREATE TABLE IF NOT EXISTS rk_profiles (
+      user_uuid uuid PRIMARY KEY REFERENCES rk_uuid_parents(uuid),
+      bio text,
+      handle text UNIQUE
+    )
+    """)
+
+    repo().query!("""
+    CREATE TABLE IF NOT EXISTS rk_prefs (
+      uuid uuid PRIMARY KEY,
+      profile_uuid uuid REFERENCES rk_profiles(user_uuid)
+    )
+    """)
+
+    repo().query!("""
     CREATE TABLE IF NOT EXISTS rk_items (
       code text PRIMARY KEY,
       name text NOT NULL UNIQUE,
@@ -212,6 +227,70 @@ defmodule PhoenixKitSync.Integration.PullRemapKeysTest do
         assert %{rows: [[^lc]]} = repo().query!("SELECT slug_uuid::text FROM rk_slug_refs")
       end
     end
+  end
+
+  describe "a key that is also an FK" do
+    # rk_profiles is keyed by its parent's key. Remapping that FK remaps the
+    # profile's own key, so tables referencing the profile by the sender's
+    # key need the same remap.
+    for {strategy, existing?} <- [{"overwrite", true}, {"skip", true}, {"skip", false}] do
+      test "a grandchild follows the profile (#{strategy}, profile #{if existing?, do: "here", else: "new"})",
+           %{connection: connection} do
+        [lp, rp] = [UUIDv7.generate(), UUIDv7.generate()]
+        repo().query!("INSERT INTO rk_uuid_parents VALUES ($1, 'ann')", [Ecto.UUID.dump!(lp)])
+
+        if unquote(existing?),
+          do: repo().query!("INSERT INTO rk_profiles VALUES ($1, 'local')", [Ecto.UUID.dump!(lp)])
+
+        StubRemote.put_data("rk_uuid_parents", [%{"uuid" => wire_uuid(rp), "name" => "ann"}])
+        StubRemote.put_data("rk_profiles", [%{"user_uuid" => wire_uuid(rp), "bio" => "remote"}])
+
+        StubRemote.put_data("rk_prefs", [
+          %{"uuid" => wire_uuid(UUIDv7.generate()), "profile_uuid" => wire_uuid(rp)}
+        ])
+
+        {:ok, _, remap} = pull(connection, "rk_uuid_parents", %{}, unquote(strategy))
+        {:ok, %{errors: 0}, remap} = pull(connection, "rk_profiles", remap, unquote(strategy))
+        assert Map.has_key?(remap, {"rk_profiles", rp})
+
+        assert {:ok, %{imported: 1, errors: 0}, _} =
+                 pull(connection, "rk_prefs", remap, unquote(strategy))
+
+        assert %{rows: [[^lp]]} = repo().query!("SELECT profile_uuid::text FROM rk_prefs")
+      end
+    end
+  end
+
+  test "a key-FK row matched by another unique column takes that row's key", %{
+    connection: connection
+  } do
+    # The sender's profile of ann (key rp -> lp after the FK remap) has a
+    # handle that, here, belongs to bob's profile (lq): the remap for
+    # referencing tables must lead from rp to lq.
+    [lp, lq, rp] = for _ <- 1..3, do: UUIDv7.generate()
+
+    repo().query!("INSERT INTO rk_uuid_parents VALUES ($1, 'ann'), ($2, 'bob')", [
+      Ecto.UUID.dump!(lp),
+      Ecto.UUID.dump!(lq)
+    ])
+
+    repo().query!("INSERT INTO rk_profiles VALUES ($1, 'bob', 'h')", [Ecto.UUID.dump!(lq)])
+
+    StubRemote.put_data("rk_uuid_parents", [%{"uuid" => wire_uuid(rp), "name" => "ann"}])
+
+    StubRemote.put_data("rk_profiles", [
+      %{"user_uuid" => wire_uuid(rp), "bio" => "remote", "handle" => "h"}
+    ])
+
+    StubRemote.put_data("rk_prefs", [
+      %{"uuid" => wire_uuid(UUIDv7.generate()), "profile_uuid" => wire_uuid(rp)}
+    ])
+
+    {:ok, _, remap} = pull(connection, "rk_uuid_parents", %{}, "skip")
+    {:ok, %{skipped: 1}, remap} = pull(connection, "rk_profiles", remap, "skip")
+
+    assert {:ok, %{imported: 1, errors: 0}, _} = pull(connection, "rk_prefs", remap, "skip")
+    assert %{rows: [[^lq]]} = repo().query!("SELECT profile_uuid::text FROM rk_prefs")
   end
 
   describe "integer keys" do

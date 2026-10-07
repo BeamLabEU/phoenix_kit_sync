@@ -134,9 +134,13 @@ When you create a sender connection:
 - **Conflict strategy.** `skip` leaves a matched row alone; `overwrite`
   writes the sender's values onto it; `merge` does the same but keeps the
   local value wherever the sender's is NULL. On the bulk pull, `append`
-  inserts unmatched rows under a new key and leaves matched rows alone. A
-  row with a new key whose other unique column is already taken here is
-  skipped under skip, overwrite and merge.
+  inserts unmatched rows under a new key and leaves matched rows alone.
+  Unique columns other than the key: on the bulk pull, a row with a new
+  single-column key whose unique columns match a local row is that row
+  (remapped, then left alone or updated per the strategy). A row that
+  would clash with another local row's unique value (a composite key, the
+  precise pull, or an update of an existing key) is skipped under skip,
+  overwrite and merge.
 - **The table must exist on this site.** A table missing here is reported
   as an error rather than pulled; create it first (Precise Transfer >
   Create Table). Both checks run before anything is requested from the
