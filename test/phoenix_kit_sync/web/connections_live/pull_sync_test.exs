@@ -145,6 +145,40 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.PullSyncTest do
     assert in_progress_transfers() == 0
   end
 
+  test "a table missing here and a table without a primary key each say why", %{
+    conn: conn,
+    connection: connection
+  } do
+    repo().query!("CREATE TABLE IF NOT EXISTS cpk_lv_no_pk (code text)")
+
+    StubRemote.put_tables([
+      %{"name" => "cpk_lv_missing", "row_count" => 1, "depends_on" => []},
+      %{"name" => "cpk_lv_no_pk", "row_count" => 1, "depends_on" => []}
+    ])
+
+    StubRemote.put_data("cpk_lv_missing", [%{"code" => "a"}])
+    StubRemote.put_data("cpk_lv_no_pk", [%{"code" => "a"}])
+
+    view = open_sync_page(conn, connection)
+    assigns = run_sync(view)
+
+    refute assigns.sync_in_progress
+
+    messages = Map.new(assigns.sync_progress.table_results, &{&1.table, &1.error_message})
+    assert messages["cpk_lv_missing"] == Errors.message(:table_missing_locally)
+    assert messages["cpk_lv_no_pk"] == Errors.message(:no_primary_key)
+
+    assert render(view) =~ "Sync Completed with Errors"
+
+    assert has_element?(
+             view,
+             ~s([data-table-error="cpk_lv_missing"]),
+             "does not exist on this site"
+           )
+
+    assert has_element?(view, ~s([data-table-error="cpk_lv_no_pk"]), "no primary key")
+  end
+
   test "a crash on the single-table (precise) transfer still reports back", %{
     conn: conn,
     connection: connection

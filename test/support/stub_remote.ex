@@ -34,11 +34,21 @@ defmodule PhoenixKitSync.Test.StubRemote do
   @doc "Makes `pull-data` for `table` answer `success: false` with `error` as given."
   def put_error(table, error), do: update(&put_in(&1, [:data, table], {:error, error}))
 
+  @doc "How many `pull-data` requests asked for `table` since `reset/0`."
+  def pull_count(table), do: Map.get(Map.get(state(), :pulls, %{}), table, 0)
+
   def reset, do: Application.delete_env(:phoenix_kit_sync, @env_key)
 
   defp state, do: Application.get_env(:phoenix_kit_sync, @env_key, %{tables: [], data: %{}})
 
   defp update(fun), do: Application.put_env(:phoenix_kit_sync, @env_key, fun.(state()))
+
+  defp count_pull(table) do
+    update(fn state ->
+      pulls = Map.get(state, :pulls, %{})
+      Map.put(state, :pulls, Map.update(pulls, table, 1, &(&1 + 1)))
+    end)
+  end
 
   @impl true
   def init(opts), do: opts
@@ -52,6 +62,8 @@ defmodule PhoenixKitSync.Test.StubRemote do
 
         "pull-data" ->
           table = conn.body_params["table_name"]
+
+          count_pull(table)
 
           case Map.fetch(state().data, table) do
             {:ok, {:error, error}} -> %{success: false, error: error}

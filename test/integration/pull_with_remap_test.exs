@@ -322,7 +322,10 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
       end
 
       assert %{rows: [[0]]} = repo().query!("SELECT count(*)::int FROM #{@no_pk}")
-      assert %{status: "failed"} = transfer_for(@no_pk)
+      assert %{status: "failed", error_message: message} = transfer_for(@no_pk)
+      assert message =~ "No primary key on #{@no_pk}"
+      # Checked before the request: the sender's limits are not spent.
+      assert StubRemote.pull_count(@no_pk) == 0
     end
 
     test "is not imported by the pull without remap either", %{connection: connection} do
@@ -332,6 +335,33 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
                ConnectionNotifier.pull_table_data(connection, @no_pk, conflict_strategy: "skip")
 
       assert %{rows: [[0]]} = repo().query!("SELECT count(*)::int FROM #{@no_pk}")
+    end
+  end
+
+  describe "a table that does not exist on this site" do
+    test "is not requested from the sender and fails its transfer", %{connection: connection} do
+      StubRemote.put_data("cpk_missing", [%{"code" => "a"}])
+
+      assert {:error, :table_missing_locally, %{}} =
+               ConnectionNotifier.pull_table_data_with_remap(connection, "cpk_missing", %{},
+                 conflict_strategy: "skip"
+               )
+
+      assert %{status: "failed", error_message: message} = transfer_for("cpk_missing")
+      assert message =~ "does not exist here"
+      refute message =~ "primary key"
+      assert StubRemote.pull_count("cpk_missing") == 0
+    end
+
+    test "is reported the same way by the pull without remap", %{connection: connection} do
+      StubRemote.put_data("cpk_missing", [%{"code" => "a"}])
+
+      assert {:error, :table_missing_locally} =
+               ConnectionNotifier.pull_table_data(connection, "cpk_missing",
+                 conflict_strategy: "skip"
+               )
+
+      assert StubRemote.pull_count("cpk_missing") == 0
     end
   end
 

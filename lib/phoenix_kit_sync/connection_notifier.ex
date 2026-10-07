@@ -526,8 +526,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   - `{:ok, result}` - Map with :records_imported, :records_skipped, etc.
   - `{:error, :offline}` - Sender is offline
-  - `{:error, :no_primary_key}` - The local table has no primary key (or is
-    missing); it is not imported, since repeat pulls would duplicate rows
+  - `{:error, :table_missing_locally}` - The table does not exist on this
+    site; nothing is requested from the sender
+  - `{:error, :no_primary_key}` - The local table has no primary key; it is
+    not pulled, since repeat pulls would duplicate rows
   - `{:error, :import_failed}` - Handling the response raised or exited; the
     transfer is marked failed and the details are in the log
   - `{:error, reason}` - Failed to pull
@@ -599,8 +601,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     }
 
     guard_transfer(transfer, table_name, &{:error, &1}, fn ->
-      result = make_http_request(api_url, body, timeout)
-      handle_pull_response(result, transfer, table_name, conflict_strategy)
+      with {:ok, pk_cols} <- check_local_table(transfer, table_name) do
+        result = make_http_request(api_url, body, timeout)
+        handle_pull_response(result, transfer, table_name, {conflict_strategy, pk_cols})
+      end
     end)
   end
 
@@ -634,8 +638,15 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     }
 
     guard_transfer(transfer, table_name, &{:error, &1, uuid_remap}, fn ->
-      result = make_http_request(api_url, body, timeout)
-      handle_pull_response_with_remap(result, transfer, table_name, conflict_strategy, uuid_remap)
+      case check_local_table(transfer, table_name) do
+        {:ok, pk_cols} ->
+          result = make_http_request(api_url, body, timeout)
+          import_spec = {conflict_strategy, pk_cols}
+          handle_pull_response_with_remap(result, transfer, table_name, import_spec, uuid_remap)
+
+        {:error, reason} ->
+          {:error, reason, uuid_remap}
+      end
     end)
   end
 
@@ -660,11 +671,11 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          {:ok, %{status: 200, body: resp_body}},
          transfer,
          table_name,
-         strategy
+         import_spec
        ) do
     case Jason.decode(resp_body) do
       {:ok, %{"success" => true, "data" => data}} ->
-        complete_pull_transfer(transfer, table_name, data, strategy)
+        complete_pull_transfer(transfer, table_name, data, import_spec)
 
       {:ok, %{"success" => false, "error" => error}} when is_binary(error) ->
         Logger.error("Sync: Pull failed - remote error: #{error}")
@@ -681,32 +692,32 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
-  defp handle_pull_response({:ok, %{status: 401}}, transfer, _table_name, _strategy) do
+  defp handle_pull_response({:ok, %{status: 401}}, transfer, _table_name, _import_spec) do
     Logger.error("Sync: Pull failed - unauthorized (401)")
     Transfers.fail_transfer(transfer, "Unauthorized")
     {:error, :unauthorized}
   end
 
-  defp handle_pull_response({:ok, %{status: 404}}, transfer, _table_name, _strategy) do
+  defp handle_pull_response({:ok, %{status: 404}}, transfer, _table_name, _import_spec) do
     Logger.error("Sync: Pull failed - table not found (404)")
     Transfers.fail_transfer(transfer, "Table not found")
     {:error, :table_not_found}
   end
 
-  defp handle_pull_response({:ok, %{status: status}}, transfer, _table_name, _strategy) do
+  defp handle_pull_response({:ok, %{status: status}}, transfer, _table_name, _import_spec) do
     Logger.error("Sync: Pull failed - HTTP error #{status}")
     Transfers.fail_transfer(transfer, "HTTP error #{status}")
     {:error, :unexpected_response}
   end
 
-  defp handle_pull_response({:error, %{reason: reason}}, transfer, _table_name, _strategy)
+  defp handle_pull_response({:error, %{reason: reason}}, transfer, _table_name, _import_spec)
        when reason in [:econnrefused, :timeout, :nxdomain] do
     Logger.error("Sync: Pull failed - sender offline (#{reason})")
     Transfers.fail_transfer(transfer, "Sender offline")
     {:error, :offline}
   end
 
-  defp handle_pull_response({:error, reason}, transfer, _table_name, _strategy) do
+  defp handle_pull_response({:error, reason}, transfer, _table_name, _import_spec) do
     Logger.error("Sync: Pull failed - #{inspect(reason)}")
     Transfers.fail_transfer(transfer, inspect(reason))
     {:error, reason}
@@ -717,12 +728,12 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          {:ok, %{status: 200, body: resp_body}},
          transfer,
          table_name,
-         strategy,
+         import_spec,
          uuid_remap
        ) do
     case Jason.decode(resp_body) do
       {:ok, %{"success" => true, "data" => data}} ->
-        complete_pull_transfer_with_remap(transfer, table_name, data, strategy, uuid_remap)
+        complete_pull_transfer_with_remap(transfer, table_name, data, import_spec, uuid_remap)
 
       {:ok, %{"success" => false, "error" => error}} when is_binary(error) ->
         Logger.error("Sync: Pull failed - remote error: #{error}")
@@ -740,8 +751,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
-  defp handle_pull_response_with_remap(result, transfer, table_name, strategy, uuid_remap) do
-    case handle_pull_response(result, transfer, table_name, strategy) do
+  defp handle_pull_response_with_remap(result, transfer, table_name, import_spec, uuid_remap) do
+    case handle_pull_response(result, transfer, table_name, import_spec) do
       {:ok, import_result} -> {:ok, import_result, uuid_remap}
       {:error, reason} -> {:error, reason, uuid_remap}
     end
@@ -755,58 +766,64 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {:error, :invalid_response}
   end
 
-  defp complete_pull_transfer(transfer, table_name, data, conflict_strategy) do
-    case primary_key_columns(table_name) do
-      [] ->
-        {:error, fail_no_primary_key(transfer, table_name)}
+  defp complete_pull_transfer(transfer, table_name, data, {conflict_strategy, pk_cols}) do
+    import_result = import_table_data(table_name, data, conflict_strategy, pk_cols)
 
-      pk_cols ->
-        import_result = import_table_data(table_name, data, conflict_strategy, pk_cols)
+    Transfers.complete_transfer(transfer, %{
+      records_transferred: length(data),
+      records_created: import_result.imported,
+      records_skipped: import_result.skipped,
+      records_failed: import_result.errors
+    })
 
-        Transfers.complete_transfer(transfer, %{
-          records_transferred: length(data),
-          records_created: import_result.imported,
-          records_skipped: import_result.skipped,
-          records_failed: import_result.errors
-        })
-
-        {:ok, import_result}
-    end
+    {:ok, import_result}
   end
 
   defp complete_pull_transfer_with_remap(
          transfer,
          table_name,
          data,
-         conflict_strategy,
+         {conflict_strategy, pk_cols},
          uuid_remap
        ) do
-    case primary_key_columns(table_name) do
-      [] ->
-        {:error, fail_no_primary_key(transfer, table_name), uuid_remap}
+    {import_result, updated_remap} =
+      import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap, pk_cols)
 
-      pk_cols ->
-        {import_result, updated_remap} =
-          import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap, pk_cols)
+    Transfers.complete_transfer(transfer, %{
+      records_transferred: length(data),
+      records_created: import_result.imported,
+      records_skipped: import_result.skipped,
+      records_failed: import_result.errors
+    })
 
-        Transfers.complete_transfer(transfer, %{
-          records_transferred: length(data),
-          records_created: import_result.imported,
-          records_skipped: import_result.skipped,
-          records_failed: import_result.errors
-        })
+    {:ok, import_result, updated_remap}
+  end
 
-        {:ok, import_result, updated_remap}
+  # Checked before the request, so a table that cannot be imported here does
+  # not spend the sender's download and record limits. A table missing on
+  # this site has to be created first (Precise Transfer > Create Table).
+  # Without a primary key there is nothing to detect a row that is already
+  # here: every pull would insert the same rows again, so such a table is
+  # not imported at all.
+  defp check_local_table(transfer, table_name) do
+    if SchemaInspector.table_exists?(table_name) do
+      case primary_key_columns(table_name) do
+        [] -> reject_local_table(transfer, :no_primary_key, "No primary key on #{table_name}")
+        pk_cols -> {:ok, pk_cols}
+      end
+    else
+      reject_local_table(
+        transfer,
+        :table_missing_locally,
+        "Table #{table_name} does not exist here"
+      )
     end
   end
 
-  # Without a primary key there is nothing to detect a row that is already
-  # here: every pull would insert the same rows again. Such a table (or one
-  # missing locally) is not imported at all.
-  defp fail_no_primary_key(transfer, table_name) do
-    Logger.warning("Sync: #{table_name} has no primary key here; not importing it")
-    Transfers.fail_transfer(transfer, "No primary key on #{table_name}; not imported")
-    :no_primary_key
+  defp reject_local_table(transfer, reason, why) do
+    Logger.warning("Sync: #{why}; not pulling it")
+    Transfers.fail_transfer(transfer, "#{why}; not pulled")
+    {:error, reason}
   end
 
   # Everything after the transfer row exists runs under this: a response

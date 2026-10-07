@@ -127,8 +127,12 @@ When you create a sender connection:
   key, rows are matched against local ones by key and unique columns. A
   composite key such as `(lang, value)` is imported as is: conflicts
   resolve on the whole key, per the conflict strategy. A table with no
-  primary key is not imported at all — the pull reports it as an error,
+  primary key is not pulled at all — the pull reports it as an error,
   because without a key every repeat pull would insert the same rows again.
+- **The table must exist on this site.** A table missing here is reported
+  as an error rather than pulled; create it first (Precise Transfer >
+  Create Table). Both checks run before anything is requested from the
+  sender, so they do not use up its download or record limits.
 - **Leave out tables that a database trigger maintains.** Some tables are
   projections that a trigger keeps in step with another table (for example
   a slug lookup table filled by an `AFTER INSERT OR UPDATE` trigger on the
@@ -137,8 +141,8 @@ When you create a sender connection:
   projection as well can add rows the source does not have, and the trigger
   may then reject a later write to the source. Sync cannot tell such tables
   apart; leaving them out is the admin's call.
-- A table that fails as a whole (sender offline, no primary key, an import
-  that raised) does not stop the run: its row on the results screen shows
+- A table that fails as a whole (sender offline, table missing here, no
+  primary key, an import that raised) does not stop the run: its row on the results screen shows
   the reason and the run ends as "completed with errors".
 
 ## Programmatic API

@@ -46,7 +46,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.ExtractSyncCountsTest do
 
     test ":no_primary_key says why the table was not imported" do
       {0, 0, 0, msg} = ConnectionsLive.extract_sync_counts({:error, :no_primary_key})
-      assert msg =~ "Not imported: the table has no primary key here"
+      assert msg =~ "Not pulled: the table has no primary key here"
+    end
+
+    test ":table_missing_locally points at creating the table" do
+      {0, 0, 0, msg} = ConnectionsLive.extract_sync_counts({:error, :table_missing_locally})
+      assert msg =~ "does not exist on this site"
     end
 
     test ":import_failed and :pull_failed point at the server log" do

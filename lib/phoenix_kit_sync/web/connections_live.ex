@@ -1139,8 +1139,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   defp sync_error_message(:unauthorized), do: gettext("Unauthorized - check connection token")
   defp sync_error_message(:table_not_found), do: gettext("Table not found on sender")
 
-  defp sync_error_message(reason) when reason in [:import_failed, :no_primary_key, :pull_failed],
-    do: Errors.message(reason)
+  defp sync_error_message(reason)
+       when reason in [:import_failed, :no_primary_key, :pull_failed, :table_missing_locally],
+       do: Errors.message(reason)
 
   defp sync_error_message(reason) when is_binary(reason), do: reason
 

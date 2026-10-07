@@ -57,6 +57,7 @@ defmodule PhoenixKitSync.Errors do
           | :password_required
           | :pull_failed
           | :record_limit_reached
+          | :table_missing_locally
           | :table_not_found
           | :timeout
           | :unauthorized
@@ -103,7 +104,7 @@ defmodule PhoenixKitSync.Errors do
   def message(:no_primary_key),
     do:
       gettext(
-        "Not imported: the table has no primary key here (or does not exist), so repeat pulls would duplicate its rows"
+        "Not pulled: the table has no primary key here, so repeat pulls would duplicate its rows"
       )
 
   def message(:not_found), do: gettext("Not found")
@@ -119,6 +120,12 @@ defmodule PhoenixKitSync.Errors do
 
   def message(:table_not_allowed),
     do: gettext("This connection is not authorised to access that table")
+
+  def message(:table_missing_locally),
+    do:
+      gettext(
+        "Not pulled: this table does not exist on this site. Create it from the Precise Transfer tab first"
+      )
 
   def message(:table_not_found), do: gettext("Table not found")
   def message(:timeout), do: gettext("Request timed out")
