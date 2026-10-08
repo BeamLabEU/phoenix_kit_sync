@@ -372,14 +372,24 @@ defmodule PhoenixKitSync.DataImporter do
 
   # Values the JSON form cannot carry natively, read back by column type.
   # Bytes travel base64-wrapped (as the HTTP API sends them); a uuid as its
-  # text, or wrapped by older senders; a numeric as a string.
-  defp prepare_typed_value(%{"__phoenix_kit_binary__" => encoded} = value, _type)
-       when is_binary(encoded) do
+  # text, or wrapped by older senders; a numeric as a string. The wrapper is
+  # only read in the columns it is written for: in a json column the same
+  # shape is just an object.
+  defp prepare_typed_value(%{"__phoenix_kit_binary__" => encoded} = value, type)
+       when type in ["bytea", "uuid"] and is_binary(encoded) do
     case Base.decode64(encoded) do
       {:ok, bytes} -> bytes
       :error -> value
     end
   end
+
+  # Postgrex encodes a json value itself: an object, an array or a scalar
+  # goes as the decoded term, never as its JSON text.
+  defp prepare_typed_value(value, type) when type in ["json", "jsonb"], do: value
+
+  # Bytes that happen to be UTF-8 travel as plain text; they are still
+  # bytes, not a date or a time.
+  defp prepare_typed_value(value, "bytea") when is_binary(value), do: value
 
   defp prepare_typed_value(value, "uuid") when is_binary(value) and byte_size(value) == 36 do
     case Ecto.UUID.dump(value) do

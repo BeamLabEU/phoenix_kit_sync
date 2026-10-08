@@ -19,8 +19,28 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
   parent_uuid uuid,
   blob bytea,
   amount numeric(12, 2),
-  label text
+  label text,
+  note text,
+  big numeric,
+  doc jsonb,
+  doc_json json
   """
+
+  # Values whose JSON form says nothing about their column's type: the
+  # importer has to read each one by the column it lands in, not by its shape.
+  @typed_rows [
+    # 16 bytes in a bytea column are not a uuid; a uuid's text in a text
+    # column stays text; json objects and arrays stay json, not json strings.
+    {"typed", <<0, 255, 1, 254, 2, 253, 3, 252, 4, 251, 5, 250, 6, 249, 7, 248>>,
+     "0192a8b4-7c3e-7d4f-8a5b-6c7d8e9f0a1b", nil, ~s({"k": "v", "n": 1}), ~s({"k": "v", "n": 1})},
+    # bytea that happens to be UTF-8 text shaped like a date or a time stays bytes.
+    {"date-bytes", "2025-01-01", nil, nil, ~s([1, "a", {"b": null}]), ~s([1, "a", {"b": null}])},
+    {"time-bytes", "12:30:00", nil, nil, ~s("hello"), ~s("hello")},
+    {"json-number", nil, nil, nil, "42.5", "42"},
+    # A json object that happens to use the bytes wrapper's key is still an object.
+    {"json-wrapper-key", nil, nil, nil, ~s({"__phoenix_kit_binary__": "AAE="}),
+     ~s({"__phoenix_kit_binary__": "AAE="})}
+  ]
 
   setup do
     repo().query!("CREATE TABLE IF NOT EXISTS rt_source (#{@columns})")
@@ -33,16 +53,28 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
       [Ecto.UUID.dump!(a), Ecto.UUID.dump!(b), <<0, 255, 1, 254>>, Decimal.new("12.50")]
     )
 
+    for {label, blob, note, big, doc, doc_json} <- @typed_rows do
+      repo().query!(
+        "INSERT INTO rt_source (uuid, label, blob, note, big, doc, doc_json) " <>
+          "VALUES ($1, $2, $3, $4, $5::text::numeric, $6::text::jsonb, $7::text::json)",
+        [Ecto.UUID.dump!(UUIDv7.generate()), label, blob, note, big, doc, doc_json]
+      )
+    end
+
     {:ok, a: a, b: b}
   end
 
   defp repo, do: PhoenixKit.RepoHelper.repo()
 
   defp rows(table) do
-    repo().query!(
-      "SELECT uuid::text, parent_uuid::text, blob, amount::text, label FROM #{table} ORDER BY label"
-    ).rows
+    repo().query!("""
+    SELECT uuid::text, parent_uuid::text, blob, amount::text, label,
+           note, big::text, doc::text, doc_json::jsonb::text
+    FROM #{table} ORDER BY label
+    """).rows
   end
+
+  defp rows(table, labels), do: Enum.filter(rows(table), &(Enum.at(&1, 4) in labels))
 
   test "exported records encode as JSON, uuids as their text", %{a: a, b: b} do
     {:ok, records} = DataExporter.fetch_records("rt_source")
@@ -60,8 +92,21 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
     {:ok, records} = DataExporter.fetch_records("rt_source")
     records = records |> Jason.encode!() |> Jason.decode!()
 
-    assert {:ok, %{created: 2, errors: []}} = DataImporter.import_records("rt_target", records)
+    assert {:ok, %{created: 7, errors: []}} = DataImporter.import_records("rt_target", records)
     assert rows("rt_target") == rows("rt_source")
+  end
+
+  test "typed values are exported by their column's type" do
+    {:ok, records} = DataExporter.fetch_records("rt_source")
+    typed = Enum.find(records, &(&1["label"] == "typed"))
+
+    assert typed["blob"] == %{
+             "__phoenix_kit_binary__" =>
+               Base.encode64(<<0, 255, 1, 254, 2, 253, 3, 252, 4, 251, 5, 250, 6, 249, 7, 248>>)
+           }
+
+    assert typed["note"] == "0192a8b4-7c3e-7d4f-8a5b-6c7d8e9f0a1b"
+    assert typed["doc"] == %{"k" => "v", "n" => 1}
   end
 
   test "a second import of the same rows finds them by their uuid key" do
@@ -70,7 +115,7 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
 
     {:ok, _} = DataImporter.import_records("rt_target", records)
 
-    assert {:ok, %{created: 0, skipped: 2, errors: []}} =
+    assert {:ok, %{created: 0, skipped: 7, errors: []}} =
              DataImporter.import_records("rt_target", records, :skip)
   end
 
@@ -91,7 +136,7 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
     ]
 
     assert {:ok, %{created: 2, errors: []}} = DataImporter.import_records("rt_target", records)
-    assert rows("rt_target") == rows("rt_source")
+    assert rows("rt_target") == rows("rt_source", ["first", "second"])
   end
 
   test "bytes are wrapped the same way on the HTTP API and the export paths" do
