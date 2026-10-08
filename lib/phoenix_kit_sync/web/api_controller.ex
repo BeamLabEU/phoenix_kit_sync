@@ -1319,8 +1319,7 @@ defmodule PhoenixKitSync.Web.ApiController do
 
   # The same filter dialect as pull-data (PullFilter); unfiltered pages are
   # ordered by the key as before.
-  defp records_clause(table_name, nil),
-    do: {:ok, " ORDER BY #{quote_ident(resolve_pk_column(table_name))}", []}
+  defp records_clause(table_name, nil), do: {:ok, key_order(table_name), []}
 
   defp records_clause(table_name, filter), do: filter_clause(table_name, filter)
 
@@ -1343,13 +1342,6 @@ defmodule PhoenixKitSync.Web.ApiController do
     case SchemaInspector.get_primary_key(table_name) do
       {:ok, pk_cols} -> pk_cols
       {:error, _} -> []
-    end
-  end
-
-  defp resolve_pk_column(table_name) do
-    case SchemaInspector.get_primary_key(table_name) do
-      {:ok, [pk | _]} when is_binary(pk) -> pk
-      _ -> "id"
     end
   end
 

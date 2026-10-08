@@ -63,7 +63,8 @@ defmodule PhoenixKitSync.DataImporter do
   def import_records(table, records, strategy \\ :skip) when is_list(records) do
     repo = RepoHelper.repo()
 
-    with {:ok, schema} <- SchemaInspector.get_schema(table),
+    with :ok <- check_syncable(table),
+         {:ok, schema} <- SchemaInspector.get_schema(table),
          primary_keys <- get_primary_keys(schema) do
       # Values are read back into their column's type once, here: every
       # lookup and write below binds the prepared values.
@@ -94,6 +95,14 @@ defmodule PhoenixKitSync.DataImporter do
       {:ok, %{result | errors: Enum.reverse(result.errors)}}
     end
   end
+
+  # The table name comes from the sender, so the "never synced" list holds
+  # on this side too, not just in what the sender lists.
+  defp check_syncable(table) when is_binary(table) do
+    if SchemaInspector.excluded_table?(table), do: {:error, :table_excluded}, else: :ok
+  end
+
+  defp check_syncable(_table), do: :ok
 
   @doc """
   Imports records for multiple tables in a single operation.

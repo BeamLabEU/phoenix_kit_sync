@@ -56,6 +56,7 @@ defmodule PhoenixKitSync.ErrorsTest do
       {:record_limit_reached, "Record limit reached"},
       {:sender_ignores_filters,
        "Not imported: the source site ignored the record filter. Update its sync module and try again"},
+      {:table_excluded, "This table is never synced"},
       {:table_not_allowed, "This connection is not authorised to access that table"},
       {:schema_without_primary_key,
        "The sender did not report a primary key for this table. Update sync on the source site, or create the table here by hand"},

@@ -170,11 +170,14 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
     end
   end
 
-  # Decimal-like strings: "0.00", "123.45", "-99.99". Plain integers like
-  # "123" (no dot) are left as strings — Postgrex handles integer→numeric
-  # binds natively.
-  @decimal_regex ~r/^-?\d+\.\d+$/
-  defp parse_numeric_string(value, :decimal), do: parse_decimal_string(value)
+  # In a column known to be numeric, any numeric string becomes a Decimal:
+  # the exporters send "5" for a whole number and "1.5E+3" for one with an
+  # exponent, and Postgrex binds a string to numeric only as a Decimal.
+  @numeric_regex ~r/\A-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\z/
+  defp parse_numeric_string(value, :decimal) do
+    if Regex.match?(@numeric_regex, value), do: new_decimal(value)
+  end
+
   defp parse_numeric_string(value, :float), do: parse_float_string(value)
   defp parse_numeric_string(_value, nil), do: nil
 
@@ -191,10 +194,15 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
     end
   end
 
+  # Decimal-like strings: "0.00", "123.45", "-99.99". With no column type to
+  # go by, plain integers like "123" (no dot) are left as strings.
+  @decimal_regex ~r/^-?\d+\.\d+$/
   defp parse_decimal_string(value) do
-    if Regex.match?(@decimal_regex, value) do
-      Decimal.new(value)
-    end
+    if Regex.match?(@decimal_regex, value), do: new_decimal(value)
+  end
+
+  defp new_decimal(value) do
+    Decimal.new(value)
   rescue
     _ -> nil
   end

@@ -26,6 +26,27 @@ defmodule PhoenixKitSync.ConnectionNotifier.PrepareTest do
                "3.14"
     end
 
+    test "coerces whole-number and exponent strings on numeric columns" do
+      # The exporters send Decimal.to_string/1: "5" for a whole number,
+      # "1.5E+3" for one with an exponent. Postgrex takes a string for a
+      # numeric column only as a Decimal.
+      for value <- ["5", "-12", "1.5E+3", "2e-2"] do
+        assert %Decimal{} = Prepare.value(value, "price", %{"price" => :decimal})
+      end
+
+      assert Decimal.equal?(Prepare.value("1.5E+3", "price", %{"price" => :decimal}), 1500)
+    end
+
+    test "leaves whole-number strings alone on other columns and with no column type" do
+      assert Prepare.value("5", "version", %{"price" => :decimal}) == "5"
+      assert Prepare.value("5") == "5"
+    end
+
+    test "leaves a non-numeric string in a numeric column as it is" do
+      assert Prepare.value("abc", "price", %{"price" => :decimal}) == "abc"
+      assert Prepare.value("1e", "price", %{"price" => :decimal}) == "1e"
+    end
+
     test "coerces on multi-numeric-column list" do
       assert %Decimal{} =
                Prepare.value("99.99", "amount", %{

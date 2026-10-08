@@ -1170,21 +1170,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   defp sync_error_message(:unauthorized), do: gettext("Unauthorized - check connection token")
   defp sync_error_message(:table_not_found), do: gettext("Table not found on sender")
 
-  defp sync_error_message(reason)
-       when reason in [
-              :import_failed,
-              :invalid_column_name,
-              :invalid_filter,
-              :invalid_table_name,
-              :no_primary_key,
-              :pull_failed,
-              :sender_ignores_filters,
-              :table_missing_locally,
-              :truncated,
-              :unsupported_key_type,
-              :filter_needs_single_key
-            ],
-       do: Errors.message(reason)
+  defp sync_error_message(reason) when is_atom(reason), do: Errors.message(reason)
 
   defp sync_error_message(reason) when is_binary(reason), do: reason
 
@@ -2993,9 +2979,13 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
   defp parse_id_list(_), do: []
 
-  defp parse_id(id) do
+  @doc false
+  def parse_id(id) do
     case Integer.parse(id) do
-      {int, ""} -> int
+      # "007" and "+5" stay strings: in a text key they are different ids
+      # from 7 and 5. An integer key refuses a string id as an invalid
+      # filter, which beats reading it as another row.
+      {int, ""} -> if Integer.to_string(int) == id, do: int, else: id
       _ -> id
     end
   end

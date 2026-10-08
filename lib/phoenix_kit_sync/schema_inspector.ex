@@ -273,9 +273,14 @@ defmodule PhoenixKitSync.SchemaInspector do
       columns == [] -> {:error, :empty_schema}
       not Enum.all?(names ++ primary_key, &valid_identifier?/1) -> {:error, :invalid_column_name}
       not Enum.all?(types, &valid_column_type?/1) -> {:error, :invalid_column_type}
+      Enum.any?(types, &unspecific_type?/1) -> {:error, :invalid_column_type}
       true -> :ok
     end
   end
+
+  # information_schema's placeholder for an array whose element type did not
+  # come along: one word, so it passes valid_column_type?/1, but not DDL.
+  defp unspecific_type?(type), do: String.upcase(type) == "ARRAY"
 
   # Words that may follow another word in a multi-word type name
   # ("character varying", "timestamp with time zone", "double precision").
@@ -313,7 +318,8 @@ defmodule PhoenixKitSync.SchemaInspector do
     "column_name" => :column_name,
     "data_type" => :data_type,
     "is_nullable" => :is_nullable,
-    "character_maximum_length" => :character_maximum_length
+    "character_maximum_length" => :character_maximum_length,
+    "element_type" => :element_type
   }
 
   @doc """
@@ -364,9 +370,18 @@ defmodule PhoenixKitSync.SchemaInspector do
     type = schema_field(col, "type") || schema_field(col, "data_type")
     max_length = schema_field(col, "max_length") || schema_field(col, "character_maximum_length")
 
-    if type == "character varying" and is_integer(max_length),
-      do: "character varying(#{max_length})",
-      else: type
+    cond do
+      type == "character varying" and is_integer(max_length) ->
+        "character varying(#{max_length})"
+
+      # An array column is reported as "ARRAY" with its element type beside
+      # it; the DDL spells it "<element>[]".
+      type == "ARRAY" and is_binary(schema_field(col, "element_type")) ->
+        schema_field(col, "element_type") <> "[]"
+
+      true ->
+        type
+    end
   end
 
   defp column_nullable?(col) do
@@ -676,6 +691,16 @@ defmodule PhoenixKitSync.SchemaInspector do
       scale: scale
     }
   end
+
+  @doc """
+  True for a table this module never lists or syncs (`schema_migrations`,
+  `oban_*`, `pg_*`, `phoenix_kit_user_tokens`).
+
+  The sender's own table list is data, not trusted: a pull checks the name
+  here before it writes anything locally.
+  """
+  @spec excluded_table?(String.t()) :: boolean()
+  def excluded_table?(name) when is_binary(name), do: excluded_table?(name, true)
 
   defp excluded_table?(name, include_phoenix_kit) do
     cond do

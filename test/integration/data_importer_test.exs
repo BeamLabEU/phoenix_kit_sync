@@ -24,6 +24,12 @@ defmodule PhoenixKitSync.Integration.DataImporterTest do
     :ok
   end
 
+  test "refuses a table that is never synced, before touching it" do
+    for table <- ["phoenix_kit_user_tokens", "schema_migrations", "oban_jobs"] do
+      assert {:error, :table_excluded} = DataImporter.import_records(table, [%{}], :overwrite)
+    end
+  end
+
   defp count_rows do
     %{rows: [[count]]} = Repo.query!("SELECT COUNT(*) FROM #{@test_table}")
     count

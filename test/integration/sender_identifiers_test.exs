@@ -283,6 +283,28 @@ defmodule PhoenixKitSync.Integration.SenderIdentifiersTest do
       assert default =~ "nextval"
     end
 
+    test "creates an array column from its element type" do
+      array_col =
+        Map.merge(col("tags", "ARRAY"), %{"element_type" => "text"})
+
+      assert :ok = create([col("id", "bigint", true), array_col])
+
+      %{rows: [[type]]} =
+        PhoenixKit.RepoHelper.repo().query!("""
+        SELECT data_type FROM information_schema.columns
+        WHERE table_name = 'ident_created' AND column_name = 'tags'
+        """)
+
+      assert type == "ARRAY"
+    end
+
+    test "refuses an array column that comes without its element type" do
+      assert {:error, :invalid_column_type} =
+               create([col("id", "bigint", true), col("tags", "ARRAY")])
+
+      refute SchemaInspector.table_exists?("ident_created")
+    end
+
     test "a schema without columns is refused" do
       for schema <- [%{}, %{"columns" => nil}, %{"columns" => %{}}, %{"columns" => []}] do
         assert {:error, :empty_schema} = SchemaInspector.create_table("ident_created", schema)

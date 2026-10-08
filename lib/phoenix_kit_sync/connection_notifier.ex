@@ -587,11 +587,17 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   # transfer row, the log and the INSERT, so anything but a plain identifier
   # (at most 63 bytes, like every Postgres name) stops here, unechoed.
   defp check_table_name(table_name) do
-    if SchemaInspector.valid_identifier?(table_name) do
-      :ok
-    else
-      Logger.warning("Sync: refusing to pull a table whose name is not a valid identifier")
-      {:error, :invalid_table_name}
+    cond do
+      not SchemaInspector.valid_identifier?(table_name) ->
+        Logger.warning("Sync: refusing to pull a table whose name is not a valid identifier")
+        {:error, :invalid_table_name}
+
+      SchemaInspector.excluded_table?(table_name) ->
+        Logger.warning("Sync: refusing to pull #{table_name}, a table that is never synced")
+        {:error, :table_excluded}
+
+      true ->
+        :ok
     end
   end
 
@@ -1156,6 +1162,18 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp handle_table_http_result({:ok, %{status: 401}}), do: {:error, :unauthorized}
   defp handle_table_http_result({:ok, %{status: 404}}), do: {:error, :table_not_found}
+
+  # A filter the sender cannot apply (a range on a non-integer key, an ID
+  # list on a composite key) comes back as 400 with an error_code.
+  defp handle_table_http_result({:ok, %{status: 400, body: body}}) when is_binary(body) do
+    case Jason.decode(body) do
+      {:ok, %{"error_code" => "invalid_filter"}} -> {:error, :invalid_filter}
+      {:ok, %{"error_code" => "unsupported_key_type"}} -> {:error, :unsupported_key_type}
+      {:ok, %{"error_code" => "filter_needs_single_key"}} -> {:error, :filter_needs_single_key}
+      _ -> {:error, :unexpected_response}
+    end
+  end
+
   defp handle_table_http_result({:ok, %{status: _status}}), do: {:error, :unexpected_response}
 
   defp handle_table_http_result({:error, %{reason: reason}})

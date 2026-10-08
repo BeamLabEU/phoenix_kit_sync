@@ -50,6 +50,7 @@ defmodule PhoenixKitSync.Errors do
           | :ip_not_allowed
           | :join_timeout
           | :missing_fields
+          | :table_excluded
           | :table_not_allowed
           | :missing_code
           | :missing_connection_info
@@ -152,6 +153,8 @@ defmodule PhoenixKitSync.Errors do
       gettext(
         "Not imported: the source site ignored the record filter. Update its sync module and try again"
       )
+
+  def message(:table_excluded), do: gettext("This table is never synced")
 
   def message(:table_not_allowed),
     do: gettext("This connection is not authorised to access that table")
