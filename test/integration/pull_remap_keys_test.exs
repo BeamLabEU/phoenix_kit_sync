@@ -78,6 +78,13 @@ defmodule PhoenixKitSync.Integration.PullRemapKeysTest do
     )
     """)
 
+    repo().query!("""
+    CREATE TABLE rk_text_children (
+      code text PRIMARY KEY,
+      parent_code text REFERENCES rk_items(code)
+    )
+    """)
+
     StubRemote.reset()
     on_exit(&StubRemote.reset/0)
 
@@ -99,6 +106,36 @@ defmodule PhoenixKitSync.Integration.PullRemapKeysTest do
     ConnectionNotifier.pull_table_data_with_remap(connection, table, remap,
       conflict_strategy: strategy
     )
+  end
+
+  for {label, first, second} <- [
+        {"16-byte text", "AAAAAAAAAAAAAAAA", "41414141-4141-4141-4141-414141414141"},
+        {"UUID-shaped text case", "ABCDEFAB-CDEF-ABCD-EFAB-CDEFABCDEFAB",
+         "abcdefab-cdef-abcd-efab-cdefabcdefab"}
+      ] do
+    test "distinct #{label} keys remap children to distinct parents", %{connection: connection} do
+      first = unquote(first)
+      second = unquote(second)
+      repo().query!("INSERT INTO rk_items (code, name) VALUES ('local-a', 'a'), ('local-b', 'b')")
+
+      StubRemote.put_data("rk_items", [
+        %{"code" => first, "name" => "a"},
+        %{"code" => second, "name" => "b"}
+      ])
+
+      StubRemote.put_data("rk_text_children", [
+        %{"code" => "child-a", "parent_code" => first},
+        %{"code" => "child-b", "parent_code" => second}
+      ])
+
+      assert {:ok, %{skipped: 2}, remap} = pull(connection, "rk_items", %{}, "skip")
+
+      assert {:ok, %{imported: 2, errors: 0}, _} =
+               pull(connection, "rk_text_children", remap, "skip")
+
+      assert repo().query!("SELECT code, parent_code FROM rk_text_children ORDER BY code").rows ==
+               [["child-a", "local-a"], ["child-b", "local-b"]]
+    end
   end
 
   describe "uuid keys on the wire" do

@@ -147,6 +147,18 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
   end
 
   describe "POST /sync/api/list-tables" do
+    test "never lists session tokens or system tables", %{conn: conn} do
+      {_connection, token} = create_active_sender()
+
+      tables =
+        conn
+        |> post("/sync/api/list-tables", %{"auth_token_hash" => token_hash(token)})
+        |> json_response(200)
+        |> Map.fetch!("tables")
+
+      refute Enum.any?(tables, &PhoenixKitSync.SchemaInspector.excluded_table?(&1["name"]))
+    end
+
     test "missing auth_token_hash returns 400", %{conn: conn} do
       conn = post(conn, "/sync/api/list-tables", %{})
       assert json_response(conn, 400)["success"] == false
@@ -203,6 +215,27 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       body = json_response(conn, 200)
       assert body["success"] == true
       assert body["tables"] == []
+    end
+  end
+
+  test "an unrestricted token cannot read never-synced tables", %{conn: conn} do
+    {_connection, token} = create_active_sender()
+
+    for endpoint <- ["pull-data", "table-records", "table-schema"],
+        table <- [
+          "phoenix_kit_users_tokens",
+          "phoenix_kit_user_tokens",
+          "schema_migrations",
+          "oban_jobs",
+          "pg_class"
+        ] do
+      response =
+        post(conn, "/sync/api/#{endpoint}", %{
+          "auth_token_hash" => token_hash(token),
+          "table_name" => table
+        })
+
+      assert response.status == 403, "#{endpoint} served #{table}: #{response.status}"
     end
   end
 

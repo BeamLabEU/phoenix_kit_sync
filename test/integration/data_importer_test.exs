@@ -25,7 +25,12 @@ defmodule PhoenixKitSync.Integration.DataImporterTest do
   end
 
   test "refuses a table that is never synced, before touching it" do
-    for table <- ["phoenix_kit_user_tokens", "schema_migrations", "oban_jobs"] do
+    for table <- [
+          "phoenix_kit_users_tokens",
+          "phoenix_kit_user_tokens",
+          "schema_migrations",
+          "oban_jobs"
+        ] do
       assert {:error, :table_excluded} = DataImporter.import_records(table, [%{}], :overwrite)
     end
   end

@@ -78,6 +78,40 @@ defmodule PhoenixKitSync.Integration.PullFiltersReceiverTest do
     refute Map.has_key?(body, "id_end")
   end
 
+  test "a remap pull applies and confirms the same filter", %{connection: connection} do
+    StubRemote.put_data(@table, [%{"id" => 2, "label" => "item 2"}])
+    StubRemote.put_response_extra(@table, %{"filtered" => true})
+
+    assert {:ok, %{imported: 1, errors: 0}, %{}} =
+             ConnectionNotifier.pull_table_data_with_remap(connection, @table, %{}, ids: [2])
+
+    assert %{"ids" => [2]} = StubRemote.last_pull_body(@table)
+    assert rows() == [[2]]
+  end
+
+  test "a remap pull refuses an older sender that ignores its filter", %{connection: connection} do
+    StubRemote.put_data(@table, all_rows())
+    remap = %{{"parents", "42"} => 7}
+
+    assert {:error, :sender_ignores_filters, ^remap} =
+             ConnectionNotifier.pull_table_data_with_remap(connection, @table, remap, ids: [2])
+
+    assert rows() == []
+    assert %{status: "failed"} = transfer_for(@table)
+  end
+
+  test "a malformed remap filter is refused without requesting or writing", %{
+    connection: connection
+  } do
+    StubRemote.put_data(@table, all_rows())
+
+    assert {:error, :invalid_filter, %{}} =
+             ConnectionNotifier.pull_table_data_with_remap(connection, @table, %{}, ids: [])
+
+    assert StubRemote.pull_count(@table) == 0
+    assert rows() == []
+  end
+
   test "an older sender that ignores the filter: nothing is imported", %{
     connection: connection
   } do

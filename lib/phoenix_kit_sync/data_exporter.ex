@@ -42,6 +42,14 @@ defmodule PhoenixKitSync.DataExporter do
   """
   @spec get_count(String.t(), keyword()) :: {:ok, non_neg_integer()} | {:error, any()}
   def get_count(table_name, opts \\ []) do
+    if SchemaInspector.excluded_table?(table_name) do
+      {:error, :table_excluded}
+    else
+      do_get_count(table_name, opts)
+    end
+  end
+
+  defp do_get_count(table_name, opts) do
     schema = Keyword.get(opts, :schema, "public")
 
     # Validate table exists first

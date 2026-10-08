@@ -577,8 +577,15 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   with the same error reasons as `pull_table_data/3`.
   """
   def pull_table_data_with_remap(connection, table_name, uuid_remap, opts \\ []) do
-    case check_table_name(table_name) do
-      :ok -> pull_checked_table_with_remap(connection, table_name, uuid_remap, opts)
+    with :ok <- check_table_name(table_name),
+         {:ok, filter_body} <- PullFilter.body(opts) do
+      pull_checked_table_with_remap(
+        connection,
+        table_name,
+        uuid_remap,
+        Keyword.put(opts, :filter_body, filter_body)
+      )
+    else
       {:error, reason} -> {:error, reason, uuid_remap}
     end
   end
@@ -683,17 +690,20 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     api_url = build_pull_data_url(site_url)
 
-    body = %{
-      "auth_token_hash" => auth_token_hash,
-      "table_name" => table_name,
-      "conflict_strategy" => conflict_strategy
-    }
+    filter_body = Keyword.get(opts, :filter_body, %{})
+
+    body =
+      Map.merge(filter_body, %{
+        "auth_token_hash" => auth_token_hash,
+        "table_name" => table_name,
+        "conflict_strategy" => conflict_strategy
+      })
 
     guard_transfer(transfer, table_name, &{:error, &1, uuid_remap}, fn ->
       case check_local_table(transfer, table_name) do
         {:ok, target} ->
           result = make_http_request(api_url, body, timeout)
-          import_spec = {conflict_strategy, target}
+          import_spec = {conflict_strategy, target, filter_body != %{}}
           handle_pull_response_with_remap(result, transfer, table_name, import_spec, uuid_remap)
 
         {:error, reason} ->
@@ -809,14 +819,19 @@ defmodule PhoenixKitSync.ConnectionNotifier do
        ) do
     case Jason.decode(resp_body) do
       {:ok, %{"success" => true, "data" => data} = response} ->
-        complete_pull_transfer_with_remap(
-          transfer,
-          table_name,
-          data,
-          import_spec,
-          uuid_remap,
-          truncated?(response)
-        )
+        if filter_ignored?(import_spec, response) do
+          {:error, reason} = fail_ignored_filter(transfer)
+          {:error, reason, uuid_remap}
+        else
+          complete_pull_transfer_with_remap(
+            transfer,
+            table_name,
+            data,
+            import_spec,
+            uuid_remap,
+            truncated?(response)
+          )
+        end
 
       {:ok, %{"success" => false, "error" => error}} when is_binary(error) ->
         Logger.error("Sync: Pull failed - remote error: #{error}")
@@ -882,7 +897,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          transfer,
          table_name,
          data,
-         {conflict_strategy, target},
+         {conflict_strategy, target, _filtered},
          uuid_remap,
          truncated
        ) do
@@ -945,6 +960,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          %{
            pk_cols: pk_cols,
            columns: MapSet.new(columns, & &1.name),
+           column_types: Map.new(columns, &{&1.name, &1.type}),
            not_null: for(col <- columns, col.nullable == false, into: MapSet.new(), do: col.name)
          }}
 
@@ -1655,8 +1671,12 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     # the local row. Remapping again at insert would follow a chain
     # (42 -> 7 -> 3) when one local key is also another row's sender key.
     sender_pk = get_record_field(record, pk_col)
-    record = apply_fk_remap(record, ctx.fk_columns, remap)
-    remap = remap_own_key(remap, ctx.table_name, sender_pk, get_record_field(record, pk_col))
+    record = apply_fk_remap(record, ctx.fk_columns, remap, ctx.target.column_types)
+    key_type = Map.get(ctx.target.column_types, pk_col)
+
+    remap =
+      remap_own_key(remap, ctx.table_name, sender_pk, get_record_field(record, pk_col), key_type)
+
     {match_action, remap} = match_existing_record(ctx, pk_col, record, sender_pk, remap)
 
     case match_action do
@@ -1679,11 +1699,11 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   # Composite primary key (a table without one never gets here). The remap
   # is keyed by a single sender PK, so there is nothing of this row's own to
   # translate and nothing to add to the remap; nothing references a
-  # composite key through it either. FK columns go through apply_fk_remap/3
+  # composite key through it either. FK columns go through apply_fk_remap/4
   # as on the single-key path, then the insert resolves conflicts on the
   # whole key through ON CONFLICT, per the strategy.
   defp import_single_record_with_remap(ctx, record, acc, remap) do
-    remapped_record = apply_fk_remap(record, ctx.fk_columns, remap)
+    remapped_record = apply_fk_remap(record, ctx.fk_columns, remap, ctx.target.column_types)
 
     updated_acc =
       insert_record(
@@ -1734,7 +1754,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       case find_match_by_unique(repo, table_name, pk_col, record, unique_sets) do
         {:ok, local_pk} ->
           Logger.info("Sync: Matched a #{table_name} record by unique columns")
-          remap = Map.put(remap, {table_name, remap_key(sender_pk)}, local_pk)
+          key_type = Map.get(ctx.target.column_types, pk_col)
+          remap = Map.put(remap, {table_name, remap_key(sender_pk, key_type)}, local_pk)
           {unique_match_action(updates?, local_pk), remap}
 
         :no_match ->
@@ -1746,8 +1767,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   # A key that is also an FK (profiles keyed by their user) was just
   # remapped with that FK, so the row lives here under another key: tables
   # that reference it by the sender's key follow the same remap.
-  defp remap_own_key(remap, table_name, sender_pk, record_pk) do
-    case {remap_key(sender_pk), remap_key(record_pk)} do
+  defp remap_own_key(remap, table_name, sender_pk, record_pk, key_type) do
+    case {remap_key(sender_pk, key_type), remap_key(record_pk, key_type)} do
       {same, same} -> remap
       {nil, _} -> remap
       {sender_key, _} -> Map.put(remap, {table_name, sender_key}, record_pk)
@@ -1757,29 +1778,27 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   defp unique_match_action(true = _updates?, local_pk), do: {:update_matched, local_pk}
   defp unique_match_action(false = _updates?, _local_pk), do: :skip_matched
 
-  # Remap keys are canonical strings, so a sender key and an FK that point
-  # at the same row meet however the value travelled: a uuid arrives as a
-  # base64-wrapped 16-byte binary (or as raw bytes, or as text in any case),
-  # an integer as a number. Both sides of the remap go through this. The
-  # remap's values stay as the local row has them, ready to insert.
-  defp remap_key(%{"__phoenix_kit_binary__" => encoded}) when is_binary(encoded) do
+  # Canonicalise UUID columns only. Text keys that happen to be 16 bytes
+  # or look like UUIDs must retain their bytes and case to stay distinct.
+  defp remap_key(%{"__phoenix_kit_binary__" => encoded}, "uuid") when is_binary(encoded) do
     case Base.decode64(encoded) do
-      {:ok, bytes} -> remap_key(bytes)
+      {:ok, bytes} -> remap_key(bytes, "uuid")
       :error -> nil
     end
   end
 
   # Ecto.UUID.cast/1 takes both forms: 16 raw bytes and the 36-character
   # text, which it returns in lower case.
-  defp remap_key(value) when is_binary(value) do
+  defp remap_key(value, "uuid") when is_binary(value) do
     case Ecto.UUID.cast(value) do
       {:ok, uuid} -> uuid
       :error -> value
     end
   end
 
-  defp remap_key(value) when is_integer(value), do: Integer.to_string(value)
-  defp remap_key(_value), do: nil
+  defp remap_key(value, _type) when is_binary(value), do: value
+  defp remap_key(value, _type) when is_integer(value), do: Integer.to_string(value)
+  defp remap_key(_value, _type), do: nil
 
   defp check_pk_exists(repo, table_name, pk_col, pk_value) do
     if SchemaInspector.valid_identifier?(table_name) and
@@ -1846,16 +1865,16 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   end
 
   # Apply FK remaps to a record before inserting
-  defp apply_fk_remap(record, [], _remap), do: record
+  defp apply_fk_remap(record, [], _remap, _column_types), do: record
 
-  defp apply_fk_remap(record, fk_columns, remap) do
+  defp apply_fk_remap(record, fk_columns, remap, column_types) do
     Enum.reduce(fk_columns, record, fn %{column: col, referenced_table: ref_table}, rec ->
-      remap_single_fk(rec, col, ref_table, remap)
+      remap_single_fk(rec, col, ref_table, remap, Map.get(column_types, col))
     end)
   end
 
-  defp remap_single_fk(rec, col, ref_table, remap) do
-    case remap_key(get_record_field(rec, col)) do
+  defp remap_single_fk(rec, col, ref_table, remap, key_type) do
+    case remap_key(get_record_field(rec, col), key_type) do
       nil ->
         rec
 

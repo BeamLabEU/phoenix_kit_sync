@@ -1,7 +1,10 @@
 defmodule PhoenixKitSync.ExcludedTablesTest do
   use ExUnit.Case, async: true
 
+  alias PhoenixKit.Users.Auth.UserToken
+  alias PhoenixKitSync.Connection
   alias PhoenixKitSync.ConnectionNotifier
+  alias PhoenixKitSync.DataExporter
   alias PhoenixKitSync.SchemaInspector
 
   @never_synced [
@@ -9,10 +12,17 @@ defmodule PhoenixKitSync.ExcludedTablesTest do
     "oban_jobs",
     "oban_anything",
     "pg_class",
-    "phoenix_kit_user_tokens"
+    "phoenix_kit_user_tokens",
+    "phoenix_kit_users_tokens"
   ]
 
   describe "SchemaInspector.excluded_table?/1" do
+    test "excludes the table core actually uses for session tokens" do
+      table = UserToken.__schema__(:source)
+      assert table in @never_synced
+      assert SchemaInspector.excluded_table?(table)
+    end
+
     test "is true for the tables that are never synced" do
       for name <- @never_synced, do: assert(SchemaInspector.excluded_table?(name))
     end
@@ -21,6 +31,22 @@ defmodule PhoenixKitSync.ExcludedTablesTest do
       for name <- ["users", "orders", "phoenix_kit_users", "phoenix_kit_sync_connections"] do
         refute SchemaInspector.excluded_table?(name)
       end
+    end
+  end
+
+  test "a connection cannot allow a never-synced table, even explicitly" do
+    for name <- @never_synced do
+      refute Connection.table_allowed?(%Connection{}, name)
+      refute Connection.table_allowed?(%Connection{allowed_tables: [name]}, name)
+    end
+  end
+
+  test "schema and export entry points refuse never-synced tables before querying" do
+    for name <- @never_synced do
+      assert {:error, :table_excluded} = SchemaInspector.get_schema(name)
+      assert {:error, :table_excluded} = DataExporter.get_count(name)
+      assert {:error, :table_excluded} = DataExporter.fetch_records(name)
+      assert {:error, :table_excluded} = DataExporter.stream_records(name)
     end
   end
 

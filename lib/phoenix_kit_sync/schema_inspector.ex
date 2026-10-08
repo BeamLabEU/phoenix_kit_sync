@@ -44,7 +44,8 @@ defmodule PhoenixKitSync.SchemaInspector do
     "oban_peers",
     "oban_producers",
     # Session/token tables (security sensitive)
-    "phoenix_kit_user_tokens"
+    "phoenix_kit_user_tokens",
+    "phoenix_kit_users_tokens"
   ]
 
   # Prefixes for tables to exclude
@@ -136,6 +137,14 @@ defmodule PhoenixKitSync.SchemaInspector do
   """
   @spec get_schema(String.t(), keyword()) :: {:ok, map()} | {:error, any()}
   def get_schema(table_name, opts \\ []) do
+    if excluded_table?(table_name) do
+      {:error, :table_excluded}
+    else
+      do_get_schema(table_name, opts)
+    end
+  end
+
+  defp do_get_schema(table_name, opts) do
     schema = Keyword.get(opts, :schema, "public")
 
     # First check if table exists
@@ -694,7 +703,7 @@ defmodule PhoenixKitSync.SchemaInspector do
 
   @doc """
   True for a table this module never lists or syncs (`schema_migrations`,
-  `oban_*`, `pg_*`, `phoenix_kit_user_tokens`).
+  `oban_*`, `pg_*`, `phoenix_kit_users_tokens`, and the previous singular exclusion).
 
   The sender's own table list is data, not trusted: a pull checks the name
   here before it writes anything locally.

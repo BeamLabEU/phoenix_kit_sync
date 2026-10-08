@@ -58,6 +58,7 @@ defmodule PhoenixKitSync.Connection do
 
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Utils.Date, as: UtilsDate
+  alias PhoenixKitSync.SchemaInspector
   @type t :: %__MODULE__{}
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
@@ -499,7 +500,8 @@ defmodule PhoenixKitSync.Connection do
   """
   @spec table_allowed?(t(), String.t()) :: boolean()
   def table_allowed?(%__MODULE__{excluded_tables: excluded, allowed_tables: allowed}, table) do
-    not_excluded = table not in excluded
+    not_excluded =
+      is_binary(table) and not SchemaInspector.excluded_table?(table) and table not in excluded
 
     allowed_or_empty =
       case allowed do

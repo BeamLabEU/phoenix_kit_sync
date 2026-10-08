@@ -34,6 +34,27 @@ defmodule PhoenixKitSync.Web.SyncWebsockCallbacksTest do
     end
   end
 
+  test "session and permanent connections cannot read the real token table" do
+    {:ok, session} = PhoenixKitSync.create_session(:send)
+
+    {:ok, session_state} =
+      SyncWebsock.init(auth_type: :session, code: session.code, session: session)
+
+    {:ok, token_state} =
+      SyncWebsock.init(auth_type: :connection, connection: create_active_sender())
+
+    for state <- [session_state, token_state], event <- ["schema", "count", "records"] do
+      payload =
+        encode(nil, "excluded", "transfer:#{state.code}", "request:#{event}", %{
+          "table" => "phoenix_kit_users_tokens",
+          "ref" => "excluded"
+        })
+
+      reply = SyncWebsock.handle_in({payload, [opcode: :text]}, %{state | joined: true})
+      assert %{event: "response:error", payload: %{"ref" => "excluded"}} = decode_reply(reply)
+    end
+  end
+
   describe "init/1 — session-based auth" do
     test "initialises state with code + session" do
       {:ok, session} = PhoenixKitSync.create_session(:send)

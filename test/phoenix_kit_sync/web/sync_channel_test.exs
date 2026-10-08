@@ -45,6 +45,22 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
   # reports an empty mailbox as a protocol failure.
   @reply_timeout 2_000
 
+  test "a session cannot request token-table schema, counts, or records", %{
+    socket: socket,
+    session: session
+  } do
+    {:ok, _reply, channel} =
+      subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+    for event <- ["schema", "count", "records"] do
+      ref = "excluded-#{event}"
+      push(channel, "request:#{event}", %{"table" => "phoenix_kit_users_tokens", "ref" => ref})
+
+      assert_push("response:error", %{error: message, ref: ^ref}, @reply_timeout)
+      assert message =~ "table_excluded"
+    end
+  end
+
   describe "request:tables" do
     test "responds with the table list", %{socket: socket, session: session} do
       {:ok, _reply, channel} =
