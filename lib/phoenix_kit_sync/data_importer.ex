@@ -358,8 +358,15 @@ defmodule PhoenixKitSync.DataImporter do
   defp column_types(schema) do
     schema
     |> Map.get(:columns, [])
-    |> Map.new(fn col -> {Map.get(col, :name), Map.get(col, :type)} end)
+    |> Map.new(fn col -> {Map.get(col, :name), column_type(col)} end)
   end
+
+  # An array whose element type the schema does not name still takes a
+  # list: its elements go through the generic rules instead of the whole
+  # list being turned into JSON text. This is defensive: get_schema names
+  # the element type of every array column, domains over arrays included.
+  defp column_type(%{type: "ARRAY", element_type: type}), do: {:array, type}
+  defp column_type(col), do: Map.get(col, :type)
 
   defp prepare_record(record, column_types) when is_map(record) do
     Map.new(record, fn {key, value} ->
@@ -369,6 +376,23 @@ defmodule PhoenixKitSync.DataImporter do
   end
 
   defp prepare_record(record, _column_types), do: record
+
+  # Postgrex reads a nested list as one more array dimension, but in a json
+  # array a list element is a JSON array: it goes pre-encoded so it stays
+  # one element. A multi-dimensional json array therefore comes back as a
+  # one-dimensional array of JSON arrays.
+  defp prepare_typed_value(list, {:array, type}) when is_list(list) and type in ["json", "jsonb"],
+    do: Enum.map(list, &json_element/1)
+
+  # An array arrives as a list. Each element is read back by the element
+  # type, at every depth of a multi-dimensional array; a NULL element stays
+  # nil through the rules below.
+  defp prepare_typed_value(list, {:array, type}) when is_list(list) do
+    Enum.map(list, fn
+      sublist when is_list(sublist) -> prepare_typed_value(sublist, {:array, type})
+      value -> prepare_typed_value(value, type)
+    end)
+  end
 
   # Values the JSON form cannot carry natively, read back by column type.
   # Bytes travel base64-wrapped (as the HTTP API sends them); a uuid as its
@@ -413,6 +437,9 @@ defmodule PhoenixKitSync.DataImporter do
   end
 
   defp prepare_typed_value(value, _type), do: prepare_value(value)
+
+  defp json_element(list) when is_list(list), do: list |> Jason.encode!() |> Jason.Fragment.new()
+  defp json_element(value), do: value
 
   # A numeric's text is digits with an optional fraction, and the exporter
   # writes a tiny one in scientific form ("1.2345E-8"). Decimal.parse/1

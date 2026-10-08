@@ -170,14 +170,29 @@ defmodule PhoenixKitSync.DataExporter do
   defp row_to_map(columns, row) do
     columns
     |> Enum.zip(row)
-    |> Map.new(fn {col, val} -> {col.name, serialize_column(col.type, val)} end)
+    |> Map.new(fn {col, val} -> {col.name, serialize_column(col, val)} end)
+  end
+
+  # An array's elements follow the rule for its element type, at every
+  # depth of a multi-dimensional array, so a uuid element goes as text
+  # whatever its bytes happen to be.
+  defp serialize_column(%{type: "ARRAY", element_type: type}, list) when is_list(list),
+    do: serialize_elements(type, list)
+
+  defp serialize_column(%{type: type}, value), do: serialize_typed(type, value)
+
+  defp serialize_elements(type, list) do
+    Enum.map(list, fn
+      sublist when is_list(sublist) -> serialize_elements(type, sublist)
+      value -> serialize_typed(type, value)
+    end)
   end
 
   # Records travel as JSON. Postgrex hands a uuid over as its 16 raw bytes;
   # it goes out as its canonical text, which the importer turns back into
   # bytes for a uuid column.
-  defp serialize_column("uuid", <<_::128>> = bytes), do: Ecto.UUID.load!(bytes)
-  defp serialize_column(_type, value), do: serialize_value(value)
+  defp serialize_typed("uuid", <<_::128>> = bytes), do: Ecto.UUID.load!(bytes)
+  defp serialize_typed(_type, value), do: serialize_value(value)
 
   defp build_order_clause([]), do: ""
 

@@ -628,7 +628,18 @@ defmodule PhoenixKitSync.SchemaInspector do
       c.column_default,
       c.character_maximum_length,
       c.numeric_precision,
-      c.numeric_scale
+      c.numeric_scale,
+      -- An array's element type, named as information_schema names it.
+      -- udt_name is the array type itself, also under a domain; a per-row
+      -- lookup in pg_type, since joining information_schema.element_types
+      -- re-runs that view for every column.
+      (SELECT CASE WHEN et.typnamespace = 'pg_catalog'::regnamespace
+                   THEN format_type(et.oid, NULL)
+                   ELSE 'USER-DEFINED' END
+         FROM pg_type t
+         JOIN pg_namespace n ON n.oid = t.typnamespace AND n.nspname = c.udt_schema
+         JOIN pg_type et ON et.oid = t.typelem
+        WHERE c.data_type = 'ARRAY' AND t.typname = c.udt_name) AS element_type
     FROM information_schema.columns c
     WHERE c.table_schema = $1
       AND c.table_name = $2
@@ -637,19 +648,7 @@ defmodule PhoenixKitSync.SchemaInspector do
 
     with {:ok, %{rows: column_rows}} <- RepoHelper.query(columns_query, [schema, table_name]),
          {:ok, primary_key} <- get_primary_key(table_name, schema: schema) do
-      columns =
-        Enum.map(column_rows, fn [name, type, nullable, default, max_len, precision, scale] ->
-          %ColumnInfo{
-            name: name,
-            type: type,
-            nullable: nullable,
-            primary_key: name in primary_key,
-            default: default,
-            max_length: max_len,
-            precision: precision,
-            scale: scale
-          }
-        end)
+      columns = Enum.map(column_rows, &column_info(&1, primary_key))
 
       {:ok,
        %TableSchema{
@@ -659,6 +658,23 @@ defmodule PhoenixKitSync.SchemaInspector do
          primary_key: primary_key
        }}
     end
+  end
+
+  defp column_info(
+         [name, type, nullable, default, max_len, precision, scale, element_type],
+         primary_key
+       ) do
+    %ColumnInfo{
+      name: name,
+      type: type,
+      element_type: element_type,
+      nullable: nullable,
+      primary_key: name in primary_key,
+      default: default,
+      max_length: max_len,
+      precision: precision,
+      scale: scale
+    }
   end
 
   defp excluded_table?(name, include_phoenix_kit) do
