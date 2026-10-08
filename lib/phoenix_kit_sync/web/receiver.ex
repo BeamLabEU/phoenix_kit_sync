@@ -20,6 +20,7 @@ defmodule PhoenixKitSync.Web.Receiver do
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitSync.Errors
+  alias PhoenixKitSync.Params
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Web.Receiver.Helpers
   alias PhoenixKitSync.WebSocketClient
@@ -735,7 +736,16 @@ defmodule PhoenixKitSync.Web.Receiver do
     # Result is a map with atom keys from WebSocketClient
     records = Map.get(result, :records, [])
     has_more = Map.get(result, :has_more, false)
-    offset = Map.get(result, :offset, 0)
+    # The offset is the sender's echo; one that is not a whole number in
+    # range falls back to the offset this LiveView asked for.
+    offset =
+      Params.bounded_int(
+        result[:offset],
+        requested_offset(progress, table),
+        0,
+        Params.max_offset()
+      )
+
     strategy = socket.assigns.conflict_strategy
 
     # Get schema for this table (for auto-creation of missing tables)
@@ -1904,6 +1914,9 @@ defmodule PhoenixKitSync.Web.Receiver do
         complete_transfer(socket)
     end
   end
+
+  defp requested_offset(%{pending_fetch: {table, offset}}, table), do: offset
+  defp requested_offset(_progress, _table), do: 0
 
   defp queue_import_job(table, records, strategy, batch_index, opts) do
     # Generate a simple session code for tracking

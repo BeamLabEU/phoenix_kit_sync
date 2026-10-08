@@ -658,7 +658,7 @@ defmodule PhoenixKitSync.Web.ApiController do
          :ok <- check_table_allowed(connection, validated.table_name),
          {:ok, filter} <- PullFilter.from_params(params) do
       table_name = validated.table_name
-      limit = min(validated.limit, 100)
+      limit = validated.limit
       offset = validated.offset
 
       case get_table_records(table_name, limit, offset, filter) do

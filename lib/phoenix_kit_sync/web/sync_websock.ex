@@ -38,6 +38,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   alias PhoenixKitSync.Connection
   alias PhoenixKitSync.Connections
   alias PhoenixKitSync.DataExporter
+  alias PhoenixKitSync.Params
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Transfers
 
@@ -313,8 +314,10 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
       true ->
         table = payload["table"]
         client_ref = payload["ref"]
-        offset = Map.get(payload, "offset", 0)
-        limit = Map.get(payload, "limit", 100)
+        # The peer's numbers: anything but a whole number in range falls
+        # back, so a bad value cannot reach the query.
+        offset = Params.bounded_int(payload["offset"], 0, 0, Params.max_offset())
+        limit = Params.bounded_int(payload["limit"], 100, 1, DataExporter.max_limit())
 
         # Apply connection's max_records_per_request limit
         effective_limit = get_effective_limit(limit, state)

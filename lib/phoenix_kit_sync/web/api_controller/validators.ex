@@ -17,6 +17,8 @@ defmodule PhoenixKitSync.Web.ApiController.Validators do
   pure param shape checks.
   """
 
+  alias PhoenixKitSync.Params
+
   @spec validate_register(map()) ::
           {:ok, %{sender_url: String.t(), connection_name: String.t(), auth_token: String.t()}}
           | {:error, :missing_fields, list(String.t())}
@@ -118,8 +120,8 @@ defmodule PhoenixKitSync.Web.ApiController.Validators do
        %{
          auth_token_hash: params["auth_token_hash"],
          table_name: params["table_name"],
-         limit: parse_int(params["limit"], 10),
-         offset: parse_int(params["offset"], 0)
+         limit: Params.bounded_int(params["limit"], 10, 1, 100),
+         offset: Params.bounded_int(params["offset"], 0, 0, Params.max_offset())
        }}
     end
   end
@@ -131,19 +133,6 @@ defmodule PhoenixKitSync.Web.ApiController.Validators do
   """
   @spec valid_table_name?(any()) :: boolean()
   def valid_table_name?(name), do: PhoenixKitSync.SchemaInspector.valid_identifier?(name)
-
-  @spec parse_int(any(), integer()) :: integer()
-  def parse_int(nil, default), do: default
-  def parse_int(val, _default) when is_integer(val), do: val
-
-  def parse_int(val, default) when is_binary(val) do
-    case Integer.parse(val) do
-      {int, _} -> int
-      :error -> default
-    end
-  end
-
-  def parse_int(_, default), do: default
 
   # ---------------------------------------------------------------------------
   # Shared helpers

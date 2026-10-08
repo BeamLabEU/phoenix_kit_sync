@@ -90,4 +90,60 @@ defmodule PhoenixKitSync.Web.HistoryLiveTest do
       assert html =~ "phx-disable-with=\"Denying"
     end
   end
+
+  describe "page parameter" do
+    # The page number comes from the URL: whatever it holds, the page loads.
+    # 25 transfers make two pages, so page 2 is a real one.
+    for {raw, page} <- [
+          {"abc", 1},
+          {"-1", 1},
+          {"0", 1},
+          {"", 1},
+          {"2", 2},
+          {"99999999999999999999999", 1}
+        ] do
+      test "?page=#{raw} loads page #{page}", %{conn: conn} do
+        insert_transfers(25)
+        conn = put_test_scope(conn, fake_scope())
+        {:ok, view, html} = live(conn, "/en/admin/sync/history?page=#{unquote(raw)}")
+
+        assert html =~ "Transfer History"
+        assert :sys.get_state(view.pid).socket.assigns.page == unquote(page)
+      end
+    end
+
+    test "a page past the last one shows the last page", %{conn: conn} do
+      insert_transfers(25)
+
+      conn = put_test_scope(conn, fake_scope())
+      {:ok, view, html} = live(conn, "/en/admin/sync/history?page=50")
+
+      assert html =~ "Page 2 of 2"
+      assert html =~ "history_bulk_table"
+      assert :sys.get_state(view.pid).socket.assigns.page == 2
+    end
+
+    test "a page beyond 10 000 is reachable", %{conn: conn} do
+      # 20 per page: page 10_001 holds rows 200_001..200_020, and 21 rows
+      # more keep it short of the last page.
+      insert_transfers(200_021)
+
+      conn = put_test_scope(conn, fake_scope())
+      {:ok, view, html} = live(conn, "/en/admin/sync/history?page=10001")
+
+      assert html =~ "Page 10001 of 10002"
+      assert length(:sys.get_state(view.pid).socket.assigns.transfers) == 20
+    end
+  end
+
+  # Bulk rows straight in SQL: the count, not the content, matters here.
+  defp insert_transfers(count) do
+    PhoenixKit.RepoHelper.repo().query!(
+      """
+      INSERT INTO phoenix_kit_sync_transfers (direction, table_name, inserted_at)
+      SELECT 'send', 'history_bulk_table', now() FROM generate_series(1, $1)
+      """,
+      [count]
+    )
+  end
 end
