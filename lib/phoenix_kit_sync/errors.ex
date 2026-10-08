@@ -32,6 +32,7 @@ defmodule PhoenixKitSync.Errors do
           | :download_limit_reached
           | :econnrefused
           | :fetch_failed
+          | :import_failed
           | :incoming_denied
           | :invalid_code
           | :invalid_identifier
@@ -48,12 +49,15 @@ defmodule PhoenixKitSync.Errors do
           | :missing_code
           | :missing_connection_info
           | :module_disabled
+          | :no_primary_key
           | :not_found
           | :nxdomain
           | :offline
           | :outside_allowed_hours
           | :password_required
+          | :pull_failed
           | :record_limit_reached
+          | :table_missing_locally
           | :table_not_found
           | :timeout
           | :unauthorized
@@ -77,6 +81,10 @@ defmodule PhoenixKitSync.Errors do
   def message(:download_limit_reached), do: gettext("Download limit reached")
   def message(:econnrefused), do: gettext("Could not connect to the remote site")
   def message(:fetch_failed), do: gettext("Fetch failed")
+
+  def message(:import_failed),
+    do: gettext("Importing this table failed; see the server log for details")
+
   def message(:incoming_denied), do: gettext("Incoming connections are not allowed")
   def message(:invalid_code), do: gettext("Invalid session code")
   def message(:invalid_identifier), do: gettext("Invalid identifier")
@@ -92,15 +100,32 @@ defmodule PhoenixKitSync.Errors do
   def message(:missing_code), do: gettext("Missing session code")
   def message(:missing_connection_info), do: gettext("Missing connection info")
   def message(:module_disabled), do: gettext("Sync module is disabled")
+
+  def message(:no_primary_key),
+    do:
+      gettext(
+        "Not pulled: the table has no primary key here, so repeat pulls would duplicate its rows"
+      )
+
   def message(:not_found), do: gettext("Not found")
   def message(:nxdomain), do: gettext("Could not resolve the remote site's domain")
   def message(:offline), do: gettext("Remote site is offline")
   def message(:outside_allowed_hours), do: gettext("Outside allowed connection hours")
   def message(:password_required), do: gettext("Password required")
+
+  def message(:pull_failed),
+    do: gettext("Pulling this table failed; see the server log for details")
+
   def message(:record_limit_reached), do: gettext("Record limit reached")
 
   def message(:table_not_allowed),
     do: gettext("This connection is not authorised to access that table")
+
+  def message(:table_missing_locally),
+    do:
+      gettext(
+        "Not pulled: this table does not exist on this site. Create it from the Precise Transfer tab first"
+      )
 
   def message(:table_not_found), do: gettext("Table not found")
   def message(:timeout), do: gettext("Request timed out")

@@ -87,4 +87,7 @@ defmodule PhoenixKitSync.Test.Router do
   # WebSocketClient connects here in self-loop tests.
   forward("/sync/websocket", PhoenixKitSync.Web.SocketPlug)
   forward("/phoenix_kit/sync/websocket", PhoenixKitSync.Web.SocketPlug)
+
+  # Canned sender for receiver-side pull tests (see StubRemote).
+  forward("/stub-remote", PhoenixKitSync.Test.StubRemote)
 end

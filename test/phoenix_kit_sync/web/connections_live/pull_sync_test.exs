@@ -1,0 +1,202 @@
+defmodule PhoenixKitSync.Web.ConnectionsLive.PullSyncTest do
+  use PhoenixKitSync.LiveCase
+
+  import Ecto.Query
+
+  alias PhoenixKitSync.Connections
+  alias PhoenixKitSync.Errors
+  alias PhoenixKitSync.Test.StubRemote
+  alias PhoenixKitSync.Transfer
+
+  # The "Sync data" page pulls the selected tables one by one in a
+  # supervised task. Whatever happens inside that task, its result has to
+  # reach the LiveView: otherwise `sync_in_progress` never clears and the
+  # page stays stuck on the progress bar.
+
+  @parents "cpk_lv_parents"
+  @tree "cpk_lv_tree"
+
+  setup %{conn: conn} do
+    repo().query!("CREATE TABLE IF NOT EXISTS #{@parents} (code text PRIMARY KEY, name text)")
+
+    repo().query!("""
+    CREATE TABLE IF NOT EXISTS #{@tree} (
+      code text PRIMARY KEY,
+      parent_code text REFERENCES #{@tree}(code),
+      owner_code text REFERENCES #{@parents}(code)
+    )
+    """)
+
+    StubRemote.reset()
+    on_exit(&StubRemote.reset/0)
+
+    StubRemote.put_tables([
+      %{"name" => @tree, "row_count" => 1, "depends_on" => [@tree, @parents]},
+      %{"name" => @parents, "row_count" => 1, "depends_on" => []}
+    ])
+
+    {:ok, connection, _token} =
+      Connections.create_connection(%{
+        "name" => "Stub sender #{System.unique_integer([:positive])}",
+        "direction" => "receiver",
+        "site_url" => StubRemote.url()
+      })
+
+    {:ok, conn: put_test_scope(conn, fake_scope()), connection: connection}
+  end
+
+  defp repo, do: PhoenixKit.RepoHelper.repo()
+
+  defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+
+  defp wait_for(view, fun, timeout \\ 5_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    Stream.repeatedly(fn -> assigns(view) end)
+    |> Enum.find(fn assigns ->
+      fun.(assigns) or System.monotonic_time(:millisecond) > deadline or
+        (Process.sleep(20) && false)
+    end)
+  end
+
+  defp open_sync_page(conn, connection) do
+    {:ok, view, _html} =
+      live(conn, "/en/admin/sync/connections?action=sync&id=#{connection.uuid}")
+
+    wait_for(view, &(&1.sync_loading == false))
+    view
+  end
+
+  defp run_sync(view) do
+    render_click(view, "select_all_tables", %{})
+    render_click(view, "execute_sync", %{})
+    wait_for(view, &(&1.sync_in_progress == false))
+  end
+
+  defp in_progress_transfers do
+    repo().aggregate(from(t in Transfer, where: t.status == "in_progress"), :count)
+  end
+
+  test "a self-referencing table is pulled once, after the tables it depends on", %{
+    conn: conn,
+    connection: connection
+  } do
+    StubRemote.put_data(@parents, [%{"code" => "p1", "name" => "a"}])
+    StubRemote.put_data(@tree, [%{"code" => "t1", "parent_code" => nil}])
+
+    view = open_sync_page(conn, connection)
+    assigns = run_sync(view)
+
+    refute assigns.sync_in_progress
+    assert assigns.sync_progress.total == 2
+    assert Enum.map(assigns.sync_progress.table_results, & &1.table) == [@parents, @tree]
+  end
+
+  test "an import that raises still reports back and closes its transfer", %{
+    conn: conn,
+    connection: connection
+  } do
+    StubRemote.put_data(@parents, ["not a record"])
+    StubRemote.put_data(@tree, [%{"code" => "t1", "parent_code" => nil}])
+
+    view = open_sync_page(conn, connection)
+    assigns = run_sync(view)
+
+    refute assigns.sync_in_progress
+    assert assigns.sync_progress.status == :completed
+
+    assert [%{table: @parents, error_message: message}, %{table: @tree, imported: 1}] =
+             assigns.sync_progress.table_results
+
+    assert message == Errors.message(:import_failed)
+    assert in_progress_transfers() == 0
+
+    # The failed table has no per-record errors to count; the page must
+    # still say the run did not finish cleanly, and why, on that table's row.
+    html = render(view)
+    assert html =~ "Sync Completed with Errors"
+    refute html =~ "Sync Complete!"
+    assert has_element?(view, ~s([data-table-error="#{@parents}"]), message)
+    refute has_element?(view, ~s([data-table-error="#{@tree}"]))
+    refute html =~ "not a record"
+  end
+
+  test "a crash before the transfer exists still reports back to the page", %{
+    conn: conn,
+    connection: connection
+  } do
+    StubRemote.put_data(@parents, [])
+    StubRemote.put_data(@tree, [])
+
+    view = open_sync_page(conn, connection)
+    # The transfer changeset rejects an unknown strategy, so the pull
+    # crashes on creating its transfer, before any import starts.
+    render_change(view, "change_conflict_strategy", %{"strategy" => "bogus"})
+    assigns = run_sync(view)
+
+    refute assigns.sync_in_progress
+    assert assigns.sync_progress.status == :completed
+
+    assert [%{table: @parents, error_message: m1}, %{table: @tree, error_message: m2}] =
+             assigns.sync_progress.table_results
+
+    assert m1 == Errors.message(:pull_failed)
+    assert m2 == Errors.message(:pull_failed)
+    assert in_progress_transfers() == 0
+  end
+
+  test "a table missing here and a table without a primary key each say why", %{
+    conn: conn,
+    connection: connection
+  } do
+    repo().query!("CREATE TABLE IF NOT EXISTS cpk_lv_no_pk (code text)")
+
+    StubRemote.put_tables([
+      %{"name" => "cpk_lv_missing", "row_count" => 1, "depends_on" => []},
+      %{"name" => "cpk_lv_no_pk", "row_count" => 1, "depends_on" => []}
+    ])
+
+    StubRemote.put_data("cpk_lv_missing", [%{"code" => "a"}])
+    StubRemote.put_data("cpk_lv_no_pk", [%{"code" => "a"}])
+
+    view = open_sync_page(conn, connection)
+    assigns = run_sync(view)
+
+    refute assigns.sync_in_progress
+
+    messages = Map.new(assigns.sync_progress.table_results, &{&1.table, &1.error_message})
+    assert messages["cpk_lv_missing"] == Errors.message(:table_missing_locally)
+    assert messages["cpk_lv_no_pk"] == Errors.message(:no_primary_key)
+
+    assert render(view) =~ "Sync Completed with Errors"
+
+    assert has_element?(
+             view,
+             ~s([data-table-error="cpk_lv_missing"]),
+             "does not exist on this site"
+           )
+
+    assert has_element?(view, ~s([data-table-error="cpk_lv_no_pk"]), "no primary key")
+  end
+
+  test "a crash on the single-table (precise) transfer still reports back", %{
+    conn: conn,
+    connection: connection
+  } do
+    StubRemote.put_data(@parents, [])
+
+    view = open_sync_page(conn, connection)
+    render_click(view, "switch_sync_tab", %{"tab" => "details"})
+    render_click(view, "select_detail_table", %{"table" => @parents})
+    render_change(view, "change_conflict_strategy", %{"strategy" => "bogus"})
+    render_click(view, "transfer_detail_table", %{})
+    assigns = wait_for(view, &(&1.sync_in_progress == false))
+
+    refute assigns.sync_in_progress
+    assert [%{table: @parents, error_message: message}] = assigns.sync_progress.table_results
+    assert message == Errors.message(:pull_failed)
+
+    assert render(view) =~ "Transfer Completed with Errors"
+    assert has_element?(view, ~s([data-table-error="#{@parents}"]), message)
+  end
+end

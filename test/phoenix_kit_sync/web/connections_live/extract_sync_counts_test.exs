@@ -44,6 +44,24 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.ExtractSyncCountsTest do
       assert msg == "Table not found on sender"
     end
 
+    test ":no_primary_key says why the table was not imported" do
+      {0, 0, 0, msg} = ConnectionsLive.extract_sync_counts({:error, :no_primary_key})
+      assert msg =~ "Not pulled: the table has no primary key here"
+    end
+
+    test ":table_missing_locally points at creating the table" do
+      {0, 0, 0, msg} = ConnectionsLive.extract_sync_counts({:error, :table_missing_locally})
+      assert msg =~ "does not exist on this site"
+    end
+
+    test ":import_failed and :pull_failed point at the server log" do
+      assert {0, 0, 0, "Importing this table failed; see the server log for details"} =
+               ConnectionsLive.extract_sync_counts({:error, :import_failed})
+
+      assert {0, 0, 0, "Pulling this table failed; see the server log for details"} =
+               ConnectionsLive.extract_sync_counts({:error, :pull_failed})
+    end
+
     test "binary error reason passes through untranslated" do
       # Free-text error strings from the importer (already partially
       # composed elsewhere) flow through verbatim — gettext can't
