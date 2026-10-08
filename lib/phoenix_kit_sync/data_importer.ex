@@ -358,8 +358,11 @@ defmodule PhoenixKitSync.DataImporter do
   defp column_types(schema) do
     schema
     |> Map.get(:columns, [])
-    |> Map.new(fn col -> {Map.get(col, :name), Map.get(col, :type)} end)
+    |> Map.new(fn col -> {Map.get(col, :name), column_type(col)} end)
   end
+
+  defp column_type(%{type: "ARRAY", element_type: type}) when is_binary(type), do: {:array, type}
+  defp column_type(col), do: Map.get(col, :type)
 
   defp prepare_record(record, column_types) when is_map(record) do
     Map.new(record, fn {key, value} ->
@@ -369,6 +372,16 @@ defmodule PhoenixKitSync.DataImporter do
   end
 
   defp prepare_record(record, _column_types), do: record
+
+  # An array arrives as a list. Each element is read back by the element
+  # type, at every depth of a multi-dimensional array; a NULL element stays
+  # nil through the rules below.
+  defp prepare_typed_value(list, {:array, type}) when is_list(list) do
+    Enum.map(list, fn
+      sublist when is_list(sublist) -> prepare_typed_value(sublist, {:array, type})
+      value -> prepare_typed_value(value, type)
+    end)
+  end
 
   # Values the JSON form cannot carry natively, read back by column type.
   # Bytes travel base64-wrapped (as the HTTP API sends them); a uuid as its
