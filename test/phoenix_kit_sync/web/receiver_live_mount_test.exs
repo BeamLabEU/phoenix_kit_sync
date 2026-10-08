@@ -74,8 +74,13 @@ defmodule PhoenixKitSync.Web.ReceiverLiveMountTest do
       end)
     end
 
-    for offset <- ["abc", nil, 1.5, %{}] do
-      test "an offset of #{inspect(offset)} falls back to the requested one", %{conn: conn} do
+    # A full batch of 500, so the receiver asks for the next one; Oban in
+    # manual mode takes the import job without running it.
+    defp full_batch, do: Enum.map(1..500, &%{"id" => &1})
+
+    for echo <- ["abc", nil, 1.5, %{}, 0, 2_000] do
+      test "an echoed offset of #{inspect(echo)} does not move the next request", %{conn: conn} do
+        start_supervised!({Oban, repo: PhoenixKitSync.Test.Repo, testing: :manual})
         conn = put_test_scope(conn, fake_scope())
         {:ok, view, _html} = live(conn, "/en/admin/sync/receive")
         start_transfer(view, "rx_table", 500)
@@ -84,27 +89,15 @@ defmodule PhoenixKitSync.Web.ReceiverLiveMountTest do
           view.pid,
           {:sync_client,
            {:records, "rx_table",
-            %{records: [], has_more: true, offset: unquote(Macro.escape(offset))}}}
+            %{records: full_batch(), has_more: true, offset: unquote(Macro.escape(echo))}}}
         )
 
-        assert_receive {:"$websockex_cast", {:request_records, "rx_table", opts}}
+        # Barrier: the batch is handled before the mailbox is checked.
+        _ = :sys.get_state(view.pid)
+
+        assert_received {:"$websockex_cast", {:request_records, "rx_table", opts}}
         assert opts[:offset] == 1_000
-        assert Process.alive?(view.pid)
       end
-    end
-
-    test "a whole-number offset from the sender is used", %{conn: conn} do
-      conn = put_test_scope(conn, fake_scope())
-      {:ok, view, _html} = live(conn, "/en/admin/sync/receive")
-      start_transfer(view, "rx_table", 500)
-
-      send(
-        view.pid,
-        {:sync_client, {:records, "rx_table", %{records: [], has_more: true, offset: 2_000}}}
-      )
-
-      assert_receive {:"$websockex_cast", {:request_records, "rx_table", opts}}
-      assert opts[:offset] == 2_500
     end
   end
 end

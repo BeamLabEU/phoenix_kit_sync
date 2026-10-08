@@ -36,7 +36,9 @@ defmodule PhoenixKitSync.Client do
   ## Transfer Options
 
   - `:strategy` - Conflict resolution (`:skip`, `:overwrite`, `:merge`, `:append`)
-  - `:batch_size` - Records per batch (default: 500)
+  - `:batch_size` - Records per batch (default: 500). A sender returns at
+    most 1000 records per request; the transfer reads on until an empty page,
+    so a larger batch_size only costs an extra round trip
   - `:create_missing_tables` - Auto-create tables that don't exist (default: true)
   """
 
@@ -223,7 +225,9 @@ defmodule PhoenixKitSync.Client do
   ## Options
 
   - `:strategy` - Conflict resolution (`:skip`, `:overwrite`, `:merge`, `:append`)
-  - `:batch_size` - Records per batch (default: 500)
+  - `:batch_size` - Records per batch (default: 500). A sender returns at
+    most 1000 records per request; the transfer reads on until an empty page,
+    so a larger batch_size only costs an extra round trip
   - `:create_missing_tables` - Auto-create tables that don't exist (default: true)
   - `:timeout` - Timeout per request in ms (default: 30_000)
 
@@ -406,8 +410,8 @@ defmodule PhoenixKitSync.Client do
     %{client: client, table: table, batch_size: batch_size, timeout: timeout} = state
 
     case fetch_records(client, table, offset: offset, limit: batch_size, timeout: timeout) do
-      {:ok, %{records: records, has_more: has_more}} when records != [] ->
-        import_and_continue(state, offset, acc, records, has_more)
+      {:ok, %{records: records}} when records != [] ->
+        import_and_continue(state, offset, acc, records)
 
       {:ok, %{records: []}} ->
         {:ok, acc}
@@ -417,16 +421,16 @@ defmodule PhoenixKitSync.Client do
     end
   end
 
-  defp import_and_continue(state, offset, acc, records, has_more) do
+  # Reads on until an empty page. The sender's has_more is not trusted to
+  # end the table: a sender with a lower cap (a connection's
+  # max_records_per_request, another version) returns fewer records than
+  # asked and may still say there are no more. The price is one extra
+  # request per table.
+  defp import_and_continue(state, offset, acc, records) do
     case PhoenixKitSync.import_records(state.table, records, state.strategy) do
       {:ok, result} ->
-        new_acc = merge_results(acc, result)
-
-        if has_more do
-          fetch_and_import_loop(state, offset + state.batch_size, new_acc)
-        else
-          {:ok, new_acc}
-        end
+        # Advance by what arrived, not by what was asked.
+        fetch_and_import_loop(state, offset + length(records), merge_results(acc, result))
 
       {:error, reason} ->
         {:error, reason}
