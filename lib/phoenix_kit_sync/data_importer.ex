@@ -65,6 +65,11 @@ defmodule PhoenixKitSync.DataImporter do
 
     with {:ok, schema} <- SchemaInspector.get_schema(table),
          primary_keys <- get_primary_keys(schema) do
+      # Values are read back into their column's type once, here: every
+      # lookup and write below binds the prepared values.
+      column_types = column_types(schema)
+      records = Enum.map(records, &prepare_record(&1, column_types))
+
       # Single pre-pass: fetch every existing row this batch might conflict
       # with in one SELECT, keyed by PK value, instead of running one SELECT
       # per record. For :append there's nothing to look up. Composite PKs
@@ -134,7 +139,6 @@ defmodule PhoenixKitSync.DataImporter do
 
   defp import_single_record(repo, table, record, primary_keys, :append, _existing) do
     # For append strategy: strip primary keys and insert as new record
-    record = prepare_record(record)
     record_without_pk = Map.drop(record, primary_keys)
     insert_record(repo, table, record_without_pk)
   rescue
@@ -144,8 +148,6 @@ defmodule PhoenixKitSync.DataImporter do
   end
 
   defp import_single_record(repo, table, record, primary_keys, strategy, existing_by_pk) do
-    record = prepare_record(record)
-
     # Fast path: lookup in the pre-fetched map. Composite PKs (or any record
     # whose PKs weren't fetchable) fall through to a per-record
     # find_existing call so correctness isn't traded for the optimisation.
@@ -193,10 +195,7 @@ defmodule PhoenixKitSync.DataImporter do
 
   defp extract_pk_values(records, pk) do
     records
-    |> Enum.map(fn record ->
-      prepared = prepare_record(record)
-      Map.get(prepared, pk) || Map.get(prepared, safe_atom(pk))
-    end)
+    |> Enum.map(fn record -> Map.get(record, pk) || Map.get(record, safe_atom(pk)) end)
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
   end
@@ -356,13 +355,108 @@ defmodule PhoenixKitSync.DataImporter do
     |> Enum.map(fn col -> Map.get(col, :name) || Map.get(col, "name") end)
   end
 
-  defp prepare_record(record) when is_map(record) do
-    # Convert string keys to string (normalize) and handle special values
-    record
-    |> Enum.map(fn {key, value} ->
-      {to_string(key), prepare_value(value)}
+  defp column_types(schema) do
+    schema
+    |> Map.get(:columns, [])
+    |> Map.new(fn col -> {Map.get(col, :name), Map.get(col, :type)} end)
+  end
+
+  defp prepare_record(record, column_types) when is_map(record) do
+    Map.new(record, fn {key, value} ->
+      key = to_string(key)
+      {key, prepare_typed_value(value, Map.get(column_types, key))}
     end)
-    |> Map.new()
+  end
+
+  defp prepare_record(record, _column_types), do: record
+
+  # Values the JSON form cannot carry natively, read back by column type.
+  # Bytes travel base64-wrapped (as the HTTP API sends them); a uuid as its
+  # text, or wrapped by older senders; a numeric as a string. The wrapper is
+  # only read in the columns it is written for: in a json column the same
+  # shape is just an object.
+  defp prepare_typed_value(%{"__phoenix_kit_binary__" => encoded} = value, type)
+       when type in ["bytea", "uuid"] and is_binary(encoded) do
+    case Base.decode64(encoded) do
+      {:ok, bytes} -> bytes
+      :error -> value
+    end
+  end
+
+  # Postgrex encodes a json value itself: an object, an array or a scalar
+  # goes as the decoded term, never as its JSON text.
+  defp prepare_typed_value(value, type) when type in ["json", "jsonb"], do: value
+
+  # Bytes that happen to be UTF-8 travel as plain text; they are still
+  # bytes, not a date or a time.
+  defp prepare_typed_value(value, "bytea") when is_binary(value), do: value
+
+  # A string column takes a string as is: text shaped like a date or a time
+  # is still text. A map or a list falls through to its JSON text below.
+  defp prepare_typed_value(value, type)
+       when type in ["text", "character varying", "character"] and is_binary(value),
+       do: value
+
+  defp prepare_typed_value(value, "uuid") when is_binary(value) and byte_size(value) == 36 do
+    case Ecto.UUID.dump(value) do
+      {:ok, bytes} -> bytes
+      :error -> value
+    end
+  end
+
+  defp prepare_typed_value(value, type)
+       when is_binary(value) and type in ["numeric", "decimal"] do
+    case parse_numeric(value) do
+      {:ok, decimal} -> decimal
+      :error -> value
+    end
+  end
+
+  defp prepare_typed_value(value, _type), do: prepare_value(value)
+
+  # A numeric's text is digits with an optional fraction, and the exporter
+  # writes a tiny one in scientific form ("1.2345E-8"). Decimal.parse/1
+  # stops at decimal128's 34 significant digits and an exponent of 6144, far
+  # short of what a numeric column holds, so both forms are built directly.
+  # They are bounded by what the exporter can write instead: Decimal renders
+  # at most 6178 digits, and a numeric's scale stops at 16383. A longer
+  # value can only come from a peer building it by hand, and Postgrex's
+  # encoding grows with the square of its length, so it fails its record.
+  # Anything else (NaN, Infinity) goes to Decimal.parse/1.
+  @numeric_text ~r/\A([+-]?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d{1,6}))?\z/
+  @numeric_max_digits 6178
+  @numeric_max_scale 16_383
+
+  defp parse_numeric(value) do
+    case Regex.run(@numeric_text, value, capture: :all_but_first) do
+      [sign, int | rest] -> build_numeric(sign, int, Enum.at(rest, 0, ""), Enum.at(rest, 1, ""))
+      nil -> parse_decimal(value)
+    end
+  end
+
+  defp build_numeric(sign, int, frac, exponent) do
+    digits = String.trim_leading(int <> frac, "0")
+    exp = exponent(exponent) - byte_size(frac)
+
+    if byte_size(digits) + max(exp, 0) <= @numeric_max_digits and exp >= -@numeric_max_scale do
+      sign = if sign == "-", do: -1, else: 1
+      {:ok, Decimal.new(sign, coef(digits), exp)}
+    else
+      :error
+    end
+  end
+
+  defp exponent(""), do: 0
+  defp exponent(exponent), do: String.to_integer(exponent)
+
+  defp coef(""), do: 0
+  defp coef(digits), do: String.to_integer(digits)
+
+  defp parse_decimal(value) do
+    case Decimal.parse(value) do
+      {decimal, ""} -> {:ok, decimal}
+      _ -> :error
+    end
   end
 
   defp prepare_value(%{"__type__" => "datetime", "value" => value}) do

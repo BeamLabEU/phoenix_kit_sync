@@ -147,7 +147,7 @@ defmodule PhoenixKitSync.DataExporter do
 
     case RepoHelper.query(query, [limit, offset]) do
       {:ok, %{rows: rows}} ->
-        {:ok, Enum.map(rows, &row_to_map(columns, &1))}
+        {:ok, Enum.map(rows, &row_to_map(table_schema.columns, &1))}
 
       {:error, reason} ->
         {:error, reason}
@@ -170,9 +170,14 @@ defmodule PhoenixKitSync.DataExporter do
   defp row_to_map(columns, row) do
     columns
     |> Enum.zip(row)
-    |> Enum.map(fn {col, val} -> {col, serialize_value(val)} end)
-    |> Map.new()
+    |> Map.new(fn {col, val} -> {col.name, serialize_column(col.type, val)} end)
   end
+
+  # Records travel as JSON. Postgrex hands a uuid over as its 16 raw bytes;
+  # it goes out as its canonical text, which the importer turns back into
+  # bytes for a uuid column.
+  defp serialize_column("uuid", <<_::128>> = bytes), do: Ecto.UUID.load!(bytes)
+  defp serialize_column(_type, value), do: serialize_value(value)
 
   defp build_order_clause([]), do: ""
 
@@ -196,7 +201,15 @@ defmodule PhoenixKitSync.DataExporter do
   # Serialize values to JSON-compatible format
   # Struct types must come before the is_map guard (structs are maps)
   defp serialize_value(nil), do: nil
-  defp serialize_value(value) when is_binary(value), do: value
+  # Text goes as is. Other bytes (bytea) cannot be JSON: they go wrapped in
+  # base64 under the same key the HTTP API uses, so every path carries them
+  # the same way.
+  defp serialize_value(value) when is_binary(value) do
+    if String.valid?(value),
+      do: value,
+      else: %{"__phoenix_kit_binary__" => Base.encode64(value)}
+  end
+
   defp serialize_value(value) when is_number(value), do: value
   defp serialize_value(value) when is_boolean(value), do: value
   defp serialize_value(value) when is_list(value), do: Enum.map(value, &serialize_value/1)

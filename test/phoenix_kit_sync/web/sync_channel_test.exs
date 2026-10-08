@@ -1,6 +1,8 @@
 defmodule PhoenixKitSync.Web.SyncChannelTest do
   use PhoenixKitSync.ChannelCase
 
+  alias Phoenix.Socket.Message
+  alias Phoenix.Socket.V2.JSONSerializer
   alias PhoenixKitSync.Web.SyncChannel
   alias PhoenixKitSync.Web.SyncSocket
 
@@ -114,6 +116,44 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
 
       assert is_list(records)
       assert is_boolean(has_more)
+    end
+  end
+
+  describe "request:records — a table with uuid columns" do
+    # A live socket hands every push to its serializer, which JSON-encodes
+    # it; the test transport delivers the message as is, so the test runs
+    # the pushed message through the same serializer.
+    test "the reply encodes through the socket's JSON serializer", %{
+      socket: socket,
+      session: session
+    } do
+      {:ok, _connection, _token} =
+        PhoenixKitSync.Connections.create_connection(%{
+          "name" => "Channel uuid #{System.unique_integer([:positive])}",
+          "direction" => "sender",
+          "site_url" => "https://channel-uuid-#{System.unique_integer([:positive])}.example.com"
+        })
+
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      push(channel, "request:records", %{
+        "table" => "phoenix_kit_sync_connections",
+        "ref" => "uuid-json"
+      })
+
+      assert_receive %Message{
+                       event: "response:records",
+                       payload: %{ref: "uuid-json", records: [_ | _]}
+                     } = message,
+                     @reply_timeout
+
+      assert {:socket_push, :text, json} = JSONSerializer.encode!(message)
+
+      assert [_join_ref, _ref, _topic, "response:records", %{"records" => [record | _]}] =
+               Jason.decode!(json)
+
+      assert {:ok, _} = Ecto.UUID.cast(record["uuid"])
     end
   end
 
