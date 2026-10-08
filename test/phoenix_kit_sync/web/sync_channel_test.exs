@@ -117,6 +117,35 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
     end
   end
 
+  describe "request:records — a table with uuid columns" do
+    # The channel serializer JSON-encodes every push on a live socket; the
+    # test transport does not, so the payload is encoded here the same way.
+    test "the reply payload encodes as JSON", %{socket: socket, session: session} do
+      {:ok, _connection, _token} =
+        PhoenixKitSync.Connections.create_connection(%{
+          "name" => "Channel uuid #{System.unique_integer([:positive])}",
+          "direction" => "sender",
+          "site_url" => "https://channel-uuid-#{System.unique_integer([:positive])}.example.com"
+        })
+
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      push(channel, "request:records", %{
+        "table" => "phoenix_kit_sync_connections",
+        "ref" => "uuid-json"
+      })
+
+      assert_push(
+        "response:records",
+        %{ref: "uuid-json", records: [_ | _]} = payload,
+        @reply_timeout
+      )
+
+      assert {:ok, _json} = Jason.encode(payload)
+    end
+  end
+
   describe "request:records — malformed payload (DoS hardening)" do
     # Pre-fix sync_channel.ex used Map.fetch! on the "table" and "ref"
     # keys; missing keys crashed the channel and triggered a reconnect

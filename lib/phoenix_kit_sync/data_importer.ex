@@ -65,6 +65,11 @@ defmodule PhoenixKitSync.DataImporter do
 
     with {:ok, schema} <- SchemaInspector.get_schema(table),
          primary_keys <- get_primary_keys(schema) do
+      # Values are read back into their column's type once, here: every
+      # lookup and write below binds the prepared values.
+      column_types = column_types(schema)
+      records = Enum.map(records, &prepare_record(&1, column_types))
+
       # Single pre-pass: fetch every existing row this batch might conflict
       # with in one SELECT, keyed by PK value, instead of running one SELECT
       # per record. For :append there's nothing to look up. Composite PKs
@@ -134,7 +139,6 @@ defmodule PhoenixKitSync.DataImporter do
 
   defp import_single_record(repo, table, record, primary_keys, :append, _existing) do
     # For append strategy: strip primary keys and insert as new record
-    record = prepare_record(record)
     record_without_pk = Map.drop(record, primary_keys)
     insert_record(repo, table, record_without_pk)
   rescue
@@ -144,8 +148,6 @@ defmodule PhoenixKitSync.DataImporter do
   end
 
   defp import_single_record(repo, table, record, primary_keys, strategy, existing_by_pk) do
-    record = prepare_record(record)
-
     # Fast path: lookup in the pre-fetched map. Composite PKs (or any record
     # whose PKs weren't fetchable) fall through to a per-record
     # find_existing call so correctness isn't traded for the optimisation.
@@ -193,10 +195,7 @@ defmodule PhoenixKitSync.DataImporter do
 
   defp extract_pk_values(records, pk) do
     records
-    |> Enum.map(fn record ->
-      prepared = prepare_record(record)
-      Map.get(prepared, pk) || Map.get(prepared, safe_atom(pk))
-    end)
+    |> Enum.map(fn record -> Map.get(record, pk) || Map.get(record, safe_atom(pk)) end)
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
   end
@@ -356,14 +355,48 @@ defmodule PhoenixKitSync.DataImporter do
     |> Enum.map(fn col -> Map.get(col, :name) || Map.get(col, "name") end)
   end
 
-  defp prepare_record(record) when is_map(record) do
-    # Convert string keys to string (normalize) and handle special values
-    record
-    |> Enum.map(fn {key, value} ->
-      {to_string(key), prepare_value(value)}
-    end)
-    |> Map.new()
+  defp column_types(schema) do
+    schema
+    |> Map.get(:columns, [])
+    |> Map.new(fn col -> {Map.get(col, :name), Map.get(col, :type)} end)
   end
+
+  defp prepare_record(record, column_types) when is_map(record) do
+    Map.new(record, fn {key, value} ->
+      key = to_string(key)
+      {key, prepare_typed_value(value, Map.get(column_types, key))}
+    end)
+  end
+
+  defp prepare_record(record, _column_types), do: record
+
+  # Values the JSON form cannot carry natively, read back by column type.
+  # Bytes travel base64-wrapped (as the HTTP API sends them); a uuid as its
+  # text, or wrapped by older senders; a numeric as a string.
+  defp prepare_typed_value(%{"__phoenix_kit_binary__" => encoded} = value, _type)
+       when is_binary(encoded) do
+    case Base.decode64(encoded) do
+      {:ok, bytes} -> bytes
+      :error -> value
+    end
+  end
+
+  defp prepare_typed_value(value, "uuid") when is_binary(value) and byte_size(value) == 36 do
+    case Ecto.UUID.dump(value) do
+      {:ok, bytes} -> bytes
+      :error -> value
+    end
+  end
+
+  defp prepare_typed_value(value, type)
+       when is_binary(value) and type in ["numeric", "decimal"] do
+    case Decimal.parse(value) do
+      {decimal, ""} -> decimal
+      _ -> value
+    end
+  end
+
+  defp prepare_typed_value(value, _type), do: prepare_value(value)
 
   defp prepare_value(%{"__type__" => "datetime", "value" => value}) do
     # Handle serialized datetime
