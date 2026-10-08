@@ -23,7 +23,9 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
   note text,
   big numeric,
   doc jsonb,
-  doc_json json
+  doc_json json,
+  code character varying(20),
+  fixed character(10)
   """
 
   # Values whose JSON form says nothing about their column's type: the
@@ -70,6 +72,14 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
       )
     end
 
+    # Text shaped like a date or a time stays text in every string column.
+    repo().query!(
+      "INSERT INTO rt_source (uuid, label, note, code, fixed) " <>
+        "VALUES ($1, 'text-date', $3, $4, $5), ($2, 'text-time', $6, $7, $8)",
+      [Ecto.UUID.dump!(UUIDv7.generate()), Ecto.UUID.dump!(UUIDv7.generate())] ++
+        List.duplicate("2025-01-01", 3) ++ List.duplicate("12:30:00", 3)
+    )
+
     {:ok, a: a, b: b}
   end
 
@@ -78,7 +88,7 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
   defp rows(table) do
     repo().query!("""
     SELECT uuid::text, parent_uuid::text, blob, amount::text, label,
-           note, big::text, doc::text, doc_json::jsonb::text
+           note, big::text, doc::text, doc_json::jsonb::text, code, fixed
     FROM #{table} ORDER BY label
     """).rows
   end
@@ -108,7 +118,7 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
     {:ok, records} = DataExporter.fetch_records("rt_source")
     records = records |> Jason.encode!() |> Jason.decode!()
 
-    assert {:ok, %{created: 11, errors: []}} = DataImporter.import_records("rt_target", records)
+    assert {:ok, %{created: 13, errors: []}} = DataImporter.import_records("rt_target", records)
     assert rows("rt_target") == rows("rt_source")
   end
 
@@ -180,7 +190,7 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
 
     {:ok, _} = DataImporter.import_records("rt_target", records)
 
-    assert {:ok, %{created: 0, skipped: 11, errors: []}} =
+    assert {:ok, %{created: 0, skipped: 13, errors: []}} =
              DataImporter.import_records("rt_target", records, :skip)
   end
 

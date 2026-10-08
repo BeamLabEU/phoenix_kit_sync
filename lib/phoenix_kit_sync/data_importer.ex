@@ -391,6 +391,12 @@ defmodule PhoenixKitSync.DataImporter do
   # bytes, not a date or a time.
   defp prepare_typed_value(value, "bytea") when is_binary(value), do: value
 
+  # A string column takes a string as is: text shaped like a date or a time
+  # is still text. A map or a list falls through to its JSON text below.
+  defp prepare_typed_value(value, type)
+       when type in ["text", "character varying", "character"] and is_binary(value),
+       do: value
+
   defp prepare_typed_value(value, "uuid") when is_binary(value) and byte_size(value) == 36 do
     case Ecto.UUID.dump(value) do
       {:ok, bytes} -> bytes
