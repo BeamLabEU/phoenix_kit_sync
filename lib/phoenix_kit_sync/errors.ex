@@ -67,6 +67,7 @@ defmodule PhoenixKitSync.Errors do
           | :table_missing_locally
           | :table_not_found
           | :timeout
+          | :truncated
           | :unauthorized
           | :unavailable
           | :unexpected_response
@@ -169,6 +170,13 @@ defmodule PhoenixKitSync.Errors do
 
   def message(:table_not_found), do: gettext("Table not found")
   def message(:timeout), do: gettext("Request timed out")
+
+  def message(:truncated),
+    do:
+      gettext(
+        "Only part of the table was pulled: the sender stopped at this connection's max_records_per_request limit. Raise the limit in the connection's settings on the sender and pull again"
+      )
+
   def message(:unauthorized), do: gettext("Unauthorized")
   def message(:unavailable), do: gettext("Unavailable")
   def message(:unexpected_response), do: gettext("Unexpected response from remote site")

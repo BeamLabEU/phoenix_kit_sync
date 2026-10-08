@@ -1131,6 +1131,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   # process_table_sync_result/3.
   def extract_sync_counts(result) do
     case result do
+      # The rows came and were imported, but the sender cut the table.
+      {:ok, %{imported: imported, skipped: skipped, errors: errors, truncated: true}} ->
+        {imported, skipped, errors, sync_error_message(:truncated)}
+
       {:ok, %{imported: imported, skipped: skipped, errors: errors, unknown_columns: columns}} ->
         message =
           gettext("Columns not in the local table: %{columns}", columns: Enum.join(columns, ", "))
@@ -1165,6 +1169,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               :pull_failed,
               :sender_ignores_filters,
               :table_missing_locally,
+              :truncated,
               :unsupported_key_type,
               :filter_needs_single_key
             ],

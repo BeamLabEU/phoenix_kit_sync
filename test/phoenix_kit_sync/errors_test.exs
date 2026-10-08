@@ -63,6 +63,8 @@ defmodule PhoenixKitSync.ErrorsTest do
        "Not pulled: this table does not exist on this site. Create it from the Precise Transfer tab first"},
       {:table_not_found, "Table not found"},
       {:timeout, "Request timed out"},
+      {:truncated,
+       "Only part of the table was pulled: the sender stopped at this connection's max_records_per_request limit. Raise the limit in the connection's settings on the sender and pull again"},
       {:unauthorized, "Unauthorized"},
       {:unavailable, "Unavailable"},
       {:unsupported_key_type,
