@@ -82,6 +82,18 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
       assert %{type: "ARRAY", element_type: "character varying"} = by_name["allowed_tables"]
       assert %{type: "uuid", element_type: nil} = by_name["uuid"]
     end
+
+    test "an element type outside pg_catalog is USER-DEFINED; a scalar with elements is not an array" do
+      Repo.query!("CREATE TYPE si_mood AS ENUM ('calm')")
+      Repo.query!("CREATE TABLE si_types (id integer PRIMARY KEY, moods si_mood[], spot point)")
+
+      {:ok, schema} = SchemaInspector.get_schema("si_types")
+      by_name = Map.new(schema.columns, &{&1.name, &1})
+
+      assert %{type: "ARRAY", element_type: "USER-DEFINED"} = by_name["moods"]
+      # point has an element type in pg_type (float8) but is no array.
+      assert %{type: "point", element_type: nil} = by_name["spot"]
+    end
   end
 
   # ===========================================
