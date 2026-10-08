@@ -506,7 +506,7 @@ defmodule PhoenixKitSync.SchemaInspector do
       -- An array's element type, named as information_schema names it.
       -- udt_name is the array type itself, also under a domain; a per-row
       -- lookup in pg_type, since joining information_schema.element_types
-      -- re-plans that view for every column.
+      -- re-runs that view for every column.
       (SELECT CASE WHEN et.typnamespace = 'pg_catalog'::regnamespace
                    THEN format_type(et.oid, NULL)
                    ELSE 'USER-DEFINED' END

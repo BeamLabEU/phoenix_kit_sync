@@ -363,7 +363,8 @@ defmodule PhoenixKitSync.DataImporter do
 
   # An array whose element type the schema does not name still takes a
   # list: its elements go through the generic rules instead of the whole
-  # list being turned into JSON text.
+  # list being turned into JSON text. This is defensive: get_schema names
+  # the element type of every array column, domains over arrays included.
   defp column_type(%{type: "ARRAY", element_type: type}), do: {:array, type}
   defp column_type(col), do: Map.get(col, :type)
 

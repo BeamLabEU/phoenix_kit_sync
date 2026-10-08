@@ -83,6 +83,19 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
       assert %{type: "uuid", element_type: nil} = by_name["uuid"]
     end
 
+    test "a same-named type in another schema does not confuse the element type" do
+      # Every type has an array type beside it: si_other._uuid sits next to
+      # pg_catalog._uuid, so the lookup has to stay in the column's schema.
+      Repo.query!("CREATE SCHEMA si_other")
+      Repo.query!("CREATE TYPE si_other.uuid AS (a int)")
+      Repo.query!("CREATE TABLE si_refs (id integer PRIMARY KEY, refs uuid[])")
+
+      assert {:ok, schema} = SchemaInspector.get_schema("si_refs")
+
+      assert %{type: "ARRAY", element_type: "uuid"} =
+               Enum.find(schema.columns, &(&1.name == "refs"))
+    end
+
     test "an element type outside pg_catalog is USER-DEFINED; a scalar with elements is not an array" do
       Repo.query!("CREATE TYPE si_mood AS ENUM ('calm')")
       Repo.query!("CREATE TABLE si_types (id integer PRIMARY KEY, moods si_mood[], spot point)")
