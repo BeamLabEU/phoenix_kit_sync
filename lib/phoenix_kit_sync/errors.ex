@@ -174,7 +174,7 @@ defmodule PhoenixKitSync.Errors do
   def message(:truncated),
     do:
       gettext(
-        "Only part of the table was pulled: the sender hit max_records_per_request. Its admin can raise it for this connection (not in the form), or pull the rest by ID range in Precise Transfer"
+        "Table only partly pulled: the sender hit max_records_per_request. Its admin can raise it for this connection (not in the form), or pull the rest by ID range in Precise Transfer (single integer key)"
       )
 
   def message(:unauthorized), do: gettext("Unauthorized")

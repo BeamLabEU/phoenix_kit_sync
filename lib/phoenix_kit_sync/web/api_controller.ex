@@ -487,7 +487,8 @@ defmodule PhoenixKitSync.Web.ApiController do
     and `"truncated": true` when the answer stopped at the connection's
     `max_records_per_request` with more rows left (the key is left out
     otherwise). Rows come in key order, so the first rows are the same on
-    every pull; a filtered pull can fetch the rest in chunks.
+    every pull; for a table with a single integer key, a pull by ID range
+    can fetch the rest in chunks.
   - 400 Bad Request - Missing fields, an invalid filter, or a key type that
     takes no filter
   - 401 Unauthorized - Invalid auth token
