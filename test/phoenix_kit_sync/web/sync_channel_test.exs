@@ -1,6 +1,8 @@
 defmodule PhoenixKitSync.Web.SyncChannelTest do
   use PhoenixKitSync.ChannelCase
 
+  alias Phoenix.Socket.Message
+  alias Phoenix.Socket.V2.JSONSerializer
   alias PhoenixKitSync.Web.SyncChannel
   alias PhoenixKitSync.Web.SyncSocket
 
@@ -140,13 +142,13 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         "ref" => "uuid-json"
       })
 
-      assert_receive %Phoenix.Socket.Message{
+      assert_receive %Message{
                        event: "response:records",
                        payload: %{ref: "uuid-json", records: [_ | _]}
                      } = message,
                      @reply_timeout
 
-      assert {:socket_push, :text, json} = Phoenix.Socket.V2.JSONSerializer.encode!(message)
+      assert {:socket_push, :text, json} = JSONSerializer.encode!(message)
 
       assert [_join_ref, _ref, _topic, "response:records", %{"records" => [record | _]}] =
                Jason.decode!(json)
