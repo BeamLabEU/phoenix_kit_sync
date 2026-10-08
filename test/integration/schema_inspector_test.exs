@@ -74,6 +74,14 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
     test "returns error for nonexistent table" do
       assert {:error, :not_found} = SchemaInspector.get_schema("nonexistent_table_xyz")
     end
+
+    test "an array column reports its element type, a scalar column none" do
+      {:ok, schema} = SchemaInspector.get_schema("phoenix_kit_sync_connections")
+      by_name = Map.new(schema.columns, &{&1.name, &1})
+
+      assert %{type: "ARRAY", element_type: "character varying"} = by_name["allowed_tables"]
+      assert %{type: "uuid", element_type: nil} = by_name["uuid"]
+    end
   end
 
   # ===========================================

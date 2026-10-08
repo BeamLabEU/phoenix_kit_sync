@@ -502,8 +502,13 @@ defmodule PhoenixKitSync.SchemaInspector do
       c.column_default,
       c.character_maximum_length,
       c.numeric_precision,
-      c.numeric_scale
+      c.numeric_scale,
+      e.data_type AS element_type
     FROM information_schema.columns c
+    LEFT JOIN information_schema.element_types e
+      ON (c.table_catalog, c.table_schema, c.table_name, 'TABLE', c.dtd_identifier) =
+         (e.object_catalog, e.object_schema, e.object_name, e.object_type,
+          e.collection_type_identifier)
     WHERE c.table_schema = $1
       AND c.table_name = $2
     ORDER BY c.ordinal_position
@@ -511,19 +516,7 @@ defmodule PhoenixKitSync.SchemaInspector do
 
     with {:ok, %{rows: column_rows}} <- RepoHelper.query(columns_query, [schema, table_name]),
          {:ok, primary_key} <- get_primary_key(table_name, schema: schema) do
-      columns =
-        Enum.map(column_rows, fn [name, type, nullable, default, max_len, precision, scale] ->
-          %ColumnInfo{
-            name: name,
-            type: type,
-            nullable: nullable,
-            primary_key: name in primary_key,
-            default: default,
-            max_length: max_len,
-            precision: precision,
-            scale: scale
-          }
-        end)
+      columns = Enum.map(column_rows, &column_info(&1, primary_key))
 
       {:ok,
        %TableSchema{
@@ -533,6 +526,23 @@ defmodule PhoenixKitSync.SchemaInspector do
          primary_key: primary_key
        }}
     end
+  end
+
+  defp column_info(
+         [name, type, nullable, default, max_len, precision, scale, element_type],
+         primary_key
+       ) do
+    %ColumnInfo{
+      name: name,
+      type: type,
+      element_type: element_type,
+      nullable: nullable,
+      primary_key: name in primary_key,
+      default: default,
+      max_length: max_len,
+      precision: precision,
+      scale: scale
+    }
   end
 
   defp excluded_table?(name, include_phoenix_kit) do

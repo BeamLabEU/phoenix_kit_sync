@@ -5,7 +5,9 @@ defmodule PhoenixKitSync.ColumnInfo do
   ## Fields
 
   - `name` - Column name
-  - `type` - PostgreSQL data type (e.g., `"bigint"`, `"text"`)
+  - `type` - PostgreSQL data type (e.g., `"bigint"`, `"text"`, `"ARRAY"`)
+  - `element_type` - For an array column, its elements' data type (e.g.,
+    `"uuid"`, `"character varying"`); nil otherwise
   - `nullable` - Whether the column allows NULL values
   - `primary_key` - Whether the column is part of the primary key
   - `default` - Default value expression or nil
@@ -21,6 +23,7 @@ defmodule PhoenixKitSync.ColumnInfo do
   defstruct [
     :name,
     :type,
+    :element_type,
     :default,
     :max_length,
     :precision,
@@ -32,6 +35,7 @@ defmodule PhoenixKitSync.ColumnInfo do
   @type t :: %__MODULE__{
           name: String.t(),
           type: String.t(),
+          element_type: String.t() | nil,
           nullable: boolean(),
           primary_key: boolean(),
           default: String.t() | nil,
