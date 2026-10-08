@@ -533,7 +533,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   - `{:ok, result}` - Map with `:imported`, `:skipped`, `:errors`, plus
     `:unknown_columns` when some records carried columns the local table
-    lacks (those records count as errors)
+    lacks (those records count as errors), and `truncated: true` when the
+    sender stopped at its max_records_per_request limit: the rows that came
+    are imported, but the transfer is recorded as failed
   - `{:error, :offline}` - Sender is offline
   - `{:error, :invalid_table_name}` - The name is not a plain identifier;
     nothing is recorded or requested
@@ -721,7 +723,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       {:ok, %{"success" => true, "data" => data} = response} ->
         if filter_ignored?(import_spec, response),
           do: fail_ignored_filter(transfer),
-          else: complete_pull_transfer(transfer, table_name, data, import_spec)
+          else:
+            complete_pull_transfer(transfer, table_name, data, import_spec, truncated?(response))
 
       {:ok, %{"success" => false, "error" => error}} when is_binary(error) ->
         Logger.error("Sync: Pull failed - remote error: #{error}")
@@ -799,8 +802,15 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          uuid_remap
        ) do
     case Jason.decode(resp_body) do
-      {:ok, %{"success" => true, "data" => data}} ->
-        complete_pull_transfer_with_remap(transfer, table_name, data, import_spec, uuid_remap)
+      {:ok, %{"success" => true, "data" => data} = response} ->
+        complete_pull_transfer_with_remap(
+          transfer,
+          table_name,
+          data,
+          import_spec,
+          uuid_remap,
+          truncated?(response)
+        )
 
       {:ok, %{"success" => false, "error" => error}} when is_binary(error) ->
         Logger.error("Sync: Pull failed - remote error: #{error}")
@@ -845,18 +855,20 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {:error, :sender_ignores_filters}
   end
 
-  defp complete_pull_transfer(transfer, table_name, data, {conflict_strategy, target, _filtered}) do
+  # A sender that stopped at its max_records_per_request says so; one from
+  # before the mark cannot, and its cut answer still reads as whole.
+  defp truncated?(response), do: response["truncated"] == true
+
+  defp complete_pull_transfer(
+         transfer,
+         table_name,
+         data,
+         {conflict_strategy, target, _filtered},
+         truncated
+       ) do
     with :ok <- check_record_keys(transfer, data) do
       import_result = import_table_data(table_name, data, conflict_strategy, target)
-
-      Transfers.complete_transfer(transfer, %{
-        records_transferred: length(data),
-        records_created: import_result.imported,
-        records_skipped: import_result.skipped,
-        records_failed: import_result.errors
-      })
-
-      {:ok, import_result}
+      {:ok, finish_pull_transfer(transfer, data, import_result, truncated)}
     end
   end
 
@@ -865,24 +877,49 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          table_name,
          data,
          {conflict_strategy, target},
-         uuid_remap
+         uuid_remap,
+         truncated
        ) do
     case check_record_keys(transfer, data) do
       :ok ->
         {import_result, updated_remap} =
           import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap, target)
 
-        Transfers.complete_transfer(transfer, %{
-          records_transferred: length(data),
-          records_created: import_result.imported,
-          records_skipped: import_result.skipped,
-          records_failed: import_result.errors
-        })
-
-        {:ok, import_result, updated_remap}
+        {:ok, finish_pull_transfer(transfer, data, import_result, truncated), updated_remap}
 
       {:error, reason} ->
         {:error, reason, uuid_remap}
+    end
+  end
+
+  # The rows of a cut answer are imported, and the uuid remap they built
+  # holds for the tables after it, but the table is not whole: the transfer
+  # fails with the reason and the counts, and the result carries
+  # `truncated: true` for the caller to show.
+  defp finish_pull_transfer(transfer, data, import_result, truncated) do
+    stats = %{
+      records_transferred: length(data),
+      records_created: import_result.imported,
+      records_skipped: import_result.skipped,
+      records_failed: import_result.errors
+    }
+
+    if truncated do
+      Logger.warning("Sync: Pull stopped at the sender's max_records_per_request limit")
+
+      Transfers.fail_transfer(
+        transfer,
+        "The sender stopped at its max_records_per_request limit; " <>
+          "only the first #{length(data)} records were pulled. The sender's admin " <>
+          "can raise that limit for this connection (it is not in the connection " <>
+          "form), or pull the rest with Precise Transfer by ID range (single integer key)",
+        stats
+      )
+
+      Map.put(import_result, :truncated, true)
+    else
+      Transfers.complete_transfer(transfer, stats)
+      import_result
     end
   end
 

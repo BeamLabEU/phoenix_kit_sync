@@ -212,11 +212,21 @@ defmodule PhoenixKitSync.Transfer do
   end
 
   @doc """
-  Changeset for marking a transfer as failed.
+  Changeset for marking a transfer as failed. `stats` takes the same record
+  counts as `complete_changeset/2`, for a transfer that moved some rows
+  before it stopped.
   """
-  @spec fail_changeset(t(), String.t()) :: Ecto.Changeset.t()
-  def fail_changeset(transfer, error_message) do
+  @spec fail_changeset(t(), String.t(), map()) :: Ecto.Changeset.t()
+  def fail_changeset(transfer, error_message, stats \\ %{}) do
     transfer
+    |> cast(stats, [
+      :records_transferred,
+      :records_created,
+      :records_updated,
+      :records_skipped,
+      :records_failed,
+      :bytes_transferred
+    ])
     |> change(%{
       status: "failed",
       error_message: error_message,

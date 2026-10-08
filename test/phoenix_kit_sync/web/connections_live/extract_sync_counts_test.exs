@@ -64,6 +64,26 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.ExtractSyncCountsTest do
                )
     end
 
+    test "a truncated pull keeps its counts and says how to pull the rest" do
+      assert {3, 1, 0, msg} =
+               ConnectionsLive.extract_sync_counts(
+                 {:ok, %{imported: 3, skipped: 1, errors: 0, truncated: true}}
+               )
+
+      assert msg =~ "max_records_per_request"
+    end
+
+    test "a truncated pull with unknown columns names both" do
+      assert {1, 0, 2, msg} =
+               ConnectionsLive.extract_sync_counts(
+                 {:ok,
+                  %{imported: 1, skipped: 0, errors: 2, unknown_columns: ["a"], truncated: true}}
+               )
+
+      assert msg =~ "max_records_per_request"
+      assert msg =~ "Columns not in the local table: a"
+    end
+
     test ":table_missing_locally points at creating the table" do
       {0, 0, 0, msg} = ConnectionsLive.extract_sync_counts({:error, :table_missing_locally})
       assert msg =~ "does not exist on this site"

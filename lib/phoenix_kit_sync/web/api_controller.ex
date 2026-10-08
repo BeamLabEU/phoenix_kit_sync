@@ -483,7 +483,12 @@ defmodule PhoenixKitSync.Web.ApiController do
 
   ## Responses
 
-  - 200 OK - Returns table data; `"filtered": true` when a filter was applied
+  - 200 OK - Returns table data; `"filtered": true` when a filter was applied,
+    and `"truncated": true` when the answer stopped at the connection's
+    `max_records_per_request` with more rows left (the key is left out
+    otherwise). Rows come in key order, so the first rows are the same on
+    every pull; for a table with a single integer key, a pull by ID range
+    can fetch the rest in chunks.
   - 400 Bad Request - Missing fields, an invalid filter, or a key type that
     takes no filter
   - 401 Unauthorized - Invalid auth token
@@ -497,7 +502,7 @@ defmodule PhoenixKitSync.Web.ApiController do
          :ok <- check_connection_active(connection),
          :ok <- check_table_allowed(connection, validated.table_name),
          {:ok, filter} <- PullFilter.from_params(params),
-         {:ok, data} <- fetch_table_data(validated.table_name, connection, filter) do
+         {:ok, data, truncated} <- fetch_table_data(validated.table_name, connection, filter) do
       # Update connection stats
       record_count = length(data)
 
@@ -509,18 +514,7 @@ defmodule PhoenixKitSync.Web.ApiController do
         total_records_transferred: (connection.total_records_transferred || 0) + record_count
       })
 
-      # Record the transfer in history (sender side)
-      Transfers.create_transfer(%{
-        direction: "send",
-        connection_uuid: connection.uuid,
-        table_name: validated.table_name,
-        remote_site_url: connection.site_url,
-        conflict_strategy: validated.conflict_strategy,
-        status: "completed",
-        started_at: UtilsDate.utc_now(),
-        completed_at: UtilsDate.utc_now(),
-        records_transferred: record_count
-      })
+      record_send(connection, validated, record_count, truncated)
 
       Logger.info("Sending #{record_count} records for table #{validated.table_name}")
 
@@ -529,6 +523,10 @@ defmodule PhoenixKitSync.Web.ApiController do
       # then refuses to import a whole table it asked a few rows of.
       response = %{success: true, table: validated.table_name, data: data}
       response = if filter, do: Map.put(response, :filtered, true), else: response
+      # "truncated" says the answer stopped at max_records_per_request with
+      # more rows left. It is only added, never false: a receiver from
+      # before it reads "data" alone and carries on as it always did.
+      response = if truncated, do: Map.put(response, :truncated, true), else: response
 
       conn
       |> put_status(200)
@@ -1069,24 +1067,31 @@ defmodule PhoenixKitSync.Web.ApiController do
       {:error, :fetch_failed}
   end
 
+  # One row past the limit is fetched to tell a table that fits in one
+  # answer from one that was cut.
   defp do_fetch_table_data(table_name, connection, filter) do
     repo = PhoenixKit.RepoHelper.repo()
-    limit = connection.max_records_per_request || 10_000
+    limit = request_limit(connection)
 
-    case table_exists?(repo, table_name) do
-      {:ok, true} when is_nil(filter) ->
-        fetch_table_rows(repo, table_name, limit)
+    fetched =
+      case table_exists?(repo, table_name) do
+        {:ok, true} when is_nil(filter) ->
+          fetch_table_rows(repo, table_name, limit + 1)
 
-      {:ok, true} ->
-        with {:ok, where, binds} <- filter_clause(table_name, filter) do
-          fetch_filtered_rows(repo, table_name, where, binds, limit)
-        end
+        {:ok, true} ->
+          with {:ok, where, binds} <- filter_clause(table_name, filter) do
+            fetch_filtered_rows(repo, table_name, where, binds, limit + 1)
+          end
 
-      {:ok, false} ->
-        {:error, :table_not_found}
+        {:ok, false} ->
+          {:error, :table_not_found}
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
+
+    with {:ok, rows} <- fetched do
+      {:ok, Enum.take(rows, limit), length(rows) > limit}
     end
   end
 
@@ -1140,8 +1145,10 @@ defmodule PhoenixKitSync.Web.ApiController do
     end
   end
 
+  # In key order, so a cut answer is the same first rows on every pull. A
+  # table without a key has no such order and is read as it comes.
   defp fetch_table_rows(repo, table_name, limit) do
-    query = "SELECT * FROM #{quote_ident(table_name)} LIMIT $1"
+    query = "SELECT * FROM #{quote_ident(table_name)}#{key_order(table_name)} LIMIT $1"
 
     case SQL.query(repo, query, [limit]) do
       {:ok, %{rows: rows, columns: columns}} ->
@@ -1149,6 +1156,51 @@ defmodule PhoenixKitSync.Web.ApiController do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # The changeset keeps max_records_per_request above zero; a value set
+  # around it (nil, zero, negative) reads as the default rather than as
+  # LIMIT 0 with every answer marked truncated.
+  defp request_limit(%{max_records_per_request: limit}) when is_integer(limit) and limit > 0,
+    do: limit
+
+  defp request_limit(_connection), do: 10_000
+
+  defp key_order(table_name) do
+    case table_primary_key(table_name) do
+      [] -> ""
+      pk_cols -> " ORDER BY " <> Enum.map_join(pk_cols, ", ", &quote_ident/1)
+    end
+  end
+
+  # The sender's own history. A cut answer is recorded as failed, with the
+  # rows it did send: the receiver did not get the whole table.
+  defp record_send(connection, validated, record_count, truncated) do
+    attrs = %{
+      direction: "send",
+      connection_uuid: connection.uuid,
+      table_name: validated.table_name,
+      remote_site_url: connection.site_url,
+      conflict_strategy: validated.conflict_strategy,
+      status: "in_progress"
+    }
+
+    stats = %{records_transferred: record_count}
+
+    with {:ok, transfer} <- Transfers.create_transfer(attrs) do
+      if truncated do
+        Transfers.fail_transfer(
+          transfer,
+          "Stopped at this connection's max_records_per_request limit " <>
+            "(#{record_count} records); the rest of the table was not sent. " <>
+            "Raise max_records_per_request for this connection to send more " <>
+            "(Connections.update_connection/2; it is not in the connection form)",
+          stats
+        )
+      else
+        Transfers.complete_transfer(transfer, stats)
+      end
     end
   end
 
