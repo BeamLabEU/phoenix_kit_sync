@@ -772,9 +772,11 @@ defmodule PhoenixKitSync.Web.Receiver do
     progress = socket.assigns.transfer_progress
 
     # If there are more records, fetch next batch
+    # Advance by what arrived, not by what was asked: a sender may return
+    # fewer. An empty batch ends the table instead of asking again.
     socket =
-      if has_more do
-        new_offset = offset + @batch_size
+      if has_more and records != [] do
+        new_offset = offset + length(records)
 
         WebSocketClient.request_records(socket.assigns.ws_client, table,
           offset: new_offset,

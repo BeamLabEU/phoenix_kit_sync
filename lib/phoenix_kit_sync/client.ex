@@ -41,6 +41,7 @@ defmodule PhoenixKitSync.Client do
   """
 
   alias PhoenixKitSync
+  alias PhoenixKitSync.DataExporter
   alias PhoenixKitSync.WebSocketClient
 
   require Logger
@@ -223,7 +224,8 @@ defmodule PhoenixKitSync.Client do
   ## Options
 
   - `:strategy` - Conflict resolution (`:skip`, `:overwrite`, `:merge`, `:append`)
-  - `:batch_size` - Records per batch (default: 500)
+  - `:batch_size` - Records per batch (default: 500, at most 1000: the most a
+    sender returns per request)
   - `:create_missing_tables` - Auto-create tables that don't exist (default: true)
   - `:timeout` - Timeout per request in ms (default: 30_000)
 
@@ -390,7 +392,10 @@ defmodule PhoenixKitSync.Client do
       client: client,
       table: table,
       strategy: strategy,
-      batch_size: batch_size,
+      # A sender returns at most DataExporter's maximum per request and
+      # reports more only for a full batch of what was asked, so a larger
+      # batch would end the transfer after the first one.
+      batch_size: min(batch_size, DataExporter.max_limit()),
       timeout: timeout
     }
 
@@ -423,7 +428,8 @@ defmodule PhoenixKitSync.Client do
         new_acc = merge_results(acc, result)
 
         if has_more do
-          fetch_and_import_loop(state, offset + state.batch_size, new_acc)
+          # Advance by what arrived: a sender may return fewer than asked.
+          fetch_and_import_loop(state, offset + length(records), new_acc)
         else
           {:ok, new_acc}
         end
