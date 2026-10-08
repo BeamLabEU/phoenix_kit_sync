@@ -373,6 +373,13 @@ defmodule PhoenixKitSync.DataImporter do
 
   defp prepare_record(record, _column_types), do: record
 
+  # Postgrex reads a nested list as one more array dimension, but in a json
+  # array a list element is a JSON array: it goes pre-encoded so it stays
+  # one element. A multi-dimensional json array therefore comes back as a
+  # one-dimensional array of JSON arrays.
+  defp prepare_typed_value(list, {:array, type}) when is_list(list) and type in ["json", "jsonb"],
+    do: Enum.map(list, &json_element/1)
+
   # An array arrives as a list. Each element is read back by the element
   # type, at every depth of a multi-dimensional array; a NULL element stays
   # nil through the rules below.
@@ -382,6 +389,9 @@ defmodule PhoenixKitSync.DataImporter do
       value -> prepare_typed_value(value, type)
     end)
   end
+
+  defp json_element(list) when is_list(list), do: list |> Jason.encode!() |> Jason.Fragment.new()
+  defp json_element(value), do: value
 
   # Values the JSON form cannot carry natively, read back by column type.
   # Bytes travel base64-wrapped (as the HTTP API sends them); a uuid as its
