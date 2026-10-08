@@ -733,7 +733,6 @@ defmodule PhoenixKitSync.Web.Receiver do
 
     # Result is a map with atom keys from WebSocketClient
     records = Map.get(result, :records, [])
-    has_more = Map.get(result, :has_more, false)
     # The offset this LiveView asked for, not the sender's echo: an echo
     # stuck at 0 would request the same batch forever.
     offset = requested_offset(progress, table)
@@ -764,11 +763,12 @@ defmodule PhoenixKitSync.Web.Receiver do
 
     progress = socket.assigns.transfer_progress
 
-    # If there are more records, fetch next batch
-    # Advance by what arrived, not by what was asked: a sender may return
-    # fewer. An empty batch ends the table instead of asking again.
+    # Read on until an empty batch, as Client.transfer does: the sender's
+    # has_more is not trusted to end the table, since a sender with a lower
+    # cap returns fewer records than asked and may still say there are no
+    # more. Advance by what arrived, not by what was asked.
     socket =
-      if has_more and records != [] do
+      if records != [] do
         new_offset = offset + length(records)
 
         WebSocketClient.request_records(socket.assigns.ws_client, table,

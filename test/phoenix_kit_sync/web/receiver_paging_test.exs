@@ -90,4 +90,21 @@ defmodule PhoenixKitSync.Web.ReceiverPagingTest do
     refute_received {:"$websockex_cast", {:request_records, _table, _opts}}
     assert :sys.get_state(view.pid).socket.assigns.transfer_progress.status == :completed
   end
+
+  test "a sender that says no more is read until an empty page", %{conn: conn} do
+    view = mount_transfer(conn)
+
+    # A short page the sender calls the last one, though it is not.
+    batch(view, "rx_table", rows(3), false)
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", opts}}
+    assert opts[:offset] == 3
+
+    progress = :sys.get_state(view.pid).socket.assigns.transfer_progress
+    assert progress.jobs_queued == 1
+    refute progress.status == :completed
+
+    batch(view, "rx_table", [], false)
+    refute_received {:"$websockex_cast", {:request_records, _table, _opts}}
+    assert :sys.get_state(view.pid).socket.assigns.transfer_progress.status == :completed
+  end
 end

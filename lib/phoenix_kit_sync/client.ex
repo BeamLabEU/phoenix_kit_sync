@@ -36,13 +36,13 @@ defmodule PhoenixKitSync.Client do
   ## Transfer Options
 
   - `:strategy` - Conflict resolution (`:skip`, `:overwrite`, `:merge`, `:append`)
-  - `:batch_size` - Records per batch (default: 500); values above 1000 are
-    capped at 1000, the most a sender returns per request
+  - `:batch_size` - Records per batch (default: 500). A sender returns at
+    most 1000 records per request; the transfer reads on until an empty page,
+    so a larger batch_size only costs an extra round trip
   - `:create_missing_tables` - Auto-create tables that don't exist (default: true)
   """
 
   alias PhoenixKitSync
-  alias PhoenixKitSync.DataExporter
   alias PhoenixKitSync.WebSocketClient
 
   require Logger
@@ -225,8 +225,9 @@ defmodule PhoenixKitSync.Client do
   ## Options
 
   - `:strategy` - Conflict resolution (`:skip`, `:overwrite`, `:merge`, `:append`)
-  - `:batch_size` - Records per batch (default: 500); values above 1000 are
-    capped at 1000, the most a sender returns per request
+  - `:batch_size` - Records per batch (default: 500). A sender returns at
+    most 1000 records per request; the transfer reads on until an empty page,
+    so a larger batch_size only costs an extra round trip
   - `:create_missing_tables` - Auto-create tables that don't exist (default: true)
   - `:timeout` - Timeout per request in ms (default: 30_000)
 
@@ -389,19 +390,11 @@ defmodule PhoenixKitSync.Client do
   end
 
   defp fetch_and_import_all(client, table, strategy, batch_size, timeout) do
-    # A sender returns at most DataExporter's maximum per request; asking
-    # for more only makes its has_more hint wrong.
-    max_batch = DataExporter.max_limit()
-
-    if batch_size > max_batch do
-      Logger.debug("Sync.Client: batch_size #{batch_size} capped at #{max_batch} for #{table}")
-    end
-
     loop_state = %{
       client: client,
       table: table,
       strategy: strategy,
-      batch_size: min(batch_size, max_batch),
+      batch_size: batch_size,
       timeout: timeout
     }
 
