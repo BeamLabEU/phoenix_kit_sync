@@ -408,28 +408,29 @@ defmodule PhoenixKitSync.DataImporter do
 
   defp prepare_typed_value(value, _type), do: prepare_value(value)
 
-  # A numeric's text is digits with an optional fraction. Decimal.parse/1
-  # stops at decimal128's 34 significant digits, far short of what a numeric
-  # column holds, so this form is built directly. It is bounded by what the
-  # exporter can write instead: Decimal renders at most 6178 digits, and a
-  # numeric's scale stops at 16383. A longer value can only come from a peer
-  # building it by hand, and Postgrex's encoding grows with the square of
-  # its length, so it fails its record. Anything else (an exponent, NaN,
-  # Infinity) is short and goes to Decimal.parse/1.
-  @numeric_text ~r/\A([+-]?)(\d+)(?:\.(\d+))?\z/
+  # A numeric's text is digits with an optional fraction, and the exporter
+  # writes a tiny one in scientific form ("1.2345E-8"). Decimal.parse/1
+  # stops at decimal128's 34 significant digits and an exponent of 6144, far
+  # short of what a numeric column holds, so both forms are built directly.
+  # They are bounded by what the exporter can write instead: Decimal renders
+  # at most 6178 digits, and a numeric's scale stops at 16383. A longer
+  # value can only come from a peer building it by hand, and Postgrex's
+  # encoding grows with the square of its length, so it fails its record.
+  # Anything else (NaN, Infinity) goes to Decimal.parse/1.
+  @numeric_text ~r/\A([+-]?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d{1,6}))?\z/
   @numeric_max_digits 6178
   @numeric_max_scale 16_383
 
   defp parse_numeric(value) do
     case Regex.run(@numeric_text, value, capture: :all_but_first) do
-      [sign, int | frac] -> build_numeric(sign, int, List.first(frac, ""))
+      [sign, int | rest] -> build_numeric(sign, int, Enum.at(rest, 0, ""), Enum.at(rest, 1, ""))
       nil -> parse_decimal(value)
     end
   end
 
-  defp build_numeric(sign, int, frac) do
+  defp build_numeric(sign, int, frac, exponent) do
     digits = String.trim_leading(int <> frac, "0")
-    exp = -byte_size(frac)
+    exp = exponent(exponent) - byte_size(frac)
 
     if byte_size(digits) + max(exp, 0) <= @numeric_max_digits and exp >= -@numeric_max_scale do
       sign = if sign == "-", do: -1, else: 1
@@ -438,6 +439,9 @@ defmodule PhoenixKitSync.DataImporter do
       :error
     end
   end
+
+  defp exponent(""), do: 0
+  defp exponent(exponent), do: String.to_integer(exponent)
 
   defp coef(""), do: 0
   defp coef(digits), do: String.to_integer(digits)

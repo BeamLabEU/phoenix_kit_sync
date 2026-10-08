@@ -43,6 +43,9 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
     # The sign survives, on a short numeric and a long one alike.
     {"neg-numeric", nil, nil, "-12.50", nil, nil},
     {"neg-big-numeric", nil, nil, "-123456789012345678901234567890.123456789", nil, nil},
+    # A tiny numeric past 34 digits, which the exporter writes in scientific
+    # form ("1.2345…E-8").
+    {"tiny-numeric", nil, nil, "0.0000000123456789012345678901234567890123456789", nil, nil},
     # A json object that happens to use the bytes wrapper's key is still an object.
     {"json-wrapper-key", nil, nil, nil, ~s({"__phoenix_kit_binary__": "AAE="}),
      ~s({"__phoenix_kit_binary__": "AAE="})}
@@ -82,6 +85,13 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
 
   defp rows(table, labels), do: Enum.filter(rows(table), &(Enum.at(&1, 4) in labels))
 
+  test "a tiny numeric past 34 digits is exported in scientific form" do
+    {:ok, records} = DataExporter.fetch_records("rt_source")
+    tiny = Enum.find(records, &(&1["label"] == "tiny-numeric"))
+
+    assert tiny["big"] == "1.23456789012345678901234567890123456789E-8"
+  end
+
   test "exported records encode as JSON, uuids as their text", %{a: a, b: b} do
     {:ok, records} = DataExporter.fetch_records("rt_source")
 
@@ -98,7 +108,7 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
     {:ok, records} = DataExporter.fetch_records("rt_source")
     records = records |> Jason.encode!() |> Jason.decode!()
 
-    assert {:ok, %{created: 10, errors: []}} = DataImporter.import_records("rt_target", records)
+    assert {:ok, %{created: 11, errors: []}} = DataImporter.import_records("rt_target", records)
     assert rows("rt_target") == rows("rt_source")
   end
 
@@ -140,10 +150,14 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
     values = [
       "1" <> String.duplicate("0", 6177),
       "-" <> String.duplicate("9", 6178),
-      "0." <> String.duplicate("0", 16_382) <> "1"
+      "0." <> String.duplicate("0", 16_382) <> "1",
+      "2E+6177",
+      "2E-16383",
+      "-1.5E+3",
+      "1.23456789012345678901234567890123456789E-8"
     ]
 
-    assert {:ok, %{created: 3, errors: []}} = numeric_import(values)
+    assert {:ok, %{created: 7, errors: []}} = numeric_import(values)
     assert Enum.all?(values, &numeric_stored?/1)
   end
 
@@ -151,10 +165,12 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
     values = [
       "1" <> String.duplicate("0", 6178),
       "0." <> String.duplicate("0", 16_383) <> "1",
+      "1E+6178",
+      "1E-16384",
       "12.50"
     ]
 
-    assert {:ok, %{created: 1, errors: [_, _]}} = numeric_import(values)
+    assert {:ok, %{created: 1, errors: [_, _, _, _]}} = numeric_import(values)
     assert numeric_stored?("12.50")
   end
 
@@ -164,7 +180,7 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
 
     {:ok, _} = DataImporter.import_records("rt_target", records)
 
-    assert {:ok, %{created: 0, skipped: 10, errors: []}} =
+    assert {:ok, %{created: 0, skipped: 11, errors: []}} =
              DataImporter.import_records("rt_target", records, :skip)
   end
 
