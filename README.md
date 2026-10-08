@@ -124,11 +124,23 @@ When you create a sender connection:
 ### Choosing Tables to Pull
 
 - **Primary keys decide how a table is imported.** With a single-column
-  key, rows are matched against local ones by key and unique columns. A
-  composite key such as `(lang, value)` is imported as is: conflicts
-  resolve on the whole key, per the conflict strategy. A table with no
-  primary key is not pulled at all — the pull reports it as an error,
-  because without a key every repeat pull would insert the same rows again.
+  key, rows are matched against local ones by key, then by unique columns.
+  A row matched by unique columns under another key is remapped, so tables
+  that reference it point at the local row (uuid, integer and text keys).
+  A composite key such as `(lang, value)` is imported as is: conflicts
+  resolve on the whole key. A table with no primary key is not pulled at
+  all — the pull reports it as an error, because without a key every
+  repeat pull would insert the same rows again.
+- **Conflict strategy.** `skip` leaves a matched row alone; `overwrite`
+  writes the sender's values onto it; `merge` does the same but keeps the
+  local value wherever the sender's is NULL. On the bulk pull, `append`
+  inserts unmatched rows under a new key and leaves matched rows alone.
+  Unique columns other than the key: on the bulk pull, a row with a new
+  single-column key whose unique columns match a local row is that row
+  (remapped, then left alone or updated per the strategy). A row that
+  would clash with another local row's unique value (a composite key, the
+  precise pull, or an update of an existing key) is skipped under skip,
+  overwrite and merge.
 - **The table must exist on this site.** A table missing here is reported
   as an error rather than pulled; create it first (Precise Transfer >
   Create Table). Both checks run before anything is requested from the
@@ -142,8 +154,9 @@ When you create a sender connection:
   may then reject a later write to the source. Sync cannot tell such tables
   apart; leaving them out is the admin's call.
 - A table that fails as a whole (sender offline, table missing here, no
-  primary key, an import that raised) does not stop the run: its row on the results screen shows
-  the reason and the run ends as "completed with errors".
+  primary key, an import that raised) does not stop the run: its row on
+  the results screen shows the reason and the run ends as "completed with
+  errors".
 
 ## Programmatic API
 

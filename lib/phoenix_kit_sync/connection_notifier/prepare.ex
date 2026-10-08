@@ -7,14 +7,14 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
 
   1. **`value/1` and `value/3`** — convert JSON-transported scalars back
      into Postgrex-ready terms. ISO8601 strings become DateTime / Date /
-     Time. Decimal-like strings become `%Decimal{}` only when the target
-     column is numeric (the 3-arity form) — the broad 1-arity form is
-     kept for the PK/unique-key lookup paths where values are known keys,
-     not free-text.
-  2. **`numeric_columns/1`** — returns the list of column names whose type
-     is `numeric`/`decimal`/`double precision`/`real` for a given table.
-     Used by the importer to scope decimal-string detection. Cached once
-     per table-import; empty list on error (safe "don't coerce" fallback).
+     Time. Numeric strings are parsed only when the target column is
+     numeric (the 3-arity form): a `%Decimal{}` for numeric/decimal, a
+     float for double precision/real. The broad 1-arity form (Decimal
+     only) is kept for the PK/unique-key lookup paths where values are
+     known keys, not free-text.
+  2. **`numeric_column_types/1`** — maps each numeric column of a table to
+     `:decimal` or `:float`. Cached once per table-import by the importer;
+     empty map on error (safe "don't coerce" fallback).
   3. **Record field helpers** (`get_field/2`, `put_field/3`, `drop_field/2`,
      `normalize_keys/1`) — records arrive with either string or atom keys
      depending on whether they came through JSON or internal code. These
@@ -32,11 +32,14 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   # value/3 — scopes decimal coercion to numeric columns
   # ===========================================
 
-  @spec value(any(), String.t(), list(String.t())) :: any()
-  def value(value, column, numeric_cols)
-      when is_binary(value) and is_binary(column) and is_list(numeric_cols) do
+  # The third argument is the map numeric_column_types/1 returns: a numeric
+  # string in a double precision / real column becomes a float, since
+  # Postgrex takes neither a string nor a Decimal there.
+  @spec value(any(), String.t(), %{String.t() => :decimal | :float}) :: any()
+  def value(value, column, column_types)
+      when is_binary(value) and is_binary(column) and is_map(column_types) do
     parse_datetime_string(value) || parse_date_string(value) || parse_time_string(value) ||
-      if(column in numeric_cols, do: parse_decimal_string(value)) ||
+      parse_numeric_string(value, Map.get(column_types, column)) ||
       value
   end
 
@@ -65,16 +68,27 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   # Column-type caching
   # ===========================================
 
-  @spec numeric_columns(String.t()) :: list(String.t())
-  def numeric_columns(table_name) do
+  # "double precision" is one type name of two words.
+  @numeric_types %{
+    "numeric" => :decimal,
+    "decimal" => :decimal,
+    "double precision" => :float,
+    "real" => :float
+  }
+
+  @doc """
+  Maps each numeric column of `table_name` to the term a numeric string in
+  it should become: `:decimal` for numeric/decimal, `:float` for double
+  precision/real. Empty map on error.
+  """
+  @spec numeric_column_types(String.t()) :: %{String.t() => :decimal | :float}
+  def numeric_column_types(table_name) do
     case SchemaInspector.get_schema(table_name) do
       {:ok, %{columns: columns}} ->
-        columns
-        |> Enum.filter(fn col -> col.type in ~w[numeric decimal double precision real] end)
-        |> Enum.map(& &1.name)
+        for col <- columns, kind = @numeric_types[col.type], into: %{}, do: {col.name, kind}
 
       _ ->
-        []
+        %{}
     end
   end
 
@@ -160,6 +174,23 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   # "123" (no dot) are left as strings — Postgrex handles integer→numeric
   # binds natively.
   @decimal_regex ~r/^-?\d+\.\d+$/
+  defp parse_numeric_string(value, :decimal), do: parse_decimal_string(value)
+  defp parse_numeric_string(value, :float), do: parse_float_string(value)
+  defp parse_numeric_string(_value, nil), do: nil
+
+  @float_regex ~r/\A-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\z/
+
+  defp parse_float_string(value) do
+    # Float.parse/1 does not take every match: "1e400" is out of range.
+    # Leaving the string makes it a failed record, not a crash.
+    with true <- Regex.match?(@float_regex, value),
+         {float, ""} <- Float.parse(value) do
+      float
+    else
+      _ -> nil
+    end
+  end
+
   defp parse_decimal_string(value) do
     if Regex.match?(@decimal_regex, value) do
       Decimal.new(value)

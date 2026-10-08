@@ -209,6 +209,23 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
              ]
     end
 
+    test "merge keeps the local value where the sender's is NULL", %{
+      connection: connection
+    } do
+      insert_parent("p1", "shelves")
+      insert_parent("p2", "hooks")
+      insert_slug("en", "shelves", "p1", "local note")
+
+      StubRemote.put_data(@slugs, [slug("en", "shelves", "p2", nil)])
+
+      assert {:ok, %{imported: 1, skipped: 0, errors: 0}, _} =
+               ConnectionNotifier.pull_table_data_with_remap(connection, @slugs, %{},
+                 conflict_strategy: "merge"
+               )
+
+      assert slugs() == [["en", "shelves", "p2", "local note"]]
+    end
+
     test "append keeps the key columns and skips a row whose key is taken", %{
       connection: connection
     } do
@@ -289,24 +306,53 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
       assert rows == [["remote-hooks", "hooks"], ["local-shelves", "shelves"]]
     end
 
-    # Known limitation, fixed separately: the remap path skips a row whose PK
-    # already exists before it tries to insert, whatever the strategy, so
-    # overwrite and merge behave like skip here. Pinned so the separate fix
-    # changes this test on purpose.
-    test "known limitation: an existing primary key is skipped even with overwrite", %{
-      connection: connection
-    } do
+    test "overwrite updates a row whose primary key exists", %{connection: connection} do
+      insert_parent("p1", "shelves")
+
+      StubRemote.put_data(@parents, [%{"code" => "p1", "name" => "renamed"}])
+
+      assert {:ok, %{imported: 1, skipped: 0, errors: 0}, %{}} =
+               ConnectionNotifier.pull_table_data_with_remap(connection, @parents, %{},
+                 conflict_strategy: "overwrite"
+               )
+
+      %{rows: rows} = repo().query!("SELECT code, name FROM #{@parents}")
+      assert rows == [["p1", "renamed"]]
+    end
+
+    test "skip still leaves a row whose primary key exists untouched", %{connection: connection} do
       insert_parent("p1", "shelves")
 
       StubRemote.put_data(@parents, [%{"code" => "p1", "name" => "renamed"}])
 
       assert {:ok, %{imported: 0, skipped: 1, errors: 0}, %{}} =
                ConnectionNotifier.pull_table_data_with_remap(connection, @parents, %{},
-                 conflict_strategy: "overwrite"
+                 conflict_strategy: "skip"
                )
 
       %{rows: rows} = repo().query!("SELECT code, name FROM #{@parents}")
       assert rows == [["p1", "shelves"]]
+    end
+  end
+
+  describe "a conflict on a unique column other than the key" do
+    # The pull without remap (Precise Transfer) does no unique matching: a
+    # new key whose unique column is taken locally conflicts on that column.
+    # As before overwrite and merge updated through the key, that row is
+    # skipped, not an error.
+    for strategy <- ["overwrite", "merge"] do
+      test "is skipped under #{strategy}", %{connection: connection} do
+        insert_parent("p1", "shelves")
+        StubRemote.put_data(@parents, [%{"code" => "p9", "name" => "shelves"}])
+
+        assert {:ok, %{imported: 0, skipped: 1, errors: 0}} =
+                 ConnectionNotifier.pull_table_data(connection, @parents,
+                   conflict_strategy: unquote(strategy)
+                 )
+
+        %{rows: rows} = repo().query!("SELECT code, name FROM #{@parents}")
+        assert rows == [["p1", "shelves"]]
+      end
     end
   end
 
