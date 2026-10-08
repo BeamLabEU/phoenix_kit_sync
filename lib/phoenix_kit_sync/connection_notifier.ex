@@ -35,6 +35,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   alias PhoenixKit.Settings
   alias PhoenixKit.Utils.Date, as: UtilsDate
   alias PhoenixKitSync.Connections
+  alias PhoenixKitSync.PullFilter
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Transfers
 
@@ -521,6 +522,12 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `opts` - Options:
     - `:timeout` - HTTP request timeout (default: 60_000ms for large data)
     - `:conflict_strategy` - How to handle existing records ("skip", "overwrite", "merge")
+    - `:ids` - Only the rows with these key values (1 to 1000)
+    - `:id_range` - `{start, end}`: only the rows of an integer key range;
+      one bound may be nil, not both
+
+  A filter goes to the sender with the request; an answer that does not
+  carry `"filtered": true` (a sender from before filters) is not imported.
 
   ## Returns
 
@@ -533,6 +540,11 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:error, :invalid_column_name}` - The sender's data has a key that is
     not a plain identifier; no row of the table is written
   - `{:error, :invalid_response}` - The sender's answer could not be read
+  - `{:error, :invalid_filter}` - An empty, oversized or malformed filter
+    (refused before the request), or one the sender refused
+  - `{:error, :unsupported_key_type}` - The sender's key type takes no filter
+  - `{:error, :sender_ignores_filters}` - The sender ignored the filter;
+    nothing is imported
   - `{:error, :table_missing_locally}` - The table does not exist on this
     site; nothing is requested from the sender
   - `{:error, :no_primary_key}` - The local table has no primary key; it is
@@ -543,6 +555,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   """
   def pull_table_data(connection, table_name, opts \\ []) do
     with :ok <- check_table_name(table_name),
+         {:ok, filter_body} <- PullFilter.body(opts),
          {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
       connection_uuid = Map.get(connection, :uuid)
 
@@ -551,7 +564,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         auth_token_hash,
         connection_uuid,
         table_name,
-        opts
+        Keyword.put(opts, :filter_body, filter_body)
       )
     end
   end
@@ -621,16 +634,20 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     api_url = build_pull_data_url(site_url)
 
-    body = %{
-      "auth_token_hash" => auth_token_hash,
-      "table_name" => table_name,
-      "conflict_strategy" => conflict_strategy
-    }
+    filter_body = Keyword.get(opts, :filter_body, %{})
+
+    body =
+      Map.merge(filter_body, %{
+        "auth_token_hash" => auth_token_hash,
+        "table_name" => table_name,
+        "conflict_strategy" => conflict_strategy
+      })
 
     guard_transfer(transfer, table_name, &{:error, &1}, fn ->
       with {:ok, target} <- check_local_table(transfer, table_name) do
         result = make_http_request(api_url, body, timeout)
-        handle_pull_response(result, transfer, table_name, {conflict_strategy, target})
+        import_spec = {conflict_strategy, target, filter_body != %{}}
+        handle_pull_response(result, transfer, table_name, import_spec)
       end
     end)
   end
@@ -701,8 +718,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          import_spec
        ) do
     case Jason.decode(resp_body) do
-      {:ok, %{"success" => true, "data" => data}} ->
-        complete_pull_transfer(transfer, table_name, data, import_spec)
+      {:ok, %{"success" => true, "data" => data} = response} ->
+        if filter_ignored?(import_spec, response),
+          do: fail_ignored_filter(transfer),
+          else: complete_pull_transfer(transfer, table_name, data, import_spec)
 
       {:ok, %{"success" => false, "error" => error}} when is_binary(error) ->
         Logger.error("Sync: Pull failed - remote error: #{error}")
@@ -717,6 +736,27 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         Transfers.fail_transfer(transfer, "Invalid response from remote site")
         {:error, :invalid_response}
     end
+  end
+
+  # A sender that knows filters answers a filter it cannot apply (a range
+  # on a non-integer key, a composite key) with 400.
+  defp handle_pull_response(
+         {:ok, %{status: 400, body: body}},
+         transfer,
+         _table_name,
+         {_, _, true}
+       ) do
+    reason =
+      case Jason.decode(body) do
+        {:ok, %{"error_code" => "unsupported_key_type"}} -> :unsupported_key_type
+        {:ok, %{"error_code" => "filter_needs_single_key"}} -> :filter_needs_single_key
+        # "invalid_filter", or a sender that predates error_code.
+        _ -> :invalid_filter
+      end
+
+    Logger.error("Sync: Pull failed - the sender refused the record filter (#{reason})")
+    Transfers.fail_transfer(transfer, "The sender refused the record filter")
+    {:error, reason}
   end
 
   defp handle_pull_response({:ok, %{status: 401}}, transfer, _table_name, _import_spec) do
@@ -793,7 +833,19 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {:error, :invalid_response}
   end
 
-  defp complete_pull_transfer(transfer, table_name, data, {conflict_strategy, target}) do
+  # Asked for some rows, got an answer without "filtered": true. A sender
+  # that predates filters ignores them and sends the whole table, so the
+  # answer is not imported at all.
+  defp filter_ignored?({_strategy, _target, true}, response), do: response["filtered"] != true
+  defp filter_ignored?(_import_spec, _response), do: false
+
+  defp fail_ignored_filter(transfer) do
+    Logger.error("Sync: Pull refused - the sender ignored the record filter")
+    Transfers.fail_transfer(transfer, "The sender ignored the record filter; not imported")
+    {:error, :sender_ignores_filters}
+  end
+
+  defp complete_pull_transfer(transfer, table_name, data, {conflict_strategy, target, _filtered}) do
     with :ok <- check_record_keys(transfer, data) do
       import_result = import_table_data(table_name, data, conflict_strategy, target)
 
@@ -989,15 +1041,18 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:error, reason}` - Failed to fetch records
   """
   def fetch_table_records(connection, table_name, opts \\ []) do
-    with {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
-      do_fetch_table_records(site_url, auth_token_hash, table_name, opts)
+    # The same filter rules as the pull, so a preview and a transfer of the
+    # same input agree (an empty ID list is refused by both).
+    with {:ok, filter_body} <- PullFilter.body(Keyword.take(opts, [:ids, :id_range])),
+         {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
+      do_fetch_table_records(site_url, auth_token_hash, table_name, filter_body, opts)
     end
   end
 
-  defp do_fetch_table_records(site_url, auth_token_hash, table_name, opts) do
+  defp do_fetch_table_records(site_url, auth_token_hash, table_name, filter_body, opts) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     api_url = build_records_url(site_url)
-    body = build_records_request_body(auth_token_hash, table_name, opts)
+    body = Map.merge(filter_body, build_records_request_body(auth_token_hash, table_name, opts))
 
     case make_http_request(api_url, body, timeout) do
       {:ok, %{status: 200, body: resp_body}} ->
@@ -1015,8 +1070,6 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       "limit" => Keyword.get(opts, :limit, 10),
       "offset" => Keyword.get(opts, :offset, 0)
     }
-    |> maybe_add_ids(Keyword.get(opts, :ids))
-    |> maybe_add_id_range(Keyword.get(opts, :id_range))
   end
 
   defp parse_records_response(resp_body) do
@@ -1025,16 +1078,6 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       {:ok, %{"success" => false, "error" => error}} -> {:error, error}
       _ -> {:error, :invalid_response}
     end
-  end
-
-  defp maybe_add_ids(body, nil), do: body
-  defp maybe_add_ids(body, []), do: body
-  defp maybe_add_ids(body, ids), do: Map.put(body, "ids", ids)
-
-  defp maybe_add_id_range(body, nil), do: body
-
-  defp maybe_add_id_range(body, {start_id, end_id}) do
-    Map.merge(body, %{"id_start" => start_id, "id_end" => end_id})
   end
 
   # --- Connection Info Helpers ---

@@ -33,11 +33,13 @@ defmodule PhoenixKitSync.Errors do
           | :econnrefused
           | :empty_schema
           | :fetch_failed
+          | :filter_needs_single_key
           | :import_failed
           | :incoming_denied
           | :invalid_code
           | :invalid_column_name
           | :invalid_column_type
+          | :invalid_filter
           | :invalid_identifier
           | :invalid_json
           | :invalid_password
@@ -61,12 +63,14 @@ defmodule PhoenixKitSync.Errors do
           | :pull_failed
           | :record_limit_reached
           | :schema_without_primary_key
+          | :sender_ignores_filters
           | :table_missing_locally
           | :table_not_found
           | :timeout
           | :unauthorized
           | :unavailable
           | :unexpected_response
+          | :unsupported_key_type
 
   @doc """
   Returns a human-readable message for an error atom, changeset, or other
@@ -87,6 +91,12 @@ defmodule PhoenixKitSync.Errors do
   def message(:empty_schema), do: gettext("The sender's schema lists no columns")
   def message(:fetch_failed), do: gettext("Fetch failed")
 
+  def message(:filter_needs_single_key),
+    do:
+      gettext(
+        "The source table has no single-column primary key (a view has none), so it takes no ID filter"
+      )
+
   def message(:import_failed),
     do: gettext("Importing this table failed; see the server log for details")
 
@@ -98,6 +108,12 @@ defmodule PhoenixKitSync.Errors do
 
   def message(:invalid_column_type),
     do: gettext("The sender's schema has a column type that is not a plain type name")
+
+  def message(:invalid_filter),
+    do:
+      gettext(
+        "Invalid record filter: enter at least one ID (up to 1000), or a range with at least one bound. An integer key takes only whole-number IDs, and a range needs an integer key"
+      )
 
   def message(:invalid_identifier), do: gettext("Invalid identifier")
   def message(:invalid_json), do: gettext("Invalid JSON")
@@ -130,6 +146,12 @@ defmodule PhoenixKitSync.Errors do
 
   def message(:record_limit_reached), do: gettext("Record limit reached")
 
+  def message(:sender_ignores_filters),
+    do:
+      gettext(
+        "Not imported: the source site ignored the record filter. Update its sync module and try again"
+      )
+
   def message(:table_not_allowed),
     do: gettext("This connection is not authorised to access that table")
 
@@ -150,6 +172,12 @@ defmodule PhoenixKitSync.Errors do
   def message(:unauthorized), do: gettext("Unauthorized")
   def message(:unavailable), do: gettext("Unavailable")
   def message(:unexpected_response), do: gettext("Unexpected response from remote site")
+
+  def message(:unsupported_key_type),
+    do:
+      gettext(
+        "This table's key type does not take an ID filter (it takes integer, uuid or text keys)"
+      )
 
   def message({:error, reason}), do: message(reason)
 

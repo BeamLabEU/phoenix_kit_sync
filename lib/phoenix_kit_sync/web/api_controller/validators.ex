@@ -119,10 +119,7 @@ defmodule PhoenixKitSync.Web.ApiController.Validators do
          auth_token_hash: params["auth_token_hash"],
          table_name: params["table_name"],
          limit: parse_int(params["limit"], 10),
-         offset: parse_int(params["offset"], 0),
-         ids: params["ids"],
-         id_start: params["id_start"],
-         id_end: params["id_end"]
+         offset: parse_int(params["offset"], 0)
        }}
     end
   end

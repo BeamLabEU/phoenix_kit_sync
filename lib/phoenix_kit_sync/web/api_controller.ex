@@ -26,6 +26,7 @@ defmodule PhoenixKitSync.Web.ApiController do
   alias PhoenixKitSync
   alias PhoenixKitSync.Connections
   alias PhoenixKitSync.Errors
+  alias PhoenixKitSync.PullFilter
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Transfers
 
@@ -462,6 +463,8 @@ defmodule PhoenixKitSync.Web.ApiController do
     end
   end
 
+  @filter_errors [:invalid_filter, :unsupported_key_type, :filter_needs_single_key]
+
   @doc """
   Pulls data for a specific table.
 
@@ -471,10 +474,18 @@ defmodule PhoenixKitSync.Web.ApiController do
   - `auth_token_hash` (required) - The auth token hash to identify the connection
   - `table_name` (required) - Name of the table to pull
   - `conflict_strategy` (optional) - How to handle conflicts (skip, overwrite, merge)
+  - `ids` (optional) - Up to 1000 key values to pull, or
+  - `id_start` / `id_end` (optional) - An integer key range; either bound may be left out
+
+  The filter needs a single-column key and is compared in the key's own
+  type (`PhoenixKitSync.PullFilter`). It is read only after the token and
+  the table pass their checks.
 
   ## Responses
 
-  - 200 OK - Returns table data
+  - 200 OK - Returns table data; `"filtered": true` when a filter was applied
+  - 400 Bad Request - Missing fields, an invalid filter, or a key type that
+    takes no filter
   - 401 Unauthorized - Invalid auth token
   - 404 Not Found - Table not found
   - 503 Service Unavailable - DB Sync module is disabled
@@ -485,7 +496,8 @@ defmodule PhoenixKitSync.Web.ApiController do
          {:ok, connection} <- find_sender_by_hash(validated.auth_token_hash),
          :ok <- check_connection_active(connection),
          :ok <- check_table_allowed(connection, validated.table_name),
-         {:ok, data} <- fetch_table_data(validated.table_name, connection) do
+         {:ok, filter} <- PullFilter.from_params(params),
+         {:ok, data} <- fetch_table_data(validated.table_name, connection, filter) do
       # Update connection stats
       record_count = length(data)
 
@@ -512,10 +524,19 @@ defmodule PhoenixKitSync.Web.ApiController do
 
       Logger.info("Sending #{record_count} records for table #{validated.table_name}")
 
+      # "filtered" tells the receiver the filter was applied: a sender that
+      # predates filters ignores them and leaves this out, and the receiver
+      # then refuses to import a whole table it asked a few rows of.
+      response = %{success: true, table: validated.table_name, data: data}
+      response = if filter, do: Map.put(response, :filtered, true), else: response
+
       conn
       |> put_status(200)
-      |> json(%{success: true, table: validated.table_name, data: data})
+      |> json(response)
     else
+      {:error, filter_error} when filter_error in @filter_errors ->
+        render_filter_error(conn, filter_error)
+
       {:error, :module_disabled} ->
         conn
         |> put_status(503)
@@ -622,8 +643,12 @@ defmodule PhoenixKitSync.Web.ApiController do
   - `ids` (optional) - List of specific IDs to fetch
   - `id_start`, `id_end` (optional) - ID range filter
 
+  The filter is pull-data's (`PhoenixKitSync.PullFilter`).
+
   Returns:
-  - 200 OK with records
+  - 200 OK with records, ordered by the key
+  - 400 Bad Request - An invalid filter, a key type that takes no filter,
+    or a table without a single-column key (`error_code` says which)
   - 401 Unauthorized
   - 404 Not Found
   """
@@ -632,23 +657,20 @@ defmodule PhoenixKitSync.Web.ApiController do
          {:ok, validated} <- validate_records_params(params),
          {:ok, connection} <- find_sender_by_hash(validated.auth_token_hash),
          :ok <- check_connection_active(connection),
-         :ok <- check_table_allowed(connection, validated.table_name) do
+         :ok <- check_table_allowed(connection, validated.table_name),
+         {:ok, filter} <- PullFilter.from_params(params) do
       table_name = validated.table_name
       limit = min(validated.limit, 100)
       offset = validated.offset
 
-      # Build filter options
-      filter_opts =
-        []
-        |> maybe_add_filter(:ids, validated[:ids])
-        |> maybe_add_filter(:id_start, validated[:id_start])
-        |> maybe_add_filter(:id_end, validated[:id_end])
-
-      case get_table_records(table_name, limit, offset, filter_opts) do
+      case get_table_records(table_name, limit, offset, filter) do
         {:ok, records} ->
           conn
           |> put_status(200)
           |> json(%{success: true, records: records})
+
+        {:error, filter_error} when filter_error in @filter_errors ->
+          render_filter_error(conn, filter_error)
 
         {:error, :not_found} ->
           conn
@@ -683,11 +705,26 @@ defmodule PhoenixKitSync.Web.ApiController do
 
       {:error, :table_not_allowed} ->
         render_json_error(conn, 403, :table_not_allowed)
+
+      {:error, :invalid_filter} ->
+        render_filter_error(conn, :invalid_filter)
     end
   end
 
-  defp maybe_add_filter(opts, _key, nil), do: opts
-  defp maybe_add_filter(opts, key, value), do: [{key, value} | opts]
+  # A filter refusal carries "error_code" for the receiver to act on; the
+  # "error" text is for people.
+  defp render_filter_error(conn, code) do
+    text =
+      case code do
+        :invalid_filter -> "Invalid filter"
+        :unsupported_key_type -> "Filter not supported for this key type"
+        :filter_needs_single_key -> "Filter needs a single-column primary key"
+      end
+
+    conn
+    |> put_status(400)
+    |> json(%{success: false, error: text, error_code: Atom.to_string(code)})
+  end
 
   # --- Private Functions ---
 
@@ -1020,9 +1057,9 @@ defmodule PhoenixKitSync.Web.ApiController do
       0
   end
 
-  defp fetch_table_data(table_name, connection) do
+  defp fetch_table_data(table_name, connection, filter) do
     if valid_table_name?(table_name) do
-      do_fetch_table_data(table_name, connection)
+      do_fetch_table_data(table_name, connection, filter)
     else
       {:error, :table_not_found}
     end
@@ -1032,12 +1069,18 @@ defmodule PhoenixKitSync.Web.ApiController do
       {:error, :fetch_failed}
   end
 
-  defp do_fetch_table_data(table_name, connection) do
+  defp do_fetch_table_data(table_name, connection, filter) do
     repo = PhoenixKit.RepoHelper.repo()
+    limit = connection.max_records_per_request || 10_000
 
     case table_exists?(repo, table_name) do
+      {:ok, true} when is_nil(filter) ->
+        fetch_table_rows(repo, table_name, limit)
+
       {:ok, true} ->
-        fetch_table_rows(repo, table_name, connection.max_records_per_request || 10_000)
+        with {:ok, where, binds} <- filter_clause(table_name, filter) do
+          fetch_filtered_rows(repo, table_name, where, binds, limit)
+        end
 
       {:ok, false} ->
         {:error, :table_not_found}
@@ -1060,6 +1103,39 @@ defmodule PhoenixKitSync.Web.ApiController do
 
     case SQL.query(repo, query, [table_name]) do
       {:ok, %{rows: [[exists]]}} -> {:ok, exists}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # A filter needs a single-column key; PullFilter compares in its type.
+  defp filter_clause(table_name, filter) do
+    case SchemaInspector.get_schema(table_name) do
+      {:ok, %{primary_key: [pk], columns: columns}} ->
+        type = Enum.find_value(columns, &(&1.name == pk && &1.type))
+
+        with {:ok, where, binds} <- PullFilter.where(filter, quote_ident(pk), type) do
+          {:ok, " WHERE " <> where <> " ORDER BY #{quote_ident(pk)}", binds}
+        end
+
+      # A composite key, no key, or a view (views are not in pg_tables and
+      # have no key): there is no single column to filter on.
+      {:ok, _composite_or_no_key} ->
+        {:error, :filter_needs_single_key}
+
+      {:error, :not_found} ->
+        {:error, :filter_needs_single_key}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp fetch_filtered_rows(repo, table_name, where, binds, limit) do
+    query =
+      "SELECT * FROM #{quote_ident(table_name)}#{where} LIMIT $#{length(binds) + 1}"
+
+    case SQL.query(repo, query, binds ++ [limit]) do
+      {:ok, %{rows: rows, columns: columns}} -> {:ok, rows_to_maps(rows, columns)}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -1151,9 +1227,9 @@ defmodule PhoenixKitSync.Web.ApiController do
     end
   end
 
-  defp get_table_records(table_name, limit, offset, filter_opts) do
+  defp get_table_records(table_name, limit, offset, filter) do
     if valid_table_name?(table_name) do
-      do_get_table_records(table_name, limit, offset, filter_opts)
+      do_get_table_records(table_name, limit, offset, filter)
     else
       {:error, :not_found}
     end
@@ -1163,12 +1239,12 @@ defmodule PhoenixKitSync.Web.ApiController do
       {:error, :fetch_failed}
   end
 
-  defp do_get_table_records(table_name, limit, offset, filter_opts) do
+  defp do_get_table_records(table_name, limit, offset, filter) do
     repo = PhoenixKit.RepoHelper.repo()
 
     case table_exists?(repo, table_name) do
       {:ok, true} ->
-        fetch_filtered_records(repo, table_name, limit, offset, filter_opts)
+        fetch_filtered_records(repo, table_name, limit, offset, filter)
 
       {:ok, false} ->
         {:error, :not_found}
@@ -1178,15 +1254,25 @@ defmodule PhoenixKitSync.Web.ApiController do
     end
   end
 
-  defp fetch_filtered_records(repo, table_name, limit, offset, filter_opts) do
-    pk_col = resolve_pk_column(table_name)
-    {where_clause, params, next_param} = build_where_clause(filter_opts, quote_ident(pk_col))
+  defp fetch_filtered_records(repo, table_name, limit, offset, filter) do
+    with {:ok, where_and_order, params} <- records_clause(table_name, filter) do
+      next = length(params) + 1
 
-    data_query =
-      "SELECT * FROM #{quote_ident(table_name)}#{where_clause} ORDER BY #{quote_ident(pk_col)} LIMIT $#{next_param} OFFSET $#{next_param + 1}"
+      data_query =
+        "SELECT * FROM #{quote_ident(table_name)}#{where_and_order} LIMIT $#{next} OFFSET $#{next + 1}"
 
-    all_params = params ++ [limit, offset]
+      run_records_query(repo, data_query, params ++ [limit, offset])
+    end
+  end
 
+  # The same filter dialect as pull-data (PullFilter); unfiltered pages are
+  # ordered by the key as before.
+  defp records_clause(table_name, nil),
+    do: {:ok, " ORDER BY #{quote_ident(resolve_pk_column(table_name))}", []}
+
+  defp records_clause(table_name, filter), do: filter_clause(table_name, filter)
+
+  defp run_records_query(repo, data_query, all_params) do
     case SQL.query(repo, data_query, all_params) do
       {:ok, %{rows: rows, columns: columns}} ->
         {:ok, serialize_rows(rows, columns)}
@@ -1229,28 +1315,4 @@ defmodule PhoenixKitSync.Web.ApiController do
   # the connection's table checks, and a table named like a keyword
   # ("order", "user") would not parse. `""` escapes a quote inside a name.
   defp quote_ident(name), do: ~s["#{String.replace(name, ~s["], ~s[""])}"]
-
-  # `pk_col` arrives quoted.
-  defp build_where_clause(opts, pk_col) do
-    ids = Keyword.get(opts, :ids)
-    id_start = Keyword.get(opts, :id_start)
-    id_end = Keyword.get(opts, :id_end)
-
-    cond do
-      is_list(ids) and ids != [] ->
-        {" WHERE #{pk_col} = ANY($1)", [ids], 2}
-
-      not is_nil(id_start) and not is_nil(id_end) ->
-        {" WHERE #{pk_col} >= $1 AND #{pk_col} <= $2", [id_start, id_end], 3}
-
-      not is_nil(id_start) ->
-        {" WHERE #{pk_col} >= $1", [id_start], 2}
-
-      not is_nil(id_end) ->
-        {" WHERE #{pk_col} <= $1", [id_end], 2}
-
-      true ->
-        {"", [], 1}
-    end
-  end
 end
