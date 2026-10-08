@@ -36,7 +36,8 @@ defmodule PhoenixKitSync.Client do
   ## Transfer Options
 
   - `:strategy` - Conflict resolution (`:skip`, `:overwrite`, `:merge`, `:append`)
-  - `:batch_size` - Records per batch (default: 500)
+  - `:batch_size` - Records per batch (default: 500); values above 1000 are
+    capped at 1000, the most a sender returns per request
   - `:create_missing_tables` - Auto-create tables that don't exist (default: true)
   """
 
@@ -224,8 +225,8 @@ defmodule PhoenixKitSync.Client do
   ## Options
 
   - `:strategy` - Conflict resolution (`:skip`, `:overwrite`, `:merge`, `:append`)
-  - `:batch_size` - Records per batch (default: 500, at most 1000: the most a
-    sender returns per request)
+  - `:batch_size` - Records per batch (default: 500); values above 1000 are
+    capped at 1000, the most a sender returns per request
   - `:create_missing_tables` - Auto-create tables that don't exist (default: true)
   - `:timeout` - Timeout per request in ms (default: 30_000)
 
@@ -388,14 +389,19 @@ defmodule PhoenixKitSync.Client do
   end
 
   defp fetch_and_import_all(client, table, strategy, batch_size, timeout) do
+    # A sender returns at most DataExporter's maximum per request; asking
+    # for more only makes its has_more hint wrong.
+    max_batch = DataExporter.max_limit()
+
+    if batch_size > max_batch do
+      Logger.debug("Sync.Client: batch_size #{batch_size} capped at #{max_batch} for #{table}")
+    end
+
     loop_state = %{
       client: client,
       table: table,
       strategy: strategy,
-      # A sender returns at most DataExporter's maximum per request and
-      # reports more only for a full batch of what was asked, so a larger
-      # batch would end the transfer after the first one.
-      batch_size: min(batch_size, DataExporter.max_limit()),
+      batch_size: min(batch_size, max_batch),
       timeout: timeout
     }
 
@@ -411,8 +417,8 @@ defmodule PhoenixKitSync.Client do
     %{client: client, table: table, batch_size: batch_size, timeout: timeout} = state
 
     case fetch_records(client, table, offset: offset, limit: batch_size, timeout: timeout) do
-      {:ok, %{records: records, has_more: has_more}} when records != [] ->
-        import_and_continue(state, offset, acc, records, has_more)
+      {:ok, %{records: records}} when records != [] ->
+        import_and_continue(state, offset, acc, records)
 
       {:ok, %{records: []}} ->
         {:ok, acc}
@@ -422,17 +428,16 @@ defmodule PhoenixKitSync.Client do
     end
   end
 
-  defp import_and_continue(state, offset, acc, records, has_more) do
+  # Reads on until an empty page. The sender's has_more is not trusted to
+  # end the table: a sender with a lower cap (a connection's
+  # max_records_per_request, another version) returns fewer records than
+  # asked and may still say there are no more. The price is one extra
+  # request per table.
+  defp import_and_continue(state, offset, acc, records) do
     case PhoenixKitSync.import_records(state.table, records, state.strategy) do
       {:ok, result} ->
-        new_acc = merge_results(acc, result)
-
-        if has_more do
-          # Advance by what arrived: a sender may return fewer than asked.
-          fetch_and_import_loop(state, offset + length(records), new_acc)
-        else
-          {:ok, new_acc}
-        end
+        # Advance by what arrived, not by what was asked.
+        fetch_and_import_loop(state, offset + length(records), merge_results(acc, result))
 
       {:error, reason} ->
         {:error, reason}

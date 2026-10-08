@@ -19,7 +19,6 @@ defmodule PhoenixKitSync.Web.Receiver do
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Utils.Routes
-  alias PhoenixKitSync.Params
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Web.Receiver.Helpers
   alias PhoenixKitSync.WebSocketClient
@@ -735,15 +734,9 @@ defmodule PhoenixKitSync.Web.Receiver do
     # Result is a map with atom keys from WebSocketClient
     records = Map.get(result, :records, [])
     has_more = Map.get(result, :has_more, false)
-    # The offset is the sender's echo; one that is not a whole number in
-    # range falls back to the offset this LiveView asked for.
-    offset =
-      Params.bounded_int(
-        result[:offset],
-        requested_offset(progress, table),
-        0,
-        Params.max_offset()
-      )
+    # The offset this LiveView asked for, not the sender's echo: an echo
+    # stuck at 0 would request the same batch forever.
+    offset = requested_offset(progress, table)
 
     strategy = socket.assigns.conflict_strategy
 

@@ -3,6 +3,8 @@ defmodule PhoenixKitSync.Integration.ClientTransferTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias PhoenixKitSync.Client
+  alias PhoenixKitSync.Connections
+  alias PhoenixKitSync.DataExporter
   alias PhoenixKitSync.Test.Repo, as: TestRepo
 
   # Self-loop: Client pulls from the sender on the test endpoint, which
@@ -10,7 +12,7 @@ defmodule PhoenixKitSync.Integration.ClientTransferTest do
   # onto itself. A trigger counts the writes per row, so a skipped row
   # ends with 0 and a row pulled twice with 2.
 
-  setup do
+  setup tags do
     Sandbox.mode(TestRepo, {:shared, self()})
     PhoenixKitSync.enable_system()
 
@@ -31,14 +33,21 @@ defmodule PhoenixKitSync.Integration.ClientTransferTest do
         "FOR EACH ROW EXECUTE FUNCTION ct_rows_count_write()"
     )
 
-    repo.query!("INSERT INTO ct_rows (id) SELECT generate_series(1, 2500)")
+    rows = Map.get(tags, :rows, 2_500)
+    repo.query!("INSERT INTO ct_rows (id) SELECT generate_series(1, $1)", [rows])
 
+    {:ok, repo: repo, rows: rows}
+  end
+
+  defp url do
+    "ws://localhost:#{Application.fetch_env!(:phoenix_kit_sync, :test_endpoint_port)}"
+  end
+
+  defp connect_with_code do
     {:ok, session} = PhoenixKitSync.create_session(:send)
-    port = Application.fetch_env!(:phoenix_kit_sync, :test_endpoint_port)
-    {:ok, client} = Client.connect("ws://localhost:#{port}", session.code)
-    on_exit(fn -> if Process.alive?(client), do: Client.disconnect(client) end)
-
-    {:ok, client: client, repo: repo}
+    {:ok, client} = Client.connect(url(), session.code)
+    on_exit(fn -> Client.disconnect(client) end)
+    client
   end
 
   defp writes_per_row(repo) do
@@ -46,16 +55,92 @@ defmodule PhoenixKitSync.Integration.ClientTransferTest do
     Map.new(rows, fn [writes, count] -> {writes, count} end)
   end
 
+  defp assert_every_row_once(result, repo, rows) do
+    assert result.updated == rows
+    assert writes_per_row(repo) == %{1 => rows}
+  end
+
   for batch_size <- [1_500, 1_000, 700] do
-    test "batch_size #{batch_size} pulls every row exactly once", %{client: client, repo: repo} do
+    test "batch_size #{batch_size} pulls every row exactly once", %{repo: repo, rows: rows} do
       assert {:ok, result} =
-               Client.transfer(client, "ct_rows",
+               Client.transfer(connect_with_code(), "ct_rows",
                  strategy: :overwrite,
                  batch_size: unquote(batch_size)
                )
 
-      assert result.updated == 2_500
-      assert writes_per_row(repo) == %{1 => 2_500}
+      assert_every_row_once(result, repo, rows)
     end
+  end
+
+  @tag rows: 2_000
+  test "a table that fills its last batch exactly is pulled once", %{repo: repo, rows: rows} do
+    assert {:ok, result} =
+             Client.transfer(connect_with_code(), "ct_rows",
+               strategy: :overwrite,
+               batch_size: 1_000
+             )
+
+    assert_every_row_once(result, repo, rows)
+  end
+
+  test "a connection that serves fewer records than the batch asks for loses none", %{
+    repo: repo,
+    rows: rows
+  } do
+    # A permanent connection caps each reply at max_records_per_request,
+    # below the default batch of 500.
+    {:ok, connection, token} =
+      Connections.create_connection(%{
+        "name" => "Capped #{System.unique_integer([:positive])}",
+        "direction" => "sender",
+        "site_url" => "https://capped-#{System.unique_integer([:positive])}.example.com",
+        "approval_mode" => "auto_approve",
+        "max_records_per_request" => 300
+      })
+
+    {:ok, connection} =
+      Connections.approve_connection(connection, PhoenixKitSync.TestActor.uuid())
+
+    {:ok, client} = Client.connect("#{url()}?token=#{token}", "conn:#{connection.uuid}")
+    on_exit(fn -> Client.disconnect(client) end)
+
+    assert {:ok, result} = Client.transfer(client, "ct_rows", strategy: :overwrite)
+
+    assert_every_row_once(result, repo, rows)
+  end
+
+  test "a sender that never reports more is read until an empty page", %{
+    repo: repo,
+    rows: rows
+  } do
+    # Stands in for an older or capped sender: it serves at most 300 records
+    # per request and always says there are no more.
+    test_pid = self()
+    sender = spawn_link(fn -> lying_sender(test_pid) end)
+
+    assert {:ok, result} =
+             Client.transfer(sender, "ct_rows", strategy: :overwrite, batch_size: 500)
+
+    assert_every_row_once(result, repo, rows)
+  end
+
+  # Answers Client's casts the way WebSocketClient relays a sender's replies.
+  defp lying_sender(caller) do
+    receive do
+      {:"$websockex_cast", {:request_schema, table}} ->
+        send(caller, {:sync_client, {:schema, table, %{}}})
+
+      {:"$websockex_cast", {:request_records, table, opts}} ->
+        {:ok, records} =
+          DataExporter.fetch_records(table, offset: opts[:offset], limit: min(opts[:limit], 300))
+
+        send(
+          caller,
+          {:sync_client,
+           {:records, table, %{records: records, offset: opts[:offset], has_more: false}}}
+        )
+    end
+
+    lying_sender(caller)
   end
 end

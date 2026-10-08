@@ -36,33 +36,58 @@ defmodule PhoenixKitSync.Web.ReceiverPagingTest do
     end)
   end
 
-  defp batch(view, table, records, has_more) do
+  # Sends a batch and waits until the LiveView has handled it, so the
+  # mailbox checks below need no timeout.
+  defp batch(view, table, records, has_more, echo \\ 0) do
     send(
       view.pid,
-      {:sync_client, {:records, table, %{records: records, has_more: has_more, offset: 0}}}
+      {:sync_client, {:records, table, %{records: records, has_more: has_more, offset: echo}}}
     )
+
+    _ = :sys.get_state(view.pid)
   end
 
-  test "the next batch starts after the records that arrived", %{conn: conn} do
+  defp rows(n), do: Enum.map(1..n, &%{"id" => &1})
+
+  defp mount_transfer(conn) do
     conn = put_test_scope(conn, fake_scope())
     {:ok, view, _html} = live(conn, "/en/admin/sync/receive")
     start_transfer(view, "rx_table")
+    view
+  end
+
+  test "the next batch starts after the records that arrived", %{conn: conn} do
+    view = mount_transfer(conn)
 
     # Fewer than the receiver asked for, with more to come.
-    batch(view, "rx_table", Enum.map(1..3, &%{"id" => &1}), true)
+    batch(view, "rx_table", rows(3), true)
 
-    assert_receive {:"$websockex_cast", {:request_records, "rx_table", opts}}
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", opts}}
     assert opts[:offset] == 3
   end
 
   test "an empty batch ends the table", %{conn: conn} do
-    conn = put_test_scope(conn, fake_scope())
-    {:ok, view, _html} = live(conn, "/en/admin/sync/receive")
-    start_transfer(view, "rx_table")
+    view = mount_transfer(conn)
 
     batch(view, "rx_table", [], true)
 
-    refute_receive {:"$websockex_cast", {:request_records, _table, _opts}}
+    refute_received {:"$websockex_cast", {:request_records, _table, _opts}}
+    assert :sys.get_state(view.pid).socket.assigns.transfer_progress.status == :completed
+  end
+
+  test "a sender that always echoes offset 0 still moves forward", %{conn: conn} do
+    view = mount_transfer(conn)
+
+    batch(view, "rx_table", rows(500), true, 0)
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", first}}
+    assert first[:offset] == 500
+
+    batch(view, "rx_table", rows(500), true, 0)
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", second}}
+    assert second[:offset] == 1_000
+
+    batch(view, "rx_table", [], true, 0)
+    refute_received {:"$websockex_cast", {:request_records, _table, _opts}}
     assert :sys.get_state(view.pid).socket.assigns.transfer_progress.status == :completed
   end
 end
