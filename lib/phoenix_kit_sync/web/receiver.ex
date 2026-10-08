@@ -19,6 +19,7 @@ defmodule PhoenixKitSync.Web.Receiver do
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Utils.Routes
+  alias PhoenixKitSync.Errors
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Web.Receiver.Helpers
   alias PhoenixKitSync.WebSocketClient
@@ -410,7 +411,7 @@ defmodule PhoenixKitSync.Web.Receiver do
             |> assign(:creating_table, false)
             |> put_flash(
               :error,
-              gettext("Failed to create table: %{reason}", reason: inspect(reason))
+              gettext("Failed to create table: %{reason}", reason: Errors.message(reason))
             )
 
           {:noreply, socket}

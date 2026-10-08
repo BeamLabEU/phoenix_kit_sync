@@ -31,6 +31,10 @@ defmodule PhoenixKitSync.Test.StubRemote do
   @doc "Sets the records `pull-data` returns for `table`."
   def put_data(table, records), do: update(&put_in(&1, [:data, table], records))
 
+  @doc "Sets the schema `table-schema` returns for `table`."
+  def put_schema(table, schema),
+    do: update(&put_in(&1, [Access.key(:schemas, %{}), table], schema))
+
   @doc "Makes `pull-data` for `table` answer `success: false` with `error` as given."
   def put_error(table, error), do: update(&put_in(&1, [:data, table], {:error, error}))
 
@@ -55,28 +59,31 @@ defmodule PhoenixKitSync.Test.StubRemote do
 
   @impl true
   def call(conn, _opts) do
-    body =
-      case List.last(conn.path_info) do
-        "list-tables" ->
-          %{success: true, tables: state().tables}
-
-        "pull-data" ->
-          table = conn.body_params["table_name"]
-
-          count_pull(table)
-
-          case Map.fetch(state().data, table) do
-            {:ok, {:error, error}} -> %{success: false, error: error}
-            {:ok, records} -> %{success: true, table: table, data: records}
-            :error -> %{success: false, error: "Table not found"}
-          end
-
-        _ ->
-          %{success: false, error: "Not stubbed"}
-      end
+    body = respond(List.last(conn.path_info), conn.body_params["table_name"])
 
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(200, Jason.encode!(body))
   end
+
+  defp respond("list-tables", _table), do: %{success: true, tables: state().tables}
+
+  defp respond("pull-data", table) do
+    count_pull(table)
+
+    case Map.fetch(state().data, table) do
+      {:ok, {:error, error}} -> %{success: false, error: error}
+      {:ok, records} -> %{success: true, table: table, data: records}
+      :error -> %{success: false, error: "Table not found"}
+    end
+  end
+
+  defp respond("table-schema", table) do
+    case Map.fetch(Map.get(state(), :schemas, %{}), table) do
+      {:ok, schema} -> %{success: true, schema: schema}
+      :error -> %{success: false, error: "Table not found"}
+    end
+  end
+
+  defp respond(_endpoint, _table), do: %{success: false, error: "Not stubbed"}
 end

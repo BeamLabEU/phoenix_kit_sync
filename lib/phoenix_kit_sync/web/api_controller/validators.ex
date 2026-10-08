@@ -128,17 +128,12 @@ defmodule PhoenixKitSync.Web.ApiController.Validators do
   end
 
   @doc """
-  Validates a PostgreSQL table identifier: must start with a letter or
-  underscore and contain only alphanumerics and underscores. Mirrors
-  `SchemaInspector.valid_identifier?/1` but is the entry-point guard the
-  controller uses before attempting any introspection.
+  Validates a PostgreSQL table identifier, the entry-point guard the
+  controller uses before any introspection. Same rule as
+  `SchemaInspector.valid_identifier?/1`, which it delegates to.
   """
   @spec valid_table_name?(any()) :: boolean()
-  def valid_table_name?(name) when is_binary(name) do
-    Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9_]*$/, name)
-  end
-
-  def valid_table_name?(_), do: false
+  def valid_table_name?(name), do: PhoenixKitSync.SchemaInspector.valid_identifier?(name)
 
   @spec parse_int(any(), integer()) :: integer()
   def parse_int(nil, default), do: default

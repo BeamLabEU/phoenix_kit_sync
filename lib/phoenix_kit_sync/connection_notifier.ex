@@ -524,8 +524,15 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   ## Returns
 
-  - `{:ok, result}` - Map with :records_imported, :records_skipped, etc.
+  - `{:ok, result}` - Map with `:imported`, `:skipped`, `:errors`, plus
+    `:unknown_columns` when some records carried columns the local table
+    lacks (those records count as errors)
   - `{:error, :offline}` - Sender is offline
+  - `{:error, :invalid_table_name}` - The name is not a plain identifier;
+    nothing is recorded or requested
+  - `{:error, :invalid_column_name}` - The sender's data has a key that is
+    not a plain identifier; no row of the table is written
+  - `{:error, :invalid_response}` - The sender's answer could not be read
   - `{:error, :table_missing_locally}` - The table does not exist on this
     site; nothing is requested from the sender
   - `{:error, :no_primary_key}` - The local table has no primary key; it is
@@ -535,7 +542,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:error, reason}` - Failed to pull
   """
   def pull_table_data(connection, table_name, opts \\ []) do
-    with {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
+    with :ok <- check_table_name(table_name),
+         {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
       connection_uuid = Map.get(connection, :uuid)
 
       do_pull_table_data(
@@ -554,6 +562,25 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   with the same error reasons as `pull_table_data/3`.
   """
   def pull_table_data_with_remap(connection, table_name, uuid_remap, opts \\ []) do
+    case check_table_name(table_name) do
+      :ok -> pull_checked_table_with_remap(connection, table_name, uuid_remap, opts)
+      {:error, reason} -> {:error, reason, uuid_remap}
+    end
+  end
+
+  # The table name comes from the sender's table list. It goes into the
+  # transfer row, the log and the INSERT, so anything but a plain identifier
+  # (at most 63 bytes, like every Postgres name) stops here, unechoed.
+  defp check_table_name(table_name) do
+    if SchemaInspector.valid_identifier?(table_name) do
+      :ok
+    else
+      Logger.warning("Sync: refusing to pull a table whose name is not a valid identifier")
+      {:error, :invalid_table_name}
+    end
+  end
+
+  defp pull_checked_table_with_remap(connection, table_name, uuid_remap, opts) do
     case extract_connection_info(connection) do
       {:ok, site_url, auth_token_hash} ->
         connection_uuid = Map.get(connection, :uuid)
@@ -601,9 +628,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     }
 
     guard_transfer(transfer, table_name, &{:error, &1}, fn ->
-      with {:ok, pk_cols} <- check_local_table(transfer, table_name) do
+      with {:ok, target} <- check_local_table(transfer, table_name) do
         result = make_http_request(api_url, body, timeout)
-        handle_pull_response(result, transfer, table_name, {conflict_strategy, pk_cols})
+        handle_pull_response(result, transfer, table_name, {conflict_strategy, target})
       end
     end)
   end
@@ -639,9 +666,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     guard_transfer(transfer, table_name, &{:error, &1, uuid_remap}, fn ->
       case check_local_table(transfer, table_name) do
-        {:ok, pk_cols} ->
+        {:ok, target} ->
           result = make_http_request(api_url, body, timeout)
-          import_spec = {conflict_strategy, pk_cols}
+          import_spec = {conflict_strategy, target}
           handle_pull_response_with_remap(result, transfer, table_name, import_spec, uuid_remap)
 
         {:error, reason} ->
@@ -766,37 +793,45 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {:error, :invalid_response}
   end
 
-  defp complete_pull_transfer(transfer, table_name, data, {conflict_strategy, pk_cols}) do
-    import_result = import_table_data(table_name, data, conflict_strategy, pk_cols)
+  defp complete_pull_transfer(transfer, table_name, data, {conflict_strategy, target}) do
+    with :ok <- check_record_keys(transfer, data) do
+      import_result = import_table_data(table_name, data, conflict_strategy, target)
 
-    Transfers.complete_transfer(transfer, %{
-      records_transferred: length(data),
-      records_created: import_result.imported,
-      records_skipped: import_result.skipped,
-      records_failed: import_result.errors
-    })
+      Transfers.complete_transfer(transfer, %{
+        records_transferred: length(data),
+        records_created: import_result.imported,
+        records_skipped: import_result.skipped,
+        records_failed: import_result.errors
+      })
 
-    {:ok, import_result}
+      {:ok, import_result}
+    end
   end
 
   defp complete_pull_transfer_with_remap(
          transfer,
          table_name,
          data,
-         {conflict_strategy, pk_cols},
+         {conflict_strategy, target},
          uuid_remap
        ) do
-    {import_result, updated_remap} =
-      import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap, pk_cols)
+    case check_record_keys(transfer, data) do
+      :ok ->
+        {import_result, updated_remap} =
+          import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap, target)
 
-    Transfers.complete_transfer(transfer, %{
-      records_transferred: length(data),
-      records_created: import_result.imported,
-      records_skipped: import_result.skipped,
-      records_failed: import_result.errors
-    })
+        Transfers.complete_transfer(transfer, %{
+          records_transferred: length(data),
+          records_created: import_result.imported,
+          records_skipped: import_result.skipped,
+          records_failed: import_result.errors
+        })
 
-    {:ok, import_result, updated_remap}
+        {:ok, import_result, updated_remap}
+
+      {:error, reason} ->
+        {:error, reason, uuid_remap}
+    end
   end
 
   # Checked before the request, so a table that cannot be imported here does
@@ -806,19 +841,50 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   # here: every pull would insert the same rows again, so such a table is
   # not imported at all.
   defp check_local_table(transfer, table_name) do
-    if SchemaInspector.table_exists?(table_name) do
-      case primary_key_columns(table_name) do
-        [] -> reject_local_table(transfer, :no_primary_key, "No primary key on #{table_name}")
-        pk_cols -> {:ok, pk_cols}
-      end
-    else
-      reject_local_table(
-        transfer,
-        :table_missing_locally,
-        "Table #{table_name} does not exist here"
-      )
+    case SchemaInspector.get_schema(table_name) do
+      {:ok, %{primary_key: []}} ->
+        reject_local_table(transfer, :no_primary_key, "No primary key on #{table_name}")
+
+      {:ok, %{primary_key: pk_cols, columns: columns}} ->
+        {:ok, %{pk_cols: pk_cols, columns: MapSet.new(columns, & &1.name)}}
+
+      {:error, :not_found} ->
+        reject_local_table(
+          transfer,
+          :table_missing_locally,
+          "Table #{table_name} does not exist here"
+        )
+
+      # A failed lookup is not a missing table; guard_transfer turns this
+      # into :import_failed.
+      {:error, reason} ->
+        raise "schema lookup for #{table_name} failed: #{inspect(reason)}"
     end
   end
+
+  # Record keys become column names in the INSERT. A key that is not a
+  # plain identifier means a broken or hostile sender, so the whole table is
+  # refused before any row is written.
+  defp check_record_keys(transfer, data) when is_list(data) do
+    valid? =
+      Enum.all?(data, fn
+        record when is_map(record) ->
+          Enum.all?(Map.keys(record), &SchemaInspector.valid_identifier?(to_string(&1)))
+
+        _ ->
+          true
+      end)
+
+    if valid? do
+      :ok
+    else
+      Logger.warning("Sync: sender data has a column name that is not a valid identifier")
+      Transfers.fail_transfer(transfer, "Invalid column name in sender data; not imported")
+      {:error, :invalid_column_name}
+    end
+  end
+
+  defp check_record_keys(_transfer, _data), do: :ok
 
   defp reject_local_table(transfer, reason, why) do
     Logger.warning("Sync: #{why}; not pulling it")
@@ -889,9 +955,17 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp parse_schema_response(resp_body) do
     case Jason.decode(resp_body) do
-      {:ok, %{"success" => true, "schema" => schema}} -> {:ok, schema}
-      {:ok, %{"success" => false, "error" => error}} -> {:error, error}
-      _ -> {:error, :invalid_response}
+      {:ok, %{"success" => true, "schema" => schema}} when is_map(schema) ->
+        # Older senders describe columns as column_name/data_type/is_nullable
+        # and send no primary key; normalise so the page and create_table/3
+        # read one shape.
+        {:ok, Map.merge(schema, SchemaInspector.normalize_schema_def(schema))}
+
+      {:ok, %{"success" => false, "error" => error}} ->
+        {:error, error}
+
+      _ ->
+        {:error, :invalid_response}
     end
   end
 
@@ -1376,7 +1450,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       :ok
   end
 
-  defp import_table_data(table_name, data, conflict_strategy, pk_cols) when is_list(data) do
+  defp import_table_data(table_name, data, conflict_strategy, target) when is_list(data) do
     repo = PhoenixKit.RepoHelper.repo()
     numeric_cols = fetch_numeric_columns(table_name)
 
@@ -1384,9 +1458,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     # Execute raw SQL insert for each record
     results =
-      Enum.reduce(data, %{imported: 0, skipped: 0, errors: 0, error_sample: nil}, fn record,
-                                                                                     acc ->
-        insert_record(repo, table_name, record, conflict_strategy, numeric_cols, pk_cols)
+      Enum.reduce(data, new_import_acc(), fn record, acc ->
+        insert_record(repo, table_name, record, conflict_strategy, numeric_cols, target)
         |> accumulate_import_result(acc)
       end)
 
@@ -1398,14 +1471,14 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       Logger.warning("Sync: Sample error for #{table_name}: #{results.error_sample}")
     end
 
-    Map.drop(results, [:error_sample])
+    finish_import_acc(results)
   end
 
-  defp import_table_data(_table_name, _data, _strategy, _pk_cols) do
+  defp import_table_data(_table_name, _data, _strategy, _target) do
     %{imported: 0, skipped: 0, errors: 0}
   end
 
-  defp import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap, pk_cols)
+  defp import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap, target)
        when is_list(data) do
     repo = PhoenixKit.RepoHelper.repo()
 
@@ -1435,7 +1508,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     import_ctx = %{
       repo: repo,
       table_name: table_name,
-      pk_cols: pk_cols,
+      pk_cols: target.pk_cols,
+      target: target,
       fk_columns: fk_columns,
       unique_sets: unique_sets,
       numeric_cols: numeric_cols,
@@ -1445,7 +1519,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {results, updated_remap} =
       Enum.reduce(
         data,
-        {%{imported: 0, skipped: 0, errors: 0, error_sample: nil}, uuid_remap},
+        {new_import_acc(), uuid_remap},
         fn record, {acc, remap} ->
           import_single_record_with_remap(import_ctx, record, acc, remap)
         end
@@ -1465,10 +1539,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       Logger.info("Sync: Added #{remap_additions} UUID remap(s) from #{table_name}")
     end
 
-    {Map.drop(results, [:error_sample]), updated_remap}
+    {finish_import_acc(results), updated_remap}
   end
 
-  defp import_table_data_with_remap(_table_name, _data, _strategy, uuid_remap, _pk_cols) do
+  defp import_table_data_with_remap(_table_name, _data, _strategy, uuid_remap, _target) do
     {%{imported: 0, skipped: 0, errors: 0}, uuid_remap}
   end
 
@@ -1493,7 +1567,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
             remapped_record,
             ctx.conflict_strategy,
             ctx.numeric_cols,
-            ctx.pk_cols
+            ctx.target
           )
           |> accumulate_import_result(acc)
 
@@ -1519,7 +1593,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         remapped_record,
         ctx.conflict_strategy,
         ctx.numeric_cols,
-        ctx.pk_cols
+        ctx.target
       )
       |> accumulate_import_result(acc)
 
@@ -1653,17 +1727,43 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
+  defp new_import_acc,
+    do: %{imported: 0, skipped: 0, errors: 0, error_sample: nil, unknown_columns: MapSet.new()}
+
+  # The error sample stays in the log: a database message can quote a row
+  # value. Unknown column names already passed valid_identifier?/1 and say
+  # nothing about the data, so they go back to the page.
+  defp finish_import_acc(acc) do
+    result = Map.drop(acc, [:error_sample, :unknown_columns])
+
+    case Enum.sort(acc.unknown_columns) do
+      [] -> result
+      columns -> Map.put(result, :unknown_columns, columns)
+    end
+  end
+
   defp accumulate_import_result(:ok, acc), do: %{acc | imported: acc.imported + 1}
   defp accumulate_import_result(:skipped, acc), do: %{acc | skipped: acc.skipped + 1}
   defp accumulate_import_result(:error, acc), do: %{acc | errors: acc.errors + 1}
+
+  defp accumulate_import_result({:error, {:unknown_columns, columns}}, acc) do
+    acc = %{acc | unknown_columns: MapSet.union(acc.unknown_columns, MapSet.new(columns))}
+
+    accumulate_import_result(
+      {:error, "columns not in the local table: #{Enum.join(columns, ", ")}"},
+      acc
+    )
+  end
 
   defp accumulate_import_result({:error, reason}, acc) do
     acc = if is_nil(acc.error_sample), do: %{acc | error_sample: reason}, else: acc
     %{acc | errors: acc.errors + 1}
   end
 
-  defp insert_record(repo, table_name, record, conflict_strategy, numeric_cols, pk_cols)
+  defp insert_record(repo, table_name, record, conflict_strategy, numeric_cols, target)
        when is_map(record) do
+    %{pk_cols: pk_cols, columns: local_columns} = target
+
     # For append strategy, strip a single-column primary key to let the DB
     # generate a new one. A composite key is natural data (lang + value),
     # which the DB cannot generate, so it stays.
@@ -1677,6 +1777,40 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     record = normalize_record_keys(record)
     columns = Map.keys(record)
 
+    # Only names of this table's own columns reach the SQL. check_record_keys
+    # already refused non-identifiers; a valid name the local table lacks
+    # (schema drift) fails this record without a round trip.
+    case Enum.reject(columns, &MapSet.member?(local_columns, &1)) do
+      [] ->
+        do_insert_record(
+          repo,
+          table_name,
+          record,
+          columns,
+          conflict_strategy,
+          numeric_cols,
+          pk_cols
+        )
+
+      unknown ->
+        {:error, {:unknown_columns, unknown}}
+    end
+  rescue
+    e ->
+      {:error, Exception.message(e)}
+  end
+
+  defp insert_record(_repo, _table_name, _record, _strategy, _numeric_cols, _target), do: :error
+
+  defp do_insert_record(
+         repo,
+         table_name,
+         record,
+         columns,
+         conflict_strategy,
+         numeric_cols,
+         pk_cols
+       ) do
     values =
       Enum.map(columns, fn col ->
         prepare_value(Map.get(record, col), col, numeric_cols)
@@ -1693,12 +1827,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     sql = ~s[INSERT INTO "#{table_name}" (#{columns_str}) VALUES (#{placeholders}) #{on_conflict}]
 
     execute_insert(repo, sql, values)
-  rescue
-    e ->
-      {:error, Exception.message(e)}
   end
-
-  defp insert_record(_repo, _table_name, _record, _strategy, _numeric_cols, _pk_cols), do: :error
 
   defp build_on_conflict_clause("overwrite", [_ | _] = pk_cols, columns) do
     case build_update_clause(columns, pk_cols) do
@@ -1758,13 +1887,6 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp prepare_value(value), do: Prepare.value(value)
   defp fetch_numeric_columns(table_name), do: Prepare.numeric_columns(table_name)
-
-  defp primary_key_columns(table_name) do
-    case SchemaInspector.get_primary_key(table_name) do
-      {:ok, pk_cols} -> pk_cols
-      {:error, reason} -> raise "primary key lookup for #{table_name} failed: #{inspect(reason)}"
-    end
-  end
 
   defp get_record_field(record, field), do: Prepare.get_field(record, field)
   defp put_record_field(record, field, value), do: Prepare.put_field(record, field, value)

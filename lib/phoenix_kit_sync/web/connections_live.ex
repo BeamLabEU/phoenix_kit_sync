@@ -642,8 +642,11 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     if table && schema do
       socket = assign(socket, :creating_table, true)
 
-      # Create the table locally based on schema
-      case SchemaInspector.create_table(table, schema) do
+      # Create the table locally based on schema. A sender from before
+      # table-schema carried primary_key reports none: a table created from
+      # that would have no key, and every pull of it is refused, so it is
+      # not created at all.
+      case create_table_with_key(table, schema) do
         :ok ->
           socket =
             socket
@@ -659,7 +662,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             |> assign(:creating_table, false)
             |> put_flash(
               :error,
-              gettext("Failed to create table: %{reason}", reason: inspect(reason))
+              gettext("Failed to create table: %{reason}", reason: Errors.message(reason))
             )
 
           {:noreply, socket}
@@ -1098,6 +1101,13 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     {:noreply, socket}
   end
 
+  defp create_table_with_key(table, schema) do
+    case SchemaInspector.normalize_schema_def(schema) do
+      %{"primary_key" => []} -> {:error, :schema_without_primary_key}
+      _with_key -> SchemaInspector.create_table(table, schema)
+    end
+  end
+
   # Runs one table's pull inside its supervised task. Whatever the pull
   # does — return, raise or exit — the task ends with a result to send,
   # so the LiveView always hears back and `sync_in_progress` clears. A
@@ -1121,6 +1131,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   # process_table_sync_result/3.
   def extract_sync_counts(result) do
     case result do
+      {:ok, %{imported: imported, skipped: skipped, errors: errors, unknown_columns: columns}} ->
+        message =
+          gettext("Columns not in the local table: %{columns}", columns: Enum.join(columns, ", "))
+
+        {imported, skipped, errors, message}
+
       {:ok, %{imported: imported, skipped: skipped, errors: errors}} ->
         {imported, skipped, errors, nil}
 
@@ -1140,7 +1156,14 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   defp sync_error_message(:table_not_found), do: gettext("Table not found on sender")
 
   defp sync_error_message(reason)
-       when reason in [:import_failed, :no_primary_key, :pull_failed, :table_missing_locally],
+       when reason in [
+              :import_failed,
+              :invalid_column_name,
+              :invalid_table_name,
+              :no_primary_key,
+              :pull_failed,
+              :table_missing_locally
+            ],
        do: Errors.message(reason)
 
   defp sync_error_message(reason) when is_binary(reason), do: reason

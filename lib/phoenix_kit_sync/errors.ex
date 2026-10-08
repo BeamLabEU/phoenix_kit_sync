@@ -31,10 +31,13 @@ defmodule PhoenixKitSync.Errors do
           | :disconnected
           | :download_limit_reached
           | :econnrefused
+          | :empty_schema
           | :fetch_failed
           | :import_failed
           | :incoming_denied
           | :invalid_code
+          | :invalid_column_name
+          | :invalid_column_type
           | :invalid_identifier
           | :invalid_json
           | :invalid_password
@@ -57,6 +60,7 @@ defmodule PhoenixKitSync.Errors do
           | :password_required
           | :pull_failed
           | :record_limit_reached
+          | :schema_without_primary_key
           | :table_missing_locally
           | :table_not_found
           | :timeout
@@ -80,6 +84,7 @@ defmodule PhoenixKitSync.Errors do
   def message(:disconnected), do: gettext("Disconnected")
   def message(:download_limit_reached), do: gettext("Download limit reached")
   def message(:econnrefused), do: gettext("Could not connect to the remote site")
+  def message(:empty_schema), do: gettext("The sender's schema lists no columns")
   def message(:fetch_failed), do: gettext("Fetch failed")
 
   def message(:import_failed),
@@ -87,6 +92,13 @@ defmodule PhoenixKitSync.Errors do
 
   def message(:incoming_denied), do: gettext("Incoming connections are not allowed")
   def message(:invalid_code), do: gettext("Invalid session code")
+
+  def message(:invalid_column_name),
+    do: gettext("The sender sent a column name that is not a valid identifier")
+
+  def message(:invalid_column_type),
+    do: gettext("The sender's schema has a column type that is not a plain type name")
+
   def message(:invalid_identifier), do: gettext("Invalid identifier")
   def message(:invalid_json), do: gettext("Invalid JSON")
   def message(:invalid_password), do: gettext("Invalid password")
@@ -120,6 +132,12 @@ defmodule PhoenixKitSync.Errors do
 
   def message(:table_not_allowed),
     do: gettext("This connection is not authorised to access that table")
+
+  def message(:schema_without_primary_key),
+    do:
+      gettext(
+        "The sender did not report a primary key for this table. Update sync on the source site, or create the table here by hand"
+      )
 
   def message(:table_missing_locally),
     do:

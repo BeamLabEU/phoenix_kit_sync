@@ -1001,8 +1001,8 @@ defmodule PhoenixKitSync.Web.ApiController do
 
   defp get_actual_row_count(repo, table_name) do
     # Validate table name to prevent SQL injection
-    if Regex.match?(~r/^[a-zA-Z_][a-zA-Z0-9_]*$/, table_name) do
-      count_query = "SELECT COUNT(*) FROM #{table_name}"
+    if SchemaInspector.valid_identifier?(table_name) do
+      count_query = "SELECT COUNT(*) FROM #{quote_ident(table_name)}"
 
       case SQL.query(repo, count_query, []) do
         {:ok, %{rows: [[count]]}} -> count
@@ -1065,7 +1065,7 @@ defmodule PhoenixKitSync.Web.ApiController do
   end
 
   defp fetch_table_rows(repo, table_name, limit) do
-    query = "SELECT * FROM #{table_name} LIMIT $1"
+    query = "SELECT * FROM #{quote_ident(table_name)} LIMIT $1"
 
     case SQL.query(repo, query, [limit]) do
       {:ok, %{rows: rows, columns: columns}} ->
@@ -1136,7 +1136,15 @@ defmodule PhoenixKitSync.Web.ApiController do
 
       {:ok, %{rows: rows, columns: columns}} ->
         schema_columns = Enum.map(rows, fn row -> Enum.zip(columns, row) |> Map.new() end)
-        {:ok, %{table_name: table_name, columns: schema_columns}}
+
+        # primary_key is additive: receivers that predate it ignore it, and
+        # without it a table created from this schema would have no key.
+        {:ok,
+         %{
+           table_name: table_name,
+           columns: schema_columns,
+           primary_key: table_primary_key(table_name)
+         }}
 
       {:error, _reason} ->
         {:error, :not_found}
@@ -1172,10 +1180,10 @@ defmodule PhoenixKitSync.Web.ApiController do
 
   defp fetch_filtered_records(repo, table_name, limit, offset, filter_opts) do
     pk_col = resolve_pk_column(table_name)
-    {where_clause, params, next_param} = build_where_clause(filter_opts, pk_col)
+    {where_clause, params, next_param} = build_where_clause(filter_opts, quote_ident(pk_col))
 
     data_query =
-      "SELECT * FROM #{table_name}#{where_clause} ORDER BY #{pk_col} LIMIT $#{next_param} OFFSET $#{next_param + 1}"
+      "SELECT * FROM #{quote_ident(table_name)}#{where_clause} ORDER BY #{quote_ident(pk_col)} LIMIT $#{next_param} OFFSET $#{next_param + 1}"
 
     all_params = params ++ [limit, offset]
 
@@ -1193,6 +1201,13 @@ defmodule PhoenixKitSync.Web.ApiController do
   # phoenix_kit's UUIDv7-PK tables (and any other UUID-PK table). Query
   # Postgres directly via SchemaInspector.get_primary_key/2 — works for
   # any real table.
+  defp table_primary_key(table_name) do
+    case SchemaInspector.get_primary_key(table_name) do
+      {:ok, pk_cols} -> pk_cols
+      {:error, _} -> []
+    end
+  end
+
   defp resolve_pk_column(table_name) do
     case SchemaInspector.get_primary_key(table_name) do
       {:ok, [pk | _]} when is_binary(pk) -> pk
@@ -1209,6 +1224,13 @@ defmodule PhoenixKitSync.Web.ApiController do
     end)
   end
 
+  # Identifiers are always quoted: unquoted, Postgres folds case, so a
+  # request for "Users" would read "users" even when only the former passed
+  # the connection's table checks, and a table named like a keyword
+  # ("order", "user") would not parse. `""` escapes a quote inside a name.
+  defp quote_ident(name), do: ~s["#{String.replace(name, ~s["], ~s[""])}"]
+
+  # `pk_col` arrives quoted.
   defp build_where_clause(opts, pk_col) do
     ids = Keyword.get(opts, :ids)
     id_start = Keyword.get(opts, :id_start)
