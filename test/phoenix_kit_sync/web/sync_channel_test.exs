@@ -118,9 +118,13 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
   end
 
   describe "request:records — a table with uuid columns" do
-    # The channel serializer JSON-encodes every push on a live socket; the
-    # test transport does not, so the payload is encoded here the same way.
-    test "the reply payload encodes as JSON", %{socket: socket, session: session} do
+    # A live socket hands every push to its serializer, which JSON-encodes
+    # it; the test transport delivers the message as is, so the test runs
+    # the pushed message through the same serializer.
+    test "the reply encodes through the socket's JSON serializer", %{
+      socket: socket,
+      session: session
+    } do
       {:ok, _connection, _token} =
         PhoenixKitSync.Connections.create_connection(%{
           "name" => "Channel uuid #{System.unique_integer([:positive])}",
@@ -136,13 +140,18 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         "ref" => "uuid-json"
       })
 
-      assert_push(
-        "response:records",
-        %{ref: "uuid-json", records: [_ | _]} = payload,
-        @reply_timeout
-      )
+      assert_receive %Phoenix.Socket.Message{
+                       event: "response:records",
+                       payload: %{ref: "uuid-json", records: [_ | _]}
+                     } = message,
+                     @reply_timeout
 
-      assert {:ok, _json} = Jason.encode(payload)
+      assert {:socket_push, :text, json} = Phoenix.Socket.V2.JSONSerializer.encode!(message)
+
+      assert [_join_ref, _ref, _topic, "response:records", %{"records" => [record | _]}] =
+               Jason.decode!(json)
+
+      assert {:ok, _} = Ecto.UUID.cast(record["uuid"])
     end
   end
 

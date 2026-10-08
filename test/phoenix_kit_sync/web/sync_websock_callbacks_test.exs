@@ -226,8 +226,9 @@ defmodule PhoenixKitSync.Web.SyncWebsockCallbacksTest do
     # Reproduction: DataExporter returns uuid columns as raw 16-byte
     # binaries and the WebSock handler JSON-encodes the reply as is, so
     # Jason raises on the first non-UTF-8 byte. Every phoenix_kit table has
-    # a UUIDv7 key, so none can be read over this path. (The Channel test
-    # does not JSON-encode replies, so it cannot see this.)
+    # a UUIDv7 key, so none can be read over this path. (The Channel path
+    # is covered in sync_channel_test.exs, which runs the pushed reply
+    # through the socket's JSON serializer.)
     setup do
       conn = create_active_sender()
       {:ok, state} = SyncWebsock.init(auth_type: :connection, connection: conn)
