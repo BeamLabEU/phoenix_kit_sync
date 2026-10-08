@@ -222,6 +222,46 @@ defmodule PhoenixKitSync.Web.SyncWebsockCallbacksTest do
     end
   end
 
+  describe "handle_in/2 — request:records offset and limit from the peer" do
+    setup do
+      # A table without uuid columns: the reply is JSON-encoded here.
+      PhoenixKit.RepoHelper.repo().query!(
+        "CREATE TABLE IF NOT EXISTS ws_bounded (id int PRIMARY KEY)"
+      )
+
+      PhoenixKit.RepoHelper.repo().query!(
+        "INSERT INTO ws_bounded VALUES (1) ON CONFLICT DO NOTHING"
+      )
+
+      conn = create_active_sender()
+      {:ok, state} = SyncWebsock.init(auth_type: :connection, connection: conn)
+      {:ok, state: %{state | joined: true}, conn: conn}
+    end
+
+    for {label, extra} <- [
+          {"non-numeric", %{"offset" => "abc", "limit" => "x"}},
+          {"negative", %{"offset" => -5, "limit" => -1}}
+        ] do
+      test "#{label} values fall back instead of failing", %{state: state, conn: conn} do
+        payload =
+          encode(
+            nil,
+            "b1",
+            "transfer:conn:#{conn.uuid}",
+            "request:records",
+            Map.merge(
+              %{"table" => "ws_bounded", "ref" => "b1"},
+              unquote(Macro.escape(extra))
+            )
+          )
+
+        reply = SyncWebsock.handle_in({payload, [opcode: :text]}, state)
+
+        assert %{event: "response:records", payload: %{"offset" => 0}} = decode_reply(reply)
+      end
+    end
+  end
+
   describe "terminate/2" do
     test "session-based: notifies owner_pid of receiver_disconnected" do
       session = %{code: "abc", owner_pid: self()}

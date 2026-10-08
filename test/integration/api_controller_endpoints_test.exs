@@ -303,6 +303,23 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
   end
 
   describe "POST /sync/api/table-records" do
+    test "limit and offset out of range or not numbers still answer 200", %{conn: conn} do
+      {_connection, token} = create_active_sender()
+
+      for {limit, offset} <- [{"abc", "xyz"}, {-1, -5}, {0, 0}, {"5abc", "2x"}] do
+        conn =
+          post(conn, "/sync/api/table-records", %{
+            "auth_token_hash" => token_hash(token),
+            "table_name" => "phoenix_kit_sync_connections",
+            "limit" => limit,
+            "offset" => offset
+          })
+
+        assert %{"success" => true, "records" => [_ | _]} = json_response(conn, 200),
+               "limit=#{inspect(limit)} offset=#{inspect(offset)}"
+      end
+    end
+
     test "missing fields returns 400", %{conn: conn} do
       conn = post(conn, "/sync/api/table-records", %{})
       assert json_response(conn, 400)["success"] == false

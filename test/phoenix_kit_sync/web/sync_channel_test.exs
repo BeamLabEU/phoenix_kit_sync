@@ -117,6 +117,30 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
     end
   end
 
+  describe "request:records — offset and limit from the peer" do
+    for {label, extra} <- [
+          {"non-numeric", %{"offset" => "abc", "limit" => "x"}},
+          {"negative", %{"offset" => -5, "limit" => -1}}
+        ] do
+      test "#{label} values fall back instead of failing", %{socket: socket, session: session} do
+        {:ok, _reply, channel} =
+          subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+        push(
+          channel,
+          "request:records",
+          Map.merge(
+            %{"table" => "phoenix_kit_sync_connections", "ref" => "bounded"},
+            unquote(Macro.escape(extra))
+          )
+        )
+
+        assert_push("response:records", %{ref: "bounded", offset: offset}, @reply_timeout)
+        assert offset == 0
+      end
+    end
+  end
+
   describe "request:records — malformed payload (DoS hardening)" do
     # Pre-fix sync_channel.ex used Map.fetch! on the "table" and "ref"
     # keys; missing keys crashed the channel and triggered a reconnect

@@ -13,10 +13,13 @@ defmodule PhoenixKitSync.Web.History do
   alias PhoenixKit.Settings
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitSync
+  alias PhoenixKitSync.Params
   alias PhoenixKitSync.Transfers
   alias PhoenixKitWeb.Actor
 
   @per_page 20
+  # A page past this is empty anyway; the cap keeps the offset in range.
+  @max_page 10_000
 
   @impl true
   def mount(params, _session, socket) do
@@ -56,7 +59,7 @@ defmodule PhoenixKitSync.Web.History do
 
   @impl true
   def handle_params(params, _url, socket) do
-    page = String.to_integer(params["page"] || "1")
+    page = Params.bounded_int(params["page"], 1, 1, @max_page)
     direction_filter = params["direction"]
     status_filter = params["status"]
 

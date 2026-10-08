@@ -90,4 +90,24 @@ defmodule PhoenixKitSync.Web.HistoryLiveTest do
       assert html =~ "phx-disable-with=\"Denying"
     end
   end
+
+  describe "page parameter" do
+    # The page number comes from the URL: whatever it holds, the page loads.
+    for {raw, page} <- [
+          {"abc", 1},
+          {"-1", 1},
+          {"0", 1},
+          {"", 1},
+          {"2", 2},
+          {"99999999999999999999999", 10_000}
+        ] do
+      test "?page=#{raw} loads page #{page}", %{conn: conn} do
+        conn = put_test_scope(conn, fake_scope())
+        {:ok, view, html} = live(conn, "/en/admin/sync/history?page=#{unquote(raw)}")
+
+        assert html =~ "Transfer History"
+        assert :sys.get_state(view.pid).socket.assigns.page == unquote(page)
+      end
+    end
+  end
 end
