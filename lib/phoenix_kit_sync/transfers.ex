@@ -379,14 +379,16 @@ defmodule PhoenixKitSync.Transfers do
 
   - `transfer` - The transfer to fail
   - `error_message` - Description of the failure
+  - `stats` - Record counts of what moved before the failure, as for
+    `complete_transfer/2` (optional)
 
   ## Examples
 
       {:ok, transfer} = Transfers.fail_transfer(transfer, "Connection timeout")
   """
-  @spec fail_transfer(Transfer.t(), String.t()) ::
+  @spec fail_transfer(Transfer.t(), String.t(), map()) ::
           {:ok, Transfer.t()} | {:error, Ecto.Changeset.t()}
-  def fail_transfer(%Transfer{} = transfer, error_message) do
+  def fail_transfer(%Transfer{} = transfer, error_message, stats \\ %{}) do
     Logger.error(
       "[Sync.Transfers] Transfer failed " <>
         "| uuid=#{transfer.uuid} " <>
@@ -397,7 +399,7 @@ defmodule PhoenixKitSync.Transfers do
     repo = RepoHelper.repo()
 
     transfer
-    |> Transfer.fail_changeset(error_message)
+    |> Transfer.fail_changeset(error_message, stats)
     |> repo.update()
     |> tap_activity("failed", [])
   end
