@@ -320,6 +320,22 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       end
     end
 
+    test "a limit above 100 answers 100 records", %{conn: conn} do
+      PhoenixKit.RepoHelper.repo().query!("CREATE TABLE api_capped (id int PRIMARY KEY)")
+      PhoenixKit.RepoHelper.repo().query!("INSERT INTO api_capped SELECT generate_series(1, 101)")
+      {_connection, token} = create_active_sender()
+
+      conn =
+        post(conn, "/sync/api/table-records", %{
+          "auth_token_hash" => token_hash(token),
+          "table_name" => "api_capped",
+          "limit" => "1000"
+        })
+
+      assert %{"success" => true, "records" => records} = json_response(conn, 200)
+      assert length(records) == 100
+    end
+
     test "missing fields returns 400", %{conn: conn} do
       conn = post(conn, "/sync/api/table-records", %{})
       assert json_response(conn, 400)["success"] == false
