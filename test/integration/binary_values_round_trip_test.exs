@@ -37,6 +37,9 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
     {"date-bytes", "2025-01-01", nil, nil, ~s([1, "a", {"b": null}]), ~s([1, "a", {"b": null}])},
     {"time-bytes", "12:30:00", nil, nil, ~s("hello"), ~s("hello")},
     {"json-number", nil, nil, nil, "42.5", "42"},
+    # A numeric past decimal128's 34 significant digits, which Decimal.parse/1
+    # refuses by default; numeric itself holds far more.
+    {"big-numeric", nil, nil, "123456789012345678901234567890.123456789", nil, nil},
     # A json object that happens to use the bytes wrapper's key is still an object.
     {"json-wrapper-key", nil, nil, nil, ~s({"__phoenix_kit_binary__": "AAE="}),
      ~s({"__phoenix_kit_binary__": "AAE="})}
@@ -92,7 +95,7 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
     {:ok, records} = DataExporter.fetch_records("rt_source")
     records = records |> Jason.encode!() |> Jason.decode!()
 
-    assert {:ok, %{created: 7, errors: []}} = DataImporter.import_records("rt_target", records)
+    assert {:ok, %{created: 8, errors: []}} = DataImporter.import_records("rt_target", records)
     assert rows("rt_target") == rows("rt_source")
   end
 
@@ -115,7 +118,7 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
 
     {:ok, _} = DataImporter.import_records("rt_target", records)
 
-    assert {:ok, %{created: 0, skipped: 7, errors: []}} =
+    assert {:ok, %{created: 0, skipped: 8, errors: []}} =
              DataImporter.import_records("rt_target", records, :skip)
   end
 

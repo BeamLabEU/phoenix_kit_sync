@@ -400,13 +400,42 @@ defmodule PhoenixKitSync.DataImporter do
 
   defp prepare_typed_value(value, type)
        when is_binary(value) and type in ["numeric", "decimal"] do
-    case Decimal.parse(value) do
-      {decimal, ""} -> decimal
-      _ -> value
+    case parse_numeric(value) do
+      {:ok, decimal} -> decimal
+      :error -> value
     end
   end
 
   defp prepare_typed_value(value, _type), do: prepare_value(value)
+
+  # A numeric's text is digits with an optional fraction. Decimal.parse/1
+  # stops at decimal128's 34 significant digits, far short of what a numeric
+  # column holds, so this form is built directly, bounded by numeric's own
+  # limits instead: 131072 digits before the point, 16383 after. Anything
+  # else (an exponent, NaN, Infinity) is short and goes to Decimal.parse/1.
+  @numeric_text ~r/\A([+-]?)(\d+)(?:\.(\d+))?\z/
+
+  defp parse_numeric(value) do
+    case Regex.run(@numeric_text, value, capture: :all_but_first) do
+      [sign, int | frac] -> build_numeric(sign, int, List.first(frac, ""))
+      nil -> parse_decimal(value)
+    end
+  end
+
+  defp build_numeric(sign, int, frac)
+       when byte_size(int) <= 131_072 and byte_size(frac) <= 16_383 do
+    sign = if sign == "-", do: -1, else: 1
+    {:ok, Decimal.new(sign, String.to_integer(int <> frac), -byte_size(frac))}
+  end
+
+  defp build_numeric(_sign, _int, _frac), do: :error
+
+  defp parse_decimal(value) do
+    case Decimal.parse(value) do
+      {decimal, ""} -> {:ok, decimal}
+      _ -> :error
+    end
+  end
 
   defp prepare_value(%{"__type__" => "datetime", "value" => value}) do
     # Handle serialized datetime
