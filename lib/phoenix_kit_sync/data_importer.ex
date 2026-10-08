@@ -390,9 +390,6 @@ defmodule PhoenixKitSync.DataImporter do
     end)
   end
 
-  defp json_element(list) when is_list(list), do: list |> Jason.encode!() |> Jason.Fragment.new()
-  defp json_element(value), do: value
-
   # Values the JSON form cannot carry natively, read back by column type.
   # Bytes travel base64-wrapped (as the HTTP API sends them); a uuid as its
   # text, or wrapped by older senders; a numeric as a string. The wrapper is
@@ -436,6 +433,9 @@ defmodule PhoenixKitSync.DataImporter do
   end
 
   defp prepare_typed_value(value, _type), do: prepare_value(value)
+
+  defp json_element(list) when is_list(list), do: list |> Jason.encode!() |> Jason.Fragment.new()
+  defp json_element(value), do: value
 
   # A numeric's text is digits with an optional fraction, and the exporter
   # writes a tiny one in scientific form ("1.2345E-8"). Decimal.parse/1
