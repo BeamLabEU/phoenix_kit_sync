@@ -503,12 +503,18 @@ defmodule PhoenixKitSync.SchemaInspector do
       c.character_maximum_length,
       c.numeric_precision,
       c.numeric_scale,
-      e.data_type AS element_type
+      -- An array's element type, named as information_schema names it.
+      -- udt_name is the array type itself, also under a domain; a per-row
+      -- lookup in pg_type, since joining information_schema.element_types
+      -- re-plans that view for every column.
+      (SELECT CASE WHEN et.typnamespace = 'pg_catalog'::regnamespace
+                   THEN format_type(et.oid, NULL)
+                   ELSE 'USER-DEFINED' END
+         FROM pg_type t
+         JOIN pg_namespace n ON n.oid = t.typnamespace AND n.nspname = c.udt_schema
+         JOIN pg_type et ON et.oid = t.typelem
+        WHERE c.data_type = 'ARRAY' AND t.typname = c.udt_name) AS element_type
     FROM information_schema.columns c
-    LEFT JOIN information_schema.element_types e
-      ON (c.table_catalog, c.table_schema, c.table_name, 'TABLE', c.dtd_identifier) =
-         (e.object_catalog, e.object_schema, e.object_name, e.object_type,
-          e.collection_type_identifier)
     WHERE c.table_schema = $1
       AND c.table_name = $2
     ORDER BY c.ordinal_position
