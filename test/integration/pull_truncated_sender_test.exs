@@ -23,6 +23,10 @@ defmodule PhoenixKitSync.Integration.PullTruncatedSenderTest do
       "INSERT INTO pt_items SELECT g, 'item ' || g FROM unnest(ARRAY[8, 3, 6, 1, 5, 2, 7, 4]) g"
     )
 
+    repo.query!("CREATE TABLE pt_pairs (a int, b int, label text, PRIMARY KEY (a, b))")
+    # Out of key order within a = 1, so ordering by a alone is not enough.
+    repo.query!("INSERT INTO pt_pairs VALUES (2, 1, 'd'), (1, 3, 'c'), (1, 1, 'a'), (1, 2, 'b')")
+
     repo.query!("CREATE TABLE pt_exact (id bigint PRIMARY KEY, label text)")
 
     repo.query!(
@@ -74,6 +78,29 @@ defmodule PhoenixKitSync.Integration.PullTruncatedSenderTest do
 
     assert body["truncated"] == true
     assert ids(body) == [1, 2, 3]
+  end
+
+  test "a composite key orders by every key column", %{conn: conn, hash: hash} do
+    body = pull(conn, hash, "pt_pairs")
+
+    assert body["truncated"] == true
+    assert Enum.map(body["data"], & &1["label"]) == ["a", "b", "c"]
+  end
+
+  test "a limit of zero or less set past the changeset reads as the default", %{
+    conn: conn,
+    hash: hash,
+    connection: connection
+  } do
+    PhoenixKit.RepoHelper.repo().query!(
+      "UPDATE phoenix_kit_sync_connections SET max_records_per_request = -1 WHERE uuid = $1",
+      [Ecto.UUID.dump!(connection.uuid)]
+    )
+
+    body = pull(conn, hash, "pt_items")
+
+    refute Map.has_key?(body, "truncated")
+    assert length(body["data"]) == 8
   end
 
   test "a table of exactly the limit is whole, with no mark", %{conn: conn, hash: hash} do

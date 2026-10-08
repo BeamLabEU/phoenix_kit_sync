@@ -910,7 +910,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       Transfers.fail_transfer(
         transfer,
         "The sender stopped at its max_records_per_request limit; " <>
-          "only the first #{length(data)} records were pulled",
+          "only the first #{length(data)} records were pulled. The sender's admin " <>
+          "can raise that limit for this connection (it is not in the connection " <>
+          "form), or pull the rest with Precise Transfer by ID range (integer keys)",
         stats
       )
 

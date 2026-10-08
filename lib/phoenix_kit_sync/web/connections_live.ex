@@ -1131,18 +1131,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   # process_table_sync_result/3.
   def extract_sync_counts(result) do
     case result do
-      # The rows came and were imported, but the sender cut the table.
-      {:ok, %{imported: imported, skipped: skipped, errors: errors, truncated: true}} ->
-        {imported, skipped, errors, sync_error_message(:truncated)}
-
-      {:ok, %{imported: imported, skipped: skipped, errors: errors, unknown_columns: columns}} ->
-        message =
-          gettext("Columns not in the local table: %{columns}", columns: Enum.join(columns, ", "))
-
-        {imported, skipped, errors, message}
-
-      {:ok, %{imported: imported, skipped: skipped, errors: errors}} ->
-        {imported, skipped, errors, nil}
+      {:ok, %{imported: imported, skipped: skipped, errors: errors} = import_result} ->
+        {imported, skipped, errors, import_result_message(import_result)}
 
       {:ok, %{imported: count}} ->
         {count, 0, 0, nil}
@@ -1152,6 +1142,27 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
       _ ->
         {0, 0, 0, gettext("Unknown error")}
+    end
+  end
+
+  # What an imported table still has to say: the sender cut it (the rows
+  # that came are in), records carried columns this table lacks, or both.
+  defp import_result_message(import_result) do
+    truncated =
+      if Map.get(import_result, :truncated) == true, do: sync_error_message(:truncated)
+
+    unknown_columns =
+      case Map.get(import_result, :unknown_columns) do
+        [_ | _] = columns ->
+          gettext("Columns not in the local table: %{columns}", columns: Enum.join(columns, ", "))
+
+        _none ->
+          nil
+      end
+
+    case Enum.reject([truncated, unknown_columns], &is_nil/1) do
+      [] -> nil
+      messages -> Enum.join(messages, ". ")
     end
   end
 

@@ -157,7 +157,7 @@ Full column lists: `docs/table_structure.md`.
 | POST | `/sync/api/update-status` | Update connection status | Module enabled + `sender_url` and `auth_token_hash` match |
 | POST | `/sync/api/get-connection-status` | Query connection status | Module enabled + `receiver_url` and `auth_token_hash` match a sender connection |
 | POST | `/sync/api/list-tables` | List available tables | Token hash + active connection; filtered by `table_allowed?/2` |
-| POST | `/sync/api/pull-data` | Pull table data; optional `ids` / `id_start` / `id_end` filter, answered with `"filtered": true` | Token hash + active connection + table allowed |
+| POST | `/sync/api/pull-data` | Pull table data in key order, at most `max_records_per_request` rows; optional `ids` / `id_start` / `id_end` filter, answered with `"filtered": true`; `"truncated": true` when rows were left over | Token hash + active connection + table allowed |
 | POST | `/sync/api/table-schema` | Get table schema | Token hash + active connection + table allowed |
 | POST | `/sync/api/table-records` | Get table records | Token hash + active connection + table allowed |
 | GET | `/sync/api/status` | Check module status | None |

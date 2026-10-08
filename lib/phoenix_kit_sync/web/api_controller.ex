@@ -483,7 +483,11 @@ defmodule PhoenixKitSync.Web.ApiController do
 
   ## Responses
 
-  - 200 OK - Returns table data; `"filtered": true` when a filter was applied
+  - 200 OK - Returns table data; `"filtered": true` when a filter was applied,
+    and `"truncated": true` when the answer stopped at the connection's
+    `max_records_per_request` with more rows left (the key is left out
+    otherwise). Rows come in key order, so the first rows are the same on
+    every pull; a filtered pull can fetch the rest in chunks.
   - 400 Bad Request - Missing fields, an invalid filter, or a key type that
     takes no filter
   - 401 Unauthorized - Invalid auth token
@@ -1066,7 +1070,7 @@ defmodule PhoenixKitSync.Web.ApiController do
   # answer from one that was cut.
   defp do_fetch_table_data(table_name, connection, filter) do
     repo = PhoenixKit.RepoHelper.repo()
-    limit = connection.max_records_per_request || 10_000
+    limit = request_limit(connection)
 
     fetched =
       case table_exists?(repo, table_name) do
@@ -1154,6 +1158,14 @@ defmodule PhoenixKitSync.Web.ApiController do
     end
   end
 
+  # The changeset keeps max_records_per_request above zero; a value set
+  # around it (nil, zero, negative) reads as the default rather than as
+  # LIMIT 0 with every answer marked truncated.
+  defp request_limit(%{max_records_per_request: limit}) when is_integer(limit) and limit > 0,
+    do: limit
+
+  defp request_limit(_connection), do: 10_000
+
   defp key_order(table_name) do
     case table_primary_key(table_name) do
       [] -> ""
@@ -1180,7 +1192,9 @@ defmodule PhoenixKitSync.Web.ApiController do
         Transfers.fail_transfer(
           transfer,
           "Stopped at this connection's max_records_per_request limit " <>
-            "(#{record_count} records); the rest of the table was not sent",
+            "(#{record_count} records); the rest of the table was not sent. " <>
+            "Raise max_records_per_request for this connection to send more " <>
+            "(Connections.update_connection/2; it is not in the connection form)",
           stats
         )
       else
