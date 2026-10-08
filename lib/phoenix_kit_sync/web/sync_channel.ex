@@ -35,8 +35,6 @@ defmodule PhoenixKitSync.Web.SyncChannel do
   """
 
   use Phoenix.Channel
-  @max_offset 1_000_000_000
-
   require Logger
 
   alias PhoenixKitSync
@@ -151,8 +149,8 @@ defmodule PhoenixKitSync.Web.SyncChannel do
       when is_binary(table) and is_binary(ref) ->
         # The peer's numbers: anything but a whole number in range falls
         # back, so a bad value cannot reach the query.
-        offset = Params.bounded_int(payload["offset"], 0, 0, @max_offset)
-        limit = Params.bounded_int(payload["limit"], 100, 1, 1_000)
+        offset = Params.bounded_int(payload["offset"], 0, 0, Params.max_offset())
+        limit = Params.bounded_int(payload["limit"], 100, 1, DataExporter.max_limit())
 
         Logger.debug(
           "Sync.Channel: Records requested for #{table} (offset: #{offset}, limit: #{limit})"

@@ -29,6 +29,10 @@ defmodule PhoenixKitSync.DataExporter do
   @default_limit 100
   @max_limit 1000
 
+  @doc "The most records `fetch_records/2` returns in one call."
+  @spec max_limit() :: pos_integer()
+  def max_limit, do: @max_limit
+
   @doc """
   Gets the exact count of records in a table.
 

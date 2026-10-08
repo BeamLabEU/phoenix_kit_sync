@@ -26,4 +26,18 @@ defmodule PhoenixKitSync.ParamsTest do
     assert Params.bounded_int("101", 1, 1, 100) == 100
     assert Params.bounded_int("99999999999999999999999", 1, 1, 100) == 100
   end
+
+  describe "page/2" do
+    test "a whole number from 1 to the cap is kept" do
+      assert Params.page("1", 10) == 1
+      assert Params.page("10", 10) == 10
+      assert Params.page(10_001, 1_000_000) == 10_001
+    end
+
+    test "anything else, a page above the cap included, gives page 1" do
+      for value <- ["11", "99999999999999999999999", "0", "-3", "abc", "", "5abc", nil, 2.0] do
+        assert Params.page(value, 10) == 1, inspect(value)
+      end
+    end
+  end
 end

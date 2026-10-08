@@ -121,7 +121,7 @@ defmodule PhoenixKitSync.Web.ApiController.Validators do
          auth_token_hash: params["auth_token_hash"],
          table_name: params["table_name"],
          limit: Params.bounded_int(params["limit"], 10, 1, 100),
-         offset: Params.bounded_int(params["offset"], 0, 0, 1_000_000_000),
+         offset: Params.bounded_int(params["offset"], 0, 0, Params.max_offset()),
          ids: params["ids"],
          id_start: params["id_start"],
          id_end: params["id_end"]

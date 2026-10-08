@@ -5,6 +5,14 @@ defmodule PhoenixKitSync.Params do
   turn up.
   """
 
+  # The largest offset taken from outside. No synced table comes near it,
+  # and it keeps `offset + limit` far inside the database's bigint.
+  @max_offset 1_000_000_000
+
+  @doc "The largest record offset accepted from a request or a peer."
+  @spec max_offset() :: pos_integer()
+  def max_offset, do: @max_offset
+
   @doc """
   Returns `value` as an integer within `min..max`.
 
@@ -18,6 +26,21 @@ defmodule PhoenixKitSync.Params do
     case whole_number(value) do
       {:ok, n} -> n |> Kernel.max(min) |> Kernel.min(max)
       :error -> default
+    end
+  end
+
+  @doc """
+  Returns `value` as a page number from 1 to `max`.
+
+  Anything that is not a whole number in that range gives page 1, a page
+  above `max` included: a page that far out is a broken link, not a request
+  for the last page. The caller clamps a page past its own last page.
+  """
+  @spec page(term(), pos_integer()) :: pos_integer()
+  def page(value, max) when is_integer(max) and max >= 1 do
+    case whole_number(value) do
+      {:ok, n} when n >= 1 and n <= max -> n
+      _ -> 1
     end
   end
 

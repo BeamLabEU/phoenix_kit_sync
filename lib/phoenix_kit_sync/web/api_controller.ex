@@ -634,7 +634,7 @@ defmodule PhoenixKitSync.Web.ApiController do
          :ok <- check_connection_active(connection),
          :ok <- check_table_allowed(connection, validated.table_name) do
       table_name = validated.table_name
-      limit = min(validated.limit, 100)
+      limit = validated.limit
       offset = validated.offset
 
       # Build filter options

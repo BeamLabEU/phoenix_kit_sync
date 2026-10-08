@@ -262,6 +262,51 @@ defmodule PhoenixKitSync.Web.SyncWebsockCallbacksTest do
     end
   end
 
+  describe "handle_in/2 — request:records offset and limit above the caps" do
+    setup do
+      # One row more than DataExporter returns in one call.
+      PhoenixKit.RepoHelper.repo().query!("CREATE TABLE ws_capped (id int PRIMARY KEY)")
+
+      PhoenixKit.RepoHelper.repo().query!("INSERT INTO ws_capped SELECT generate_series(1, 1001)")
+
+      conn = create_active_sender()
+      {:ok, state} = SyncWebsock.init(auth_type: :connection, connection: conn)
+      {:ok, state: %{state | joined: true}, conn: conn}
+    end
+
+    defp request_records(state, conn, extra) do
+      payload =
+        encode(
+          nil,
+          "c1",
+          "transfer:conn:#{conn.uuid}",
+          "request:records",
+          Map.merge(%{"table" => "ws_capped", "ref" => "c1"}, extra)
+        )
+
+      SyncWebsock.handle_in({payload, [opcode: :text]}, state) |> decode_reply()
+    end
+
+    test "a huge offset is clamped to the cap", %{state: state, conn: conn} do
+      # Unclamped, the offset overflows the bigint bind and the handler raises.
+      reply = request_records(state, conn, %{"offset" => 1_000_000_000_000_000_000_000_000_000})
+
+      assert %{event: "response:records", payload: %{"offset" => offset, "records" => []}} =
+               reply
+
+      assert offset == PhoenixKitSync.Params.max_offset()
+    end
+
+    test "a limit above the export cap still reports more records", %{state: state, conn: conn} do
+      reply = request_records(state, conn, %{"limit" => 5_000})
+
+      assert %{event: "response:records", payload: %{"records" => records, "has_more" => true}} =
+               reply
+
+      assert length(records) == PhoenixKitSync.DataExporter.max_limit()
+    end
+  end
+
   describe "terminate/2" do
     test "session-based: notifies owner_pid of receiver_disconnected" do
       session = %{code: "abc", owner_pid: self()}

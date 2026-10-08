@@ -32,8 +32,6 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   """
 
   @behaviour WebSock
-  @max_offset 1_000_000_000
-
   require Logger
 
   alias PhoenixKitSync
@@ -318,8 +316,8 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
         client_ref = payload["ref"]
         # The peer's numbers: anything but a whole number in range falls
         # back, so a bad value cannot reach the query.
-        offset = Params.bounded_int(payload["offset"], 0, 0, @max_offset)
-        limit = Params.bounded_int(payload["limit"], 100, 1, 1_000)
+        offset = Params.bounded_int(payload["offset"], 0, 0, Params.max_offset())
+        limit = Params.bounded_int(payload["limit"], 100, 1, DataExporter.max_limit())
 
         # Apply connection's max_records_per_request limit
         effective_limit = get_effective_limit(limit, state)

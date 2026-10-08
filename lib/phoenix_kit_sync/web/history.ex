@@ -11,6 +11,7 @@ defmodule PhoenixKitSync.Web.History do
   require Logger
 
   alias PhoenixKit.Settings
+  alias PhoenixKit.Utils.Pagination
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitSync
   alias PhoenixKitSync.Params
@@ -18,8 +19,11 @@ defmodule PhoenixKitSync.Web.History do
   alias PhoenixKitWeb.Actor
 
   @per_page 20
-  # A page past this is empty anyway; the cap keeps the offset in range.
-  @max_page 10_000
+  # Transfers are never pruned (a WebSocket pull writes a row per batch),
+  # so the cap sits far beyond any real history; it only keeps a forged
+  # page from producing an offset out of the database's range. A page past
+  # the last one is clamped in load_transfers/1.
+  @max_page 1_000_000
 
   @impl true
   def mount(params, _session, socket) do
@@ -59,7 +63,7 @@ defmodule PhoenixKitSync.Web.History do
 
   @impl true
   def handle_params(params, _url, socket) do
-    page = Params.bounded_int(params["page"], 1, 1, @max_page)
+    page = Params.page(params["page"], @max_page)
     direction_filter = params["direction"]
     status_filter = params["status"]
 
@@ -74,9 +78,17 @@ defmodule PhoenixKitSync.Web.History do
   end
 
   defp load_transfers(socket) do
-    page = socket.assigns.page
     direction = socket.assigns.direction_filter
     status = socket.assigns.status_filter
+
+    filters = []
+    filters = if direction, do: Keyword.put(filters, :direction, direction), else: filters
+    filters = if status, do: Keyword.put(filters, :status, status), else: filters
+
+    total_count = Transfers.count_transfers(filters)
+    total_pages = Pagination.total_pages(total_count, @per_page)
+    # A page past the end (an old link, a narrower filter) shows the last one.
+    page = min(socket.assigns.page, total_pages)
 
     opts = [
       limit: @per_page,
@@ -84,16 +96,12 @@ defmodule PhoenixKitSync.Web.History do
       preload: [:connection]
     ]
 
-    opts = if direction, do: Keyword.put(opts, :direction, direction), else: opts
-    opts = if status, do: Keyword.put(opts, :status, status), else: opts
-
-    transfers = Transfers.list_transfers(opts)
-    total_count = Transfers.count_transfers(Keyword.take(opts, [:direction, :status]))
-    total_pages = max(1, ceil(total_count / @per_page))
+    transfers = Transfers.list_transfers(filters ++ opts)
 
     pending_count = Transfers.count_transfers(status: "pending_approval")
 
     socket
+    |> assign(:page, page)
     |> assign(:transfers, transfers)
     |> assign(:total_count, total_count)
     |> assign(:total_pages, total_pages)

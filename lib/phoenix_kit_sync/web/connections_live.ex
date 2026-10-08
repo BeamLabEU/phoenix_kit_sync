@@ -2788,9 +2788,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     end
   end
 
-  defp format_bytes(bytes) when is_nil(bytes) or bytes == 0, do: "0 B"
+  @doc false
+  # Public so tests can pin it: `size_bytes` comes from the sender, so a
+  # value that is not a number renders as a dash instead of raising.
+  def format_bytes(bytes) when is_nil(bytes) or bytes == 0, do: "0 B"
 
-  defp format_bytes(bytes) do
+  def format_bytes(bytes) when is_number(bytes) do
     cond do
       bytes >= 1_073_741_824 -> "#{Float.round(bytes / 1_073_741_824, 1)} GB"
       bytes >= 1_048_576 -> "#{Float.round(bytes / 1_048_576, 1)} MB"
@@ -2798,6 +2801,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
       true -> "#{bytes} B"
     end
   end
+
+  def format_bytes(_bytes), do: "—"
 
   # Header bar: `Sync / Connections`, and under that `New connection`,
   # the record's name, `Edit`, or `Sync data`. Crumbs use `patch` because

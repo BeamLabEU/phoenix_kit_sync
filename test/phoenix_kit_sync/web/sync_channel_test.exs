@@ -141,6 +141,63 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
     end
   end
 
+  describe "request:records — offset and limit above the caps" do
+    setup do
+      # One row more than DataExporter returns in one call.
+      PhoenixKit.RepoHelper.repo().query!("CREATE TABLE ch_bounded (id int PRIMARY KEY)")
+
+      PhoenixKit.RepoHelper.repo().query!(
+        "INSERT INTO ch_bounded SELECT generate_series(1, 1001)"
+      )
+
+      :ok
+    end
+
+    test "a huge offset is clamped to the cap", %{socket: socket, session: session} do
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      push(channel, "request:records", %{
+        "table" => "ch_bounded",
+        "ref" => "huge-offset",
+        "offset" => 1_000_000_000_000_000_000_000_000_000
+      })
+
+      assert_push(
+        "response:records",
+        %{ref: "huge-offset", offset: offset, records: []},
+        @reply_timeout
+      )
+
+      assert offset == PhoenixKitSync.Params.max_offset()
+    end
+
+    test "a limit above the export cap still reports more records", %{
+      socket: socket,
+      session: session
+    } do
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      push(channel, "request:records", %{
+        "table" => "ch_bounded",
+        "ref" => "big-limit",
+        "limit" => 5_000
+      })
+
+      assert_push(
+        "response:records",
+        %{ref: "big-limit", records: records, has_more: has_more},
+        @reply_timeout
+      )
+
+      # Uncapped, the 1000 rows DataExporter returns fall short of the
+      # requested 5000 and the receiver stops one row early.
+      assert length(records) == PhoenixKitSync.DataExporter.max_limit()
+      assert has_more
+    end
+  end
+
   describe "request:records — malformed payload (DoS hardening)" do
     # Pre-fix sync_channel.ex used Map.fetch! on the "table" and "ref"
     # keys; missing keys crashed the channel and triggered a reconnect
