@@ -23,7 +23,8 @@ defmodule PhoenixKitSync.Integration.ArrayValuesRoundTripTest do
   doc_lists jsonb[],
   blobs bytea[],
   days date[],
-  dom_refs ar_uuid_list
+  dom_refs ar_uuid_list,
+  json_docs json[]
   """
 
   # 16 raw bytes that happen to be UTF-8 ("AAAA…") and 16 that are not:
@@ -53,9 +54,10 @@ defmodule PhoenixKitSync.Integration.ArrayValuesRoundTripTest do
          ARRAY['[1, 2]', '[3, 4]']::jsonb[],
          ARRAY['\\x00ff'::bytea, '\\x6869'::bytea, NULL],
          ARRAY['2025-01-01'::date, NULL],
-         ARRAY['#{@text_uuid}', '#{@raw_uuid}']::uuid[]),
-        ($2, 'empty', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}'),
-        ($3, 'nulls', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+         ARRAY['#{@text_uuid}', '#{@raw_uuid}']::uuid[],
+         ARRAY['[1, 2]', '{"k": 1}', '"2025-01-01"']::json[]),
+        ($2, 'empty', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}'),
+        ($3, 'nulls', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
       """,
       Enum.map(1..3, fn _ -> Ecto.UUID.dump!(UUIDv7.generate()) end)
     )
@@ -68,7 +70,7 @@ defmodule PhoenixKitSync.Integration.ArrayValuesRoundTripTest do
   defp rows(table) do
     repo().query!("""
     SELECT label, tags::text, names::text, refs::text, nums::text, grid::text, ref_grid::text,
-           amounts::text, docs::text, doc_lists::text, blobs::text, days::text, dom_refs::text
+           amounts::text, docs::text, doc_lists::text, blobs::text, days::text, dom_refs::text, json_docs::jsonb[]::text
     FROM #{table} ORDER BY label
     """).rows
   end
@@ -83,6 +85,7 @@ defmodule PhoenixKitSync.Integration.ArrayValuesRoundTripTest do
 
     assert full["refs"] == [@text_uuid, nil, @raw_uuid]
     assert full["dom_refs"] == [@text_uuid, @raw_uuid]
+    assert full["json_docs"] == [[1, 2], %{"k" => 1}, "2025-01-01"]
     assert full["blobs"] == [%{"__phoenix_kit_binary__" => Base.encode64(<<0, 255>>)}, "hi", nil]
     assert full["docs"] == [%{"k" => "v"}, "s", nil, 42, %{"__phoenix_kit_binary__" => "AAE="}]
     assert full["grid"] == [[1, 2], [3, nil]]
