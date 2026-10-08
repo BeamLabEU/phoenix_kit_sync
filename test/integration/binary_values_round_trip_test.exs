@@ -115,6 +115,49 @@ defmodule PhoenixKitSync.Integration.BinaryValuesRoundTripTest do
     assert typed["doc"] == %{"k" => "v", "n" => 1}
   end
 
+  # The exporter cannot write a numeric past Decimal's 6178 output digits,
+  # and a numeric's scale stops at 16383; anything beyond is a peer's load,
+  # not data, and fails that record alone.
+  defp numeric_import(values) do
+    records =
+      values
+      |> Enum.with_index()
+      |> Enum.map(fn {value, i} ->
+        %{"uuid" => UUIDv7.generate(), "label" => "n#{i}", "big" => value}
+      end)
+
+    DataImporter.import_records("rt_target", records)
+  end
+
+  defp numeric_stored?(value) do
+    %{rows: [[count]]} =
+      repo().query!("SELECT count(*) FROM rt_target WHERE big = $1::text::numeric", [value])
+
+    count == 1
+  end
+
+  test "a numeric string within the exporter's limits imports" do
+    values = [
+      "1" <> String.duplicate("0", 6177),
+      "-" <> String.duplicate("9", 6178),
+      "0." <> String.duplicate("0", 16_382) <> "1"
+    ]
+
+    assert {:ok, %{created: 3, errors: []}} = numeric_import(values)
+    assert Enum.all?(values, &numeric_stored?/1)
+  end
+
+  test "a numeric string past the exporter's limits fails its record only" do
+    values = [
+      "1" <> String.duplicate("0", 6178),
+      "0." <> String.duplicate("0", 16_383) <> "1",
+      "12.50"
+    ]
+
+    assert {:ok, %{created: 1, errors: [_, _]}} = numeric_import(values)
+    assert numeric_stored?("12.50")
+  end
+
   test "a second import of the same rows finds them by their uuid key" do
     {:ok, records} = DataExporter.fetch_records("rt_source")
     records = records |> Jason.encode!() |> Jason.decode!()

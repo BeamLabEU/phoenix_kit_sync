@@ -410,10 +410,15 @@ defmodule PhoenixKitSync.DataImporter do
 
   # A numeric's text is digits with an optional fraction. Decimal.parse/1
   # stops at decimal128's 34 significant digits, far short of what a numeric
-  # column holds, so this form is built directly, bounded by numeric's own
-  # limits instead: 131072 digits before the point, 16383 after. Anything
-  # else (an exponent, NaN, Infinity) is short and goes to Decimal.parse/1.
+  # column holds, so this form is built directly. It is bounded by what the
+  # exporter can write instead: Decimal renders at most 6178 digits, and a
+  # numeric's scale stops at 16383. A longer value can only come from a peer
+  # building it by hand, and Postgrex's encoding grows with the square of
+  # its length, so it fails its record. Anything else (an exponent, NaN,
+  # Infinity) is short and goes to Decimal.parse/1.
   @numeric_text ~r/\A([+-]?)(\d+)(?:\.(\d+))?\z/
+  @numeric_max_digits 6178
+  @numeric_max_scale 16_383
 
   defp parse_numeric(value) do
     case Regex.run(@numeric_text, value, capture: :all_but_first) do
@@ -422,13 +427,20 @@ defmodule PhoenixKitSync.DataImporter do
     end
   end
 
-  defp build_numeric(sign, int, frac)
-       when byte_size(int) <= 131_072 and byte_size(frac) <= 16_383 do
-    sign = if sign == "-", do: -1, else: 1
-    {:ok, Decimal.new(sign, String.to_integer(int <> frac), -byte_size(frac))}
+  defp build_numeric(sign, int, frac) do
+    digits = String.trim_leading(int <> frac, "0")
+    exp = -byte_size(frac)
+
+    if byte_size(digits) + max(exp, 0) <= @numeric_max_digits and exp >= -@numeric_max_scale do
+      sign = if sign == "-", do: -1, else: 1
+      {:ok, Decimal.new(sign, coef(digits), exp)}
+    else
+      :error
+    end
   end
 
-  defp build_numeric(_sign, _int, _frac), do: :error
+  defp coef(""), do: 0
+  defp coef(digits), do: String.to_integer(digits)
 
   defp parse_decimal(value) do
     case Decimal.parse(value) do
