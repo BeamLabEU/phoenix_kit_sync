@@ -222,6 +222,34 @@ defmodule PhoenixKitSync.Web.SyncWebsockCallbacksTest do
     end
   end
 
+  describe "handle_in/2 — request:records on a table with uuid columns" do
+    # Reproduction: DataExporter returns uuid columns as raw 16-byte
+    # binaries and the WebSock handler JSON-encodes the reply as is, so
+    # Jason raises on the first non-UTF-8 byte. Every phoenix_kit table has
+    # a UUIDv7 key, so none can be read over this path. (The Channel test
+    # does not JSON-encode replies, so it cannot see this.)
+    setup do
+      conn = create_active_sender()
+      {:ok, state} = SyncWebsock.init(auth_type: :connection, connection: conn)
+      {:ok, state: %{state | joined: true}, conn: conn}
+    end
+
+    test "answers with the records, uuids as text", %{state: state, conn: conn} do
+      payload =
+        encode(nil, "u1", "transfer:conn:#{conn.uuid}", "request:records", %{
+          "table" => "phoenix_kit_sync_connections",
+          "ref" => "u1"
+        })
+
+      reply = SyncWebsock.handle_in({payload, [opcode: :text]}, state)
+
+      assert %{event: "response:records", payload: %{"records" => [record | _]}} =
+               decode_reply(reply)
+
+      assert {:ok, _} = Ecto.UUID.cast(record["uuid"])
+    end
+  end
+
   describe "terminate/2" do
     test "session-based: notifies owner_pid of receiver_disconnected" do
       session = %{code: "abc", owner_pid: self()}
