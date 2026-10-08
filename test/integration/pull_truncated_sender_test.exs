@@ -81,6 +81,15 @@ defmodule PhoenixKitSync.Integration.PullTruncatedSenderTest do
   end
 
   test "a composite key orders by every key column", %{conn: conn, hash: hash} do
+    # A table this small is read through its (a, b) key index, which hides
+    # an ORDER BY a alone; a large one is sorted after a sequential scan,
+    # where only the full key breaks the ties. The sandbox transaction is
+    # the request's, so this plan holds for the pull.
+    repo = PhoenixKit.RepoHelper.repo()
+    repo.query!("SET LOCAL enable_indexscan = off")
+    repo.query!("SET LOCAL enable_indexonlyscan = off")
+    repo.query!("SET LOCAL enable_bitmapscan = off")
+
     body = pull(conn, hash, "pt_pairs")
 
     assert body["truncated"] == true
