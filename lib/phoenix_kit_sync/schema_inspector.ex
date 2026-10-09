@@ -708,8 +708,10 @@ defmodule PhoenixKitSync.SchemaInspector do
   The sender's own table list is data, not trusted: a pull checks the name
   here before it writes anything locally.
   """
-  @spec excluded_table?(String.t()) :: boolean()
+  @spec excluded_table?(term()) :: boolean()
   def excluded_table?(name) when is_binary(name), do: excluded_table?(name, true)
+  # Not a name at all: the identifier checks downstream refuse it.
+  def excluded_table?(_name), do: false
 
   defp excluded_table?(name, include_phoenix_kit) do
     cond do
