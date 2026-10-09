@@ -1,3 +1,48 @@
+## 0.2.4 - 2026-10-09
+
+Ten PRs (#18 to #27) and their review fixes. **Upgrade receivers before
+senders:** a receiver older than this release still skips rows when a
+sender's `max_records_per_request` is below its batch size.
+
+### Fixed
+
+- **Pulls of composite-key tables** use the whole key (`ON CONFLICT (a, b)`);
+  a pull that raised no longer leaves its transfer `in_progress` or the page
+  stuck on "syncing" (#18).
+- **Identifiers from the sender are validated and quoted** before any SQL
+  runs, inserts write only columns the local table has, and Create Table
+  works over HTTP (#19).
+- **FK remaps** work for uuid and integer keys, `overwrite`/`merge` update
+  the matched row on a remap pull, and text keys stay distinct instead of
+  being folded as uuids. Whole-number and exponent strings (`"5"`,
+  `"1.5E+3"`) now become `Decimal` in numeric columns (#20).
+- **Precise Transfer applies its ID filter on the sender**, for `pull-data`
+  and `table-records`, including remap pulls; a sender that ignores the
+  filter is refused. Zero-padded IDs (`007`) are sent as typed, not as 7 (#21).
+- **Bad `page`, `offset` and `limit` values** no longer crash History, the
+  API, the WebSocket or the channel (#22).
+- **uuid and `bytea` columns over WebSocket and channel** are exported as
+  text and a wrapper, and imported back by the target column's type (#23).
+- **Paged transfers no longer skip rows or end early** when a sender returns
+  fewer rows than requested; they read to an empty page (#25).
+- **Array columns** round-trip over WebSocket and channel, and Create Table
+  builds them from their element type (#26).
+- **`table-records`** orders by the whole primary key.
+- Sync errors show their `Errors` message instead of `Sync failed: :atom`.
+
+### Changed
+
+- **A `pull-data` answer cut at `max_records_per_request` now fails the
+  transfer** (`:truncated`) instead of passing as complete. The rows that
+  came are imported. A table over the limit with a non-integer or composite
+  key cannot be pulled in full until `pull-data` gets a cursor (#27).
+- **Tables that are never synced are refused on both sides:**
+  `schema_migrations`, `oban_*`, `pg_*` and the session-token table
+  (`phoenix_kit_users_tokens`, plus the old `phoenix_kit_user_tokens`
+  spelling). The sender enforces it on explicit requests; the receiver
+  refuses them from a sender's list (`:table_excluded`).
+- Updated `mint` to 1.10.2 for three security advisories (#24).
+
 ## 0.2.3 - 2026-09-26
 
 ### Changed
