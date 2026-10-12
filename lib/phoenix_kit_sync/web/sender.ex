@@ -559,7 +559,7 @@ defmodule PhoenixKitSync.Web.Sender do
 
         <%!-- Expandable details --%>
         <%= if map_size(@connection_info) > 2 do %>
-          <details class="mt-3">
+          <details class="mt-3" phx-mounted={Phoenix.LiveView.JS.ignore_attributes(["open"])}>
             <summary class="text-xs text-base-content/60 cursor-pointer hover:text-base-content">
               More connection details...
             </summary>
