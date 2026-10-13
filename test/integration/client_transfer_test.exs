@@ -143,4 +143,34 @@ defmodule PhoenixKitSync.Integration.ClientTransferTest do
 
     lying_sender(caller)
   end
+
+  describe "a table without a primary key" do
+    setup %{repo: repo} do
+      repo.query!("CREATE TABLE ct_keyless (label text)")
+      repo.query!("INSERT INTO ct_keyless SELECT 'r' || g FROM generate_series(1, 4) g")
+      :ok
+    end
+
+    # Not Client.transfer: the sender reads the same database, so importing
+    # its rows would add them to the very table it is still being read from.
+    test "is read whole when it fits in one batch, and the batch after it is empty" do
+      client = connect_with_code()
+
+      assert {:ok, %{records: records}} =
+               Client.fetch_records(client, "ct_keyless", offset: 0, limit: 4)
+
+      assert length(records) == 4
+
+      assert {:ok, %{records: []}} =
+               Client.fetch_records(client, "ct_keyless", offset: 4, limit: 4)
+    end
+
+    test "is refused before anything is imported when it spans batches", %{repo: repo} do
+      assert {:error, reason} =
+               Client.transfer(connect_with_code(), "ct_keyless", strategy: :skip, batch_size: 3)
+
+      assert inspect(reason) =~ "no_primary_key"
+      assert %{rows: [[4]]} = repo.query!("SELECT count(*) FROM ct_keyless")
+    end
+  end
 end

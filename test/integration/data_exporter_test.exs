@@ -69,6 +69,64 @@ defmodule PhoenixKitSync.Integration.DataExporterTest do
   end
 
   # ===========================================
+  # tables without a primary key
+  # ===========================================
+
+  # No key means no order to page in, so such a table is served only when it
+  # fits in one page: the page after it is empty, and a larger table is
+  # refused before any of its rows are sent.
+  describe "a table without a primary key" do
+    setup do
+      PhoenixKit.RepoHelper.repo().query!("CREATE TABLE de_keyless (label text)")
+
+      PhoenixKit.RepoHelper.repo().query!(
+        "INSERT INTO de_keyless SELECT 'r' || g FROM generate_series(1, 5) g"
+      )
+
+      :ok
+    end
+
+    test "is served whole when it fits in one page" do
+      assert {:ok, records} = DataExporter.fetch_records("de_keyless", limit: 5)
+      assert records |> Enum.map(& &1["label"]) |> Enum.sort() == ~w(r1 r2 r3 r4 r5)
+
+      assert {:ok, %{records: [_ | _], next_after: nil}} =
+               DataExporter.fetch_page("de_keyless", limit: 100)
+    end
+
+    test "has an empty page after the one page it fits in, so a paging reader ends" do
+      assert {:ok, []} = DataExporter.fetch_records("de_keyless", limit: 5, offset: 5)
+      assert {:ok, []} = DataExporter.fetch_records("de_keyless", limit: 5, offset: 1_000)
+    end
+
+    test "is refused when it has more rows than one page holds" do
+      assert {:error, :no_primary_key} = DataExporter.fetch_records("de_keyless", limit: 4)
+      assert {:error, :no_primary_key} = DataExporter.fetch_records("de_keyless", limit: 1)
+
+      assert {:error, :no_primary_key} =
+               DataExporter.fetch_records("de_keyless", limit: 2, offset: 2)
+    end
+
+    test "is refused at a position, which is a place in key order" do
+      assert {:error, :no_primary_key} =
+               DataExporter.fetch_page("de_keyless", after: %{"label" => "r1"})
+    end
+
+    test "an empty one is served as an empty page" do
+      PhoenixKit.RepoHelper.repo().query!("DELETE FROM de_keyless")
+      assert {:ok, []} = DataExporter.fetch_records("de_keyless", limit: 1)
+    end
+
+    test "streams whole when it fits in one batch and not at all when it does not" do
+      assert {:ok, stream} = DataExporter.stream_records("de_keyless", batch_size: 5)
+      assert stream |> Enum.to_list() |> List.flatten() |> length() == 5
+
+      assert {:ok, stream} = DataExporter.stream_records("de_keyless", batch_size: 4)
+      assert Enum.to_list(stream) == []
+    end
+  end
+
+  # ===========================================
   # stream_records/1
   # ===========================================
 
