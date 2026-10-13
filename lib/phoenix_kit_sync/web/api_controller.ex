@@ -546,13 +546,19 @@ defmodule PhoenixKitSync.Web.ApiController do
          :ok <- authorize(conn, connection, params, continuation: continuation),
          :ok <- check_table_allowed(connection, validated.table_name),
          {:ok, filter} <- PullFilter.from_params(params),
-         {:ok, page} <- fetch_table_data(validated.table_name, connection, filter, after_values) do
+         {:ok, reservation} <-
+           Connections.reserve_transfer(connection, %{
+             downloads: if(continuation, do: 0, else: 1),
+             records: request_limit(connection)
+           }),
+         {:ok, page} <-
+           reserved(
+             reservation,
+             fetch_table_data(validated.table_name, reservation.records, filter, after_values)
+           ) do
       record_count = length(page.data)
 
-      Connections.record_transfer(connection, %{
-        records_count: record_count,
-        downloads: if(continuation, do: 0, else: 1)
-      })
+      Connections.settle_transfer(reservation, record_count)
 
       record_send(connection, validated, record_count, page, params["paged"] == true)
 
@@ -646,6 +652,15 @@ defmodule PhoenixKitSync.Web.ApiController do
     Phoenix.Token.sign(conn, @cursor_salt, cursor_claim(connection, table_name, next_after))
   end
 
+  # The answer is read under a reservation (Connections.reserve_transfer/2):
+  # one that fails sent no rows, so it gives the download and the page back.
+  defp reserved(_reservation, {:ok, _} = result), do: result
+
+  defp reserved(reservation, error) do
+    Connections.cancel_transfer(reservation)
+    error
+  end
+
   defp continuation?(_conn, _connection, _table_name, nil, _params), do: false
 
   defp continuation?(conn, connection, table_name, after_values, params) do
@@ -729,8 +744,12 @@ defmodule PhoenixKitSync.Web.ApiController do
 
   The filter is pull-data's (`PhoenixKitSync.PullFilter`).
 
+  Every answer counts as one download and its rows as records, against
+  `max_downloads` and `max_records_total` like a pull's.
+
   Returns:
-  - 200 OK with records, ordered by the key
+  - 200 OK with records, ordered by the key (fewer than `limit` when less
+    is left of the record limit)
   - 400 Bad Request - An invalid filter, a key type that takes no filter,
     or a table without a single-column key (`error_code` says which)
   - 401 Unauthorized
@@ -741,13 +760,22 @@ defmodule PhoenixKitSync.Web.ApiController do
          {:ok, validated} <- validate_records_params(params),
          {:ok, connection} <- authorize_sender(conn, validated.auth_token_hash, params),
          :ok <- check_table_allowed(connection, validated.table_name),
-         {:ok, filter} <- PullFilter.from_params(params) do
+         {:ok, filter} <- PullFilter.from_params(params),
+         # A page of rows is a page of rows whichever action serves it: it
+         # is a download and its rows count, or paging through this action
+         # would read a table past both limits.
+         {:ok, reservation} <-
+           Connections.reserve_transfer(connection, %{downloads: 1, records: validated.limit}) do
       table_name = validated.table_name
-      limit = validated.limit
       offset = validated.offset
 
-      case get_table_records(table_name, limit, offset, filter) do
+      case reserved(
+             reservation,
+             get_table_records(table_name, reservation.records, offset, filter)
+           ) do
         {:ok, records} ->
+          Connections.settle_transfer(reservation, length(records))
+
           conn
           |> put_status(200)
           |> json(%{success: true, records: records})
@@ -1142,9 +1170,9 @@ defmodule PhoenixKitSync.Web.ApiController do
       0
   end
 
-  defp fetch_table_data(table_name, connection, filter, after_values) do
+  defp fetch_table_data(table_name, limit, filter, after_values) do
     if valid_table_name?(table_name) do
-      do_fetch_table_data(table_name, connection, filter, after_values)
+      do_fetch_table_data(table_name, limit, filter, after_values)
     else
       {:error, :table_not_found}
     end
@@ -1156,9 +1184,8 @@ defmodule PhoenixKitSync.Web.ApiController do
 
   # One row past the limit is fetched to tell a table that fits in one
   # answer from one that was cut.
-  defp do_fetch_table_data(table_name, connection, filter, after_values) do
+  defp do_fetch_table_data(table_name, limit, filter, after_values) do
     repo = PhoenixKit.RepoHelper.repo()
-    limit = page_limit(connection)
 
     with :ok <- require_table(repo, table_name),
          {:ok, key, arrays} <- table_key(table_name),
@@ -1177,12 +1204,15 @@ defmodule PhoenixKitSync.Web.ApiController do
       kept = Enum.take(rows, limit)
       more? = length(rows) > limit
 
+      {next_after, without_cursor} =
+        if more?, do: next_after(key, kept, columns), else: {nil, []}
+
       {:ok,
        %{
          data: serialize_rows(kept, columns, arrays),
          more?: more?,
-         next_after: if(more?, do: next_after(key, kept, columns)),
-         key_without_cursor: PullCursor.unsupported_types(key)
+         next_after: next_after,
+         key_without_cursor: PullCursor.unsupported_types(key) ++ without_cursor
        }}
     end
   end
@@ -1258,14 +1288,17 @@ defmodule PhoenixKitSync.Web.ApiController do
     end
   end
 
-  defp next_after(_key, [], _columns), do: nil
+  # The position after the last row, and the reason there is none when a
+  # key value is too long to be one.
+  defp next_after(_key, [], _columns), do: {nil, []}
 
   defp next_after(key, rows, columns) do
     last = columns |> Enum.zip(List.last(rows)) |> Map.new()
 
     case PullCursor.next_after(key, last) do
-      {:ok, next_after} -> next_after
-      :error -> nil
+      {:ok, next_after} -> {next_after, []}
+      {:too_long, type} -> {nil, [PullCursor.too_long_reason(type)]}
+      :error -> {nil, []}
     end
   end
 
@@ -1293,16 +1326,6 @@ defmodule PhoenixKitSync.Web.ApiController do
     do: limit
 
   defp request_limit(_connection), do: 10_000
-
-  # A page never carries the connection past its max_records_total: what is
-  # left of that allowance caps it (authorize_request has already refused a
-  # connection with nothing left).
-  defp page_limit(connection) do
-    case Connections.remaining_records(connection) do
-      :unlimited -> request_limit(connection)
-      remaining -> min(request_limit(connection), max(remaining, 1))
-    end
-  end
 
   # The sender's own history, one row written once in its final state. An
   # answer that was cut for a receiver that does not page is recorded as

@@ -8,8 +8,13 @@ defmodule PhoenixKitSync.DataExporter do
   ## Security Considerations
 
   - Uses parameterized queries to prevent SQL injection
+  - Refuses a table, schema or `:order_by` name outside
+    `SchemaInspector.valid_identifier?/1` (`{:error, :invalid_table_name}`,
+    `{:error, :invalid_column_name}`) before any query, on every function
+    here: quoting alone would read a real table named `"customer-data"`
+  - Refuses the tables that are never synced
+    (`SchemaInspector.excluded_table?/1`, `{:error, :table_excluded}`)
   - Validates table names against actual database tables
-  - Respects configured table whitelist/blacklist (future feature)
 
   ## Example
 
@@ -44,10 +49,32 @@ defmodule PhoenixKitSync.DataExporter do
   """
   @spec get_count(String.t(), keyword()) :: {:ok, non_neg_integer()} | {:error, any()}
   def get_count(table_name, opts \\ []) do
-    if SchemaInspector.excluded_table?(table_name) do
-      {:error, :table_excluded}
-    else
-      do_get_count(table_name, opts)
+    with :ok <- check_names(table_name, opts) do
+      if SchemaInspector.excluded_table?(table_name) do
+        {:error, :table_excluded}
+      else
+        do_get_count(table_name, opts)
+      end
+    end
+  end
+
+  # The names a caller hands in, which come from the peer on the socket
+  # paths: checked before anything is read.
+  defp check_names(table_name, opts) do
+    order_by = opts |> Keyword.get(:order_by) |> List.wrap()
+
+    cond do
+      not SchemaInspector.valid_identifier?(table_name) ->
+        {:error, :invalid_table_name}
+
+      not SchemaInspector.valid_identifier?(Keyword.get(opts, :schema, "public")) ->
+        {:error, :invalid_table_name}
+
+      not Enum.all?(order_by, &SchemaInspector.valid_identifier?/1) ->
+        {:error, :invalid_column_name}
+
+      true ->
+        :ok
     end
   end
 
@@ -118,10 +145,10 @@ defmodule PhoenixKitSync.DataExporter do
     limit = min(Keyword.get(opts, :limit, @default_limit), @max_limit)
 
     # Validate table exists and get schema info
-    case SchemaInspector.get_schema(table_name, schema: schema) do
-      {:ok, table_schema} ->
-        do_fetch_page(table_name, schema, table_schema, offset, limit, opts)
-
+    with :ok <- check_names(table_name, opts),
+         {:ok, table_schema} <- SchemaInspector.get_schema(table_name, schema: schema) do
+      do_fetch_page(table_name, schema, table_schema, offset, limit, opts)
+    else
       {:error, :not_found} ->
         {:error, :table_not_found}
 
@@ -147,21 +174,18 @@ defmodule PhoenixKitSync.DataExporter do
     schema = Keyword.get(opts, :schema, "public")
     batch_size = Keyword.get(opts, :batch_size, 500)
 
-    case SchemaInspector.get_schema(table_name, schema: schema) do
-      {:ok, table_schema} ->
-        stream =
-          Stream.resource(
-            fn -> {0, nil} end,
-            fn at ->
-              stream_next_batch(table_name, schema, table_schema, at, batch_size, opts)
-            end,
-            fn _at -> :ok end
-          )
+    with :ok <- check_names(table_name, opts),
+         {:ok, table_schema} <- SchemaInspector.get_schema(table_name, schema: schema) do
+      stream =
+        Stream.resource(
+          fn -> {0, nil} end,
+          fn at ->
+            stream_next_batch(table_name, schema, table_schema, at, batch_size, opts)
+          end,
+          fn _at -> :ok end
+        )
 
-        {:ok, stream}
-
-      {:error, reason} ->
-        {:error, reason}
+      {:ok, stream}
     end
   end
 
@@ -268,7 +292,7 @@ defmodule PhoenixKitSync.DataExporter do
 
     case PullCursor.next_after(key, last) do
       {:ok, position} -> position
-      :error -> nil
+      _no_position -> nil
     end
   end
 

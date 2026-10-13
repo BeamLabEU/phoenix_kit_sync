@@ -77,8 +77,8 @@ socket is open takes effect on its next message.
 |---------|----------|-------------|
 | **Allowed Tables** | Yes | Whitelist of tables the receiver can access |
 | **Excluded Tables** | Yes | Blacklist of tables to hide from receiver |
-| **Max Downloads** | Yes | Total pulls. A table read page by page with the sender's cursor is one pull |
-| **Max Records Total** | Yes | Total records that can be downloaded; a page is cut where the allowance ends |
+| **Max Downloads** | Yes | Total pulls. A table read page by page is one pull, over REST (with the sender's cursor) and on one WebSocket (a request for exactly the position, or the offset, the page before ended on, within ten minutes). Every `table-records` answer, the 10-row preview of the receiving site's sync page included, is a pull of its own |
+| **Max Records Total** | Yes | Total records that can be downloaded, by `pull-data`, `table-records` and the WebSocket alike; a page is cut where the allowance ends |
 | **Max Records Per Request** | Yes | Records per page (default: 10,000), set as "Records per request" in the connection form. A larger table is sent in pages |
 | **Download Password** | Yes | The request must carry it (`password` in the REST body, `?password=` on the socket). The receiving site's sync page asks its admin for it when the sender refuses a request without one, keeps it for as long as that page is open, and stores it nowhere |
 | **IP Whitelist** | Yes | Only the listed client addresses (see "Client address" below) |
@@ -86,6 +86,15 @@ socket is open takes effect on its next message.
 | **Expiration Date** | Yes | Requests after `expires_at` are refused |
 | **Approval Mode** | **No** | `auto_approve` / `require_approval` / `per_table` and **Auto-Approve Tables** are stored, and `Connections.requires_approval?/2` answers for them, but no pull is held for approval: every mode behaves as `auto_approve` |
 | **Rate Limit** | **No** | `rate_limit_requests_per_minute` is stored but not applied |
+
+Both limits are taken with one conditional `UPDATE` before any row is read
+(`Connections.reserve_transfer/2`), so requests arriving together cannot
+both take the last download or the last records: the rows served under a
+connection never exceed **Max Records Total**, and its pulls never exceed
+**Max Downloads**. A request holds its whole page against the record limit
+until it has answered, so a second request arriving in that moment can be
+refused with `record_limit_reached` although rows are left; it is given
+them on its next try.
 
 The connection form has the name, the URL and "Records per request". The
 download password, the other limits and the approval and rate-limit fields
@@ -189,7 +198,8 @@ When you create a sender connection:
   another type (`time with time zone`, `interval`, an enum, citext),
   answers its first page only: those rows are imported and the table is
   reported as only partly pulled, naming the key type when that is the
-  reason. Such a table is pulled whole once the sender's "Records per
+  reason. A key value whose text is longer than 8192 bytes is cut the same
+  way, and named as such. Such a table is pulled whole once the sender's "Records per
   request" is at least its row count.
 - **Array columns** travel as lists whose elements are written and read by
   the array's element type, on the bulk pull as on the WebSocket path: a
@@ -394,10 +404,14 @@ Cross-site communication endpoints (under the configured URL prefix):
   has no order to page in and is refused
   (`"error_code": "no_primary_key"`); a bad `after` is `invalid_cursor`.
   An answer cut on a key whose type has no cursor carries
-  `"unsupported_key_type"` (the type's name) instead of `"next_after"`.
+  `"unsupported_key_type"` (the type's name) instead of `"next_after"`; so
+  does one cut on a key value whose text is over 8192 bytes (`"text value
+  over 8192 bytes"`), the longest position a sender issues and accepts.
 - `POST /sync/api/table-schema` — Get table schema. Each column carries its
   `element_type` (for an array) beside the `information_schema` names
-- `POST /sync/api/table-records` — Get table records
+- `POST /sync/api/table-records` — Get table records (`limit` up to 100,
+  `offset`, the `pull-data` filter). Each answer counts as one download and
+  its rows as records, and is cut where the record limit ends
 
 The four table endpoints take the connection's download password as
 `"password"` and answer 403 with an `error_code` when the connection may not
@@ -439,8 +453,10 @@ config :phoenix_kit_sync,
   excluded_tables: ["my_app_api_clients"],
   # Registrations that may wait for approval at once
   max_pending_incoming: 50,
-  # Largest answer accepted from a remote site for table data, in bytes
-  # (other answers are capped at 1 MB)
+  # Largest answer accepted from a remote site for a page of records
+  # (pull-data, table-records), in bytes. A table list or a table's schema
+  # is capped at 16 MiB (or at this value when it is lower), every other
+  # answer at 1 MiB
   max_response_bytes: 268_435_456
 ```
 
@@ -457,12 +473,13 @@ config :phoenix_kit_sync,
 - **Token Security**: Tokens are SHA-256 hashed in the database and only shown once on creation; comparisons use `Plug.Crypto.secure_compare/2` to defeat timing attacks. The hash is the credential of the REST API, so the connections table is never synced
 - **One authorization for every entry point**: `Connections.authorize_request/3` decides for the REST actions, the WebSocket upgrade and each message on an open socket, against the connection as stored at that moment. Only a `sender` connection authorizes anything
 - **Per-connection table authorization**: Even with a valid token, every API endpoint that returns or accepts table data (`list_tables`, `pull_data`, `table_schema`, `table_records`) filters through the connection's `excluded_tables` blocklist and `allowed_tables` allowlist
-- **Tables that are never synced**: `schema_migrations`, `oban_*`, `pg_*`, `phoenix_kit_sync_connections`, `phoenix_kit_sync_transfers`, `phoenix_kit_settings`, `phoenix_kit_users_tokens`, `phoenix_kit_user_oauth_providers`, `phoenix_kit_organization_invitations`, `phoenix_kit_ai_accounts`, `phoenix_kit_ai_endpoints`, `phoenix_kit_buckets`, `phoenix_kit_payment_provider_configs`; any table whose name contains `token`, `secret`, `credential`, `password`, `api_key`, `oauth` or `session`; and the host's own `excluded_tables`. They are refused on export and import, over REST and WebSocket, for token connections and code sessions alike, even when a connection lists them as allowed. `phoenix_kit_users` **is** synced, password hashes (`hashed_password`) included, to any connection whose tables allow it: create connections only to sites you fully trust, and restrict the table with a connection's allowed or excluded tables where that matters
-- **Parameterised SQL with identifier validation**: Every dynamic table / column name interpolated into raw SQL passes through `SchemaInspector.valid_identifier?/1` first; values always go through `$N` parameterised binds
+- **Tables that are never synced**: `schema_migrations`, `oban_*`, `pg_*`, `phoenix_kit_sync_connections`, `phoenix_kit_sync_transfers`, `phoenix_kit_settings`, `phoenix_kit_users_tokens`, `phoenix_kit_user_oauth_providers`, `phoenix_kit_organization_invitations`, `phoenix_kit_ai_accounts`, `phoenix_kit_ai_endpoints`, `phoenix_kit_buckets`, `phoenix_kit_payment_provider_configs`; any table whose name contains `token`, `secret`, `credential`, `password`, `api_key`, `oauth` or `session`; and the host's own `excluded_tables`. Names are compared without regard to case, so a quoted `"PHOENIX_KIT_SETTINGS"` is excluded as well. They are never created from a sender's schema, and are refused on export and import, over REST and WebSocket, for token connections and code sessions alike, even when a connection lists them as allowed. `phoenix_kit_users` **is** synced, password hashes (`hashed_password`) included, to any connection whose tables allow it: create connections only to sites you fully trust, and restrict the table with a connection's allowed or excluded tables where that matters
+- **Parameterised SQL with identifier validation**: Every dynamic table / column name interpolated into raw SQL passes through `SchemaInspector.valid_identifier?/1` first; values always go through `$N` parameterised binds. A table whose name is outside that rule (`"customer-data"`) is not listed, read or written on any path
 - **Incoming registrations**: created pending unless the mode is `auto_accept` or the incoming password matched; refused outright when `incoming_mode = "require_password"` but no password is configured (no silent bypass)
 - **Client address**: the IP whitelist compares against the address core's `PhoenixKit.Utils.IpAddress.client_address/1` reports: `conn.remote_ip`, and a forwarded header only when that address is a proxy on the same box or network (the last `X-Forwarded-For` hop, which the proxy appended). A client-supplied `X-Forwarded-For` is never believed. Behind a proxy on another network, set `remote_ip` with your proxy plug, or the whitelist sees the proxy
-- **Session codes**: eight characters from the OS's CSPRNG, usable once, never written to the log
-- **Outbound requests**: `site_url` is checked against localhost, `.local`, private, loopback and link-local addresses (in any case, with or without a trailing dot, IPv4-mapped IPv6 included) unless `allow_internal_urls` is set; a name that resolves to an internal address only at request time is not caught. The size of every answer is capped
+- **Session codes**: eight characters from the OS's CSPRNG, never written to the log, to a job or to the activity log (an import job keeps a tag derived from the code, `session_ref`). A code is claimed once for the life of its session, whatever status the session is given afterwards, and only the code of a session opened to send (`create_session(:send)`) opens a socket
+- **Credentials in request logs**: the module's routes are declared with `log: false`, so the router's line for a request, which prints its parameters (`auth_token_hash`, `code`, `token`), is not written. Your repo's query log, at debug level, still prints the bind values of every query, the token hash a connection is looked up by among them
+- **Outbound requests**: `site_url` is checked against localhost, `.local`, private, loopback and link-local addresses (in any case, with or without a trailing dot, IPv4-mapped IPv6 included) unless `allow_internal_urls` is set; a name that resolves to an internal address only at request time is not caught. The size of every answer is capped (see `max_response_bytes`), and an answer whose table list or records are not a list of objects is refused as an invalid response
 - **Audit Trail**: Every state-changing operation lands a row in `phoenix_kit_activities` with `actor_uuid`, `resource_type`, `resource_uuid`, and a PII-safe metadata subset (no `site_url`, no `auth_token_hash`): connection changes (a status the remote site reported is logged with no actor and `reason: "remote_site"`), transfers, and tables created from a sender's schema (`sync.table.created`)
 
 ## Troubleshooting

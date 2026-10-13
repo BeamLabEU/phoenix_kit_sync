@@ -166,7 +166,7 @@ defmodule PhoenixKitSync.Web.Sender do
 
   @impl true
   def handle_info({:sync, {:receiver_joined, channel_pid, full_info}}, socket) do
-    Logger.info("Sync.Sender: Receiver connected - #{inspect(full_info)}")
+    Logger.info("Sync.Sender: Receiver connected")
 
     # Extract receiver_info and connection_info from the full_info map
     # Handle both new format (with :receiver_info/:connection_info keys) and old format

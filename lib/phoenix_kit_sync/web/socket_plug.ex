@@ -107,8 +107,16 @@ defmodule PhoenixKitSync.Web.SocketPlug do
 
   # A session code grants a read of the database, and a wrong one is
   # whatever the client typed: neither is written to the log.
+  #
+  # Only a `:send` session serves rows: its owner opened it to share this
+  # site's data. A `:receive` session's owner asked for nothing to leave
+  # the site, so its code opens no socket here.
   defp validate_code_and_upgrade(conn, code) do
     case PhoenixKitSync.validate_code(code) do
+      {:ok, %{direction: direction}} when direction != :send ->
+        Logger.warning("Sync: Session code of a session that does not send")
+        send_forbidden(conn, "Invalid code")
+
       {:ok, session} ->
         Logger.info("Sync: Receiver connecting with a session code")
 
@@ -270,7 +278,8 @@ defmodule PhoenixKitSync.Web.SocketPlug do
       port: port,
       scheme: scheme,
       request_path: conn.request_path,
-      query_string: conn.query_string,
+      # Not the query string: it carries the session code, or the token and
+      # the download password, and this map is shown and logged.
       websocket_version: ws_version,
       accept_language: accept_language,
       connected_at: UtilsDate.utc_now()

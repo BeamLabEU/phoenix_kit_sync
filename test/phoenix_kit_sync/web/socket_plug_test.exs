@@ -105,6 +105,30 @@ defmodule PhoenixKitSync.Web.SocketPlugTest do
     end
   end
 
+  describe "a session that does not send" do
+    setup do
+      PhoenixKitSync.enable_system()
+      :ok
+    end
+
+    test "its code opens no socket" do
+      {:ok, session} = PhoenixKitSync.create_session(:receive)
+
+      result = upgrade_request("code=#{session.code}") |> SocketPlug.call([])
+
+      assert result.status == 403
+      assert result.resp_body =~ "Invalid code"
+    end
+
+    test "nor a second time" do
+      {:ok, session} = PhoenixKitSync.create_session(:receive)
+
+      for _ <- 1..2 do
+        assert (upgrade_request("code=#{session.code}") |> SocketPlug.call([])).status == 403
+      end
+    end
+  end
+
   describe "connection token authentication (permanent)" do
     setup do
       PhoenixKitSync.enable_system()

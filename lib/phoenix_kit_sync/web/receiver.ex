@@ -824,7 +824,7 @@ defmodule PhoenixKitSync.Web.Receiver do
   @impl true
   def handle_info({:sync_client, {:request_error, {:records, table}, error}}, socket)
       when socket.assigns.transferring do
-    Logger.error("Sync.Receiver: Error fetching records for #{table}: #{error}")
+    Logger.error("Sync.Receiver: Error fetching records for #{table}: #{inspect(error)}")
 
     progress = socket.assigns.transfer_progress
     tables_pending = List.delete(progress.tables_pending, table)
@@ -841,7 +841,7 @@ defmodule PhoenixKitSync.Web.Receiver do
         :warning,
         gettext("Failed to fetch records from %{table}: %{error}",
           table: table,
-          error: to_string(error)
+          error: request_error_text(error)
         )
       )
 
@@ -1921,6 +1921,10 @@ defmodule PhoenixKitSync.Web.Receiver do
         complete_transfer(socket)
     end
   end
+
+  # The sender's own text, or this site's reading of a malformed answer.
+  defp request_error_text(error) when is_atom(error), do: Errors.message(error)
+  defp request_error_text(error), do: to_string(error)
 
   defp requested_offset(%{pending_fetch: {table, offset}}, table), do: offset
   defp requested_offset(_progress, _table), do: 0

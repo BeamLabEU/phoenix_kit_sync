@@ -7,11 +7,17 @@ defmodule PhoenixKitSync.Routes do
   via the `route_module/0` callback.
 
   Admin LiveView routes are auto-generated from `admin_tabs/0` `live_view:` tuples.
+
+  Every route here is declared with `log: false`: the router's own line for
+  a dispatched request prints its parameters, and these requests carry
+  their credential in them (`auth_token_hash` in the body, `code` or
+  `token` in the socket's query). The host's `:filter_parameters` does not
+  name those, so the line is not written at all.
   """
 
   def generate(url_prefix) do
     quote do
-      scope unquote(url_prefix) do
+      scope unquote(url_prefix), log: false do
         pipe_through [:phoenix_kit_api]
 
         post "/sync/api/register-connection",
@@ -53,7 +59,8 @@ defmodule PhoenixKitSync.Routes do
         get "/sync/api/status", PhoenixKitSync.Web.ApiController, :status
       end
 
-      forward "#{unquote(url_prefix)}/sync/websocket", PhoenixKitSync.Web.SocketPlug
+      forward "#{unquote(url_prefix)}/sync/websocket", PhoenixKitSync.Web.SocketPlug, [],
+        log: false
     end
   end
 end

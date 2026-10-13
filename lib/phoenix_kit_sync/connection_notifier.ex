@@ -548,8 +548,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp parse_tables_response(resp_body) do
     case Jason.decode(resp_body) do
-      {:ok, %{"success" => true, "tables" => tables}} ->
-        {:ok, convert_tables_to_structs(tables)}
+      {:ok, %{"success" => true, "tables" => tables}} when is_list(tables) ->
+        convert_tables_to_structs(tables)
 
       {:ok, %{"success" => false, "error" => error}} ->
         {:error, error}
@@ -559,17 +559,30 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
+  # The list is the sender's: an entry that is not an object with a name is
+  # a malformed answer, and a field of the wrong type reads as absent.
   defp convert_tables_to_structs(tables) do
-    Enum.map(tables, fn t ->
-      %{
-        name: t["name"],
-        row_count: t["row_count"] || 0,
-        size_bytes: t["size_bytes"] || 0,
-        checksum: t["checksum"],
-        depends_on: t["depends_on"] || []
-      }
-    end)
+    if Enum.all?(tables, &match?(%{"name" => name} when is_binary(name), &1)) do
+      {:ok,
+       Enum.map(tables, fn t ->
+         %{
+           name: t["name"],
+           row_count: integer_or(t["row_count"], 0),
+           size_bytes: integer_or(t["size_bytes"], 0),
+           checksum: if(is_binary(t["checksum"]), do: t["checksum"]),
+           depends_on: string_list(t["depends_on"])
+         }
+       end)}
+    else
+      {:error, :invalid_response}
+    end
   end
+
+  defp integer_or(value, _default) when is_integer(value), do: value
+  defp integer_or(_value, default), do: default
+
+  defp string_list(list) when is_list(list), do: Enum.filter(list, &is_binary/1)
+  defp string_list(_other), do: []
 
   @doc """
   Pulls data for a specific table from the sender.
@@ -1325,9 +1338,14 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp parse_records_response(resp_body) do
     case Jason.decode(resp_body) do
-      {:ok, %{"success" => true, "records" => records}} -> {:ok, records}
-      {:ok, %{"success" => false, "error" => error}} -> {:error, error}
-      _ -> {:error, :invalid_response}
+      {:ok, %{"success" => true, "records" => records}} when is_list(records) ->
+        if Enum.all?(records, &is_map/1), do: {:ok, records}, else: {:error, :invalid_response}
+
+      {:ok, %{"success" => false, "error" => error}} ->
+        {:error, error}
+
+      _ ->
+        {:error, :invalid_response}
     end
   end
 
@@ -1555,19 +1573,33 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   # The remote site decides how much it answers, and an answer is held in
   # memory whole. Every request reads at most `max_bytes` of body and then
-  # drops the connection with `{:error, :response_too_large}`. Table data is
-  # allowed far more than the small JSON of the other endpoints; a host
-  # that moves bigger pages raises it with
-  # `config :phoenix_kit_sync, max_response_bytes:` (bytes).
+  # drops the connection with `{:error, :response_too_large}`. Three sizes:
+  # a page of records is allowed far more than the rest, and a host that
+  # moves bigger pages raises it with
+  # `config :phoenix_kit_sync, max_response_bytes:` (bytes); a table list or
+  # a table's schema grows with the database (some 300 bytes a table or a
+  # column), so it gets room for tens of thousands of them and no more
+  # (never more than the host allows a page of records); and every other
+  # answer is a few fields.
   @control_max_response_bytes 1_048_576
+  @schema_max_response_bytes 16_777_216
   @default_max_response_bytes 268_435_456
-  @data_endpoints ["/pull-data", "/table-records", "/list-tables", "/table-schema"]
+  @record_endpoints ["/pull-data", "/table-records"]
+  @schema_endpoints ["/list-tables", "/table-schema"]
 
   defp max_response_bytes(url) do
-    if Enum.any?(@data_endpoints, &String.ends_with?(url, &1)) do
+    records_max =
       Application.get_env(:phoenix_kit_sync, :max_response_bytes, @default_max_response_bytes)
-    else
-      @control_max_response_bytes
+
+    cond do
+      Enum.any?(@record_endpoints, &String.ends_with?(url, &1)) ->
+        records_max
+
+      Enum.any?(@schema_endpoints, &String.ends_with?(url, &1)) ->
+        min(@schema_max_response_bytes, records_max)
+
+      true ->
+        @control_max_response_bytes
     end
   end
 

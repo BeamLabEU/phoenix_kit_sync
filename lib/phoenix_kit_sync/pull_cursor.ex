@@ -54,7 +54,17 @@ defmodule PhoenixKitSync.PullCursor do
     "timestamp with time zone" => "timestamptz"
   }
 
-  @max_value_bytes 1024
+  # The most text one key value may be, sent and accepted alike. A key
+  # value is a btree entry, which Postgres holds to about 2700 bytes; as
+  # hex (bytea) that is under 5500 characters. A value past the cap (one
+  # that only fit the index compressed) has no cursor: `next_after/2`
+  # answers `{:too_long, type}` rather than a position `from_params/1`
+  # would refuse.
+  @max_value_bytes 8192
+
+  @doc "The most bytes the text of one key value may be in a cursor."
+  @spec max_value_bytes() :: pos_integer()
+  def max_value_bytes, do: @max_value_bytes
 
   @text_types ["text", "character varying", "character"]
   @float_types ["real", "double precision"]
@@ -147,10 +157,13 @@ defmodule PhoenixKitSync.PullCursor do
 
   @doc """
   The cursor that continues after `row`, a map of column name to the value
-  as Postgrex returned it: `{:ok, map}`, or `:error` when the key has no
-  cursor or the row lacks a key value.
+  as Postgrex returned it: `{:ok, map}`, `:error` when the key has no
+  cursor or the row lacks a key value, or `{:too_long, type}` when a key
+  value's text is past `max_value_bytes/0`. Every position answered here is
+  one `from_params/1` and `where/4` accept.
   """
-  @spec next_after(key(), map()) :: {:ok, %{String.t() => String.t()}} | :error
+  @spec next_after(key(), map()) ::
+          {:ok, %{String.t() => String.t()}} | :error | {:too_long, String.t()}
   def next_after(key, row) when is_map(row) do
     if supported?(key), do: key_texts(key, row), else: :error
   end
@@ -158,15 +171,26 @@ defmodule PhoenixKitSync.PullCursor do
   defp key_texts(key, row) do
     Enum.reduce_while(key, {:ok, %{}}, fn {col, type}, {:ok, acc} ->
       case to_text(type, Map.get(row, col)) do
+        {:ok, text} when byte_size(text) > @max_value_bytes -> {:halt, {:too_long, type}}
         {:ok, text} -> {:cont, {:ok, Map.put(acc, col, text)}}
         :error -> {:halt, :error}
       end
     end)
   end
 
+  @doc """
+  What a cut answer names as the reason it has no position to continue
+  from, for `{:too_long, type}`: read where a key type without a cursor is.
+  """
+  @spec too_long_reason(String.t()) :: String.t()
+  def too_long_reason(type), do: "#{type} value over #{@max_value_bytes} bytes"
+
   defp to_text("uuid", <<_::128>> = bytes), do: Ecto.UUID.load(bytes)
   defp to_text(_type, value) when is_integer(value), do: {:ok, Integer.to_string(value)}
-  defp to_text(_type, %Decimal{} = value), do: {:ok, Decimal.to_string(value, :normal)}
+
+  defp to_text(_type, %Decimal{coef: coef} = value) when is_integer(coef),
+    do: {:ok, decimal_text(value)}
+
   defp to_text(_type, %Date{} = value), do: {:ok, Date.to_iso8601(value)}
   defp to_text(_type, %Time{} = value), do: {:ok, Time.to_iso8601(value)}
   defp to_text("boolean", value) when is_boolean(value), do: {:ok, to_string(value)}
@@ -180,21 +204,42 @@ defmodule PhoenixKitSync.PullCursor do
   defp to_text(type, value) when type in @float_types and is_map_key(@float_specials, value),
     do: {:ok, @float_specials[value]}
 
-  # Hex is two characters a byte, so a key of up to 511 bytes fits.
-  defp to_text("bytea", value) when is_binary(value) and byte_size(value) <= 511,
+  defp to_text("bytea", value) when is_binary(value),
     do: {:ok, "\\x" <> Base.encode16(value, case: :lower)}
 
   defp to_text(_type, %NaiveDateTime{} = value), do: {:ok, NaiveDateTime.to_iso8601(value)}
   defp to_text(_type, %DateTime{} = value), do: {:ok, DateTime.to_iso8601(value)}
 
   defp to_text(type, value) when is_binary(value) and type in @text_types do
-    if byte_size(value) <= @max_value_bytes and String.valid?(value) and
-         not String.contains?(value, "\0"),
-       do: {:ok, value},
-       else: :error
+    if String.valid?(value) and not String.contains?(value, "\0"),
+      do: {:ok, value},
+      else: :error
   end
 
   defp to_text(_type, _value), do: :error
+
+  # A numeric in plain digits, whatever its length: Decimal.to_string/2
+  # raises past a digit count of its own. A value whose text would pass the
+  # cap is not written out; a text one byte longer says as much.
+  defp decimal_text(%Decimal{sign: sign, coef: coef, exp: exp}) do
+    digits = Integer.to_string(coef)
+    length = byte_size(digits)
+
+    cond do
+      length + abs(exp) > @max_value_bytes -> String.duplicate("0", @max_value_bytes + 1)
+      exp >= 0 -> signed(sign, digits <> String.duplicate("0", exp))
+      -exp < length -> signed(sign, split_decimal(digits, length + exp))
+      true -> signed(sign, "0." <> String.duplicate("0", -exp - length) <> digits)
+    end
+  end
+
+  defp split_decimal(digits, at) do
+    {whole, fraction} = String.split_at(digits, at)
+    whole <> "." <> fraction
+  end
+
+  defp signed(-1, text), do: "-" <> text
+  defp signed(_sign, text), do: text
 
   # A value that does not read as its column's type would fail the query;
   # it is refused here instead, as a bad request.
@@ -210,8 +255,9 @@ defmodule PhoenixKitSync.PullCursor do
     end
   end
 
-  defp valid_value?("numeric", value),
-    do: match?({%Decimal{coef: coef}, ""} when is_integer(coef), Decimal.parse(value))
+  # Only the text this module writes for a numeric: plain digits, of any
+  # length the cap allows.
+  defp valid_value?("numeric", value), do: Regex.match?(~r/\A-?\d+(\.\d+)?\z/, value)
 
   # Only the text this module writes for a float: Float.parse/1 alone takes
   # "1e-400" (as 0.0), which Postgres refuses as out of range.

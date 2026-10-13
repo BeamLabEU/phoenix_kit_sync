@@ -69,10 +69,20 @@ defmodule PhoenixKitSync.ImportWorkerTest do
       assert args["records"] == records
     end
 
-    test "includes session_code in args" do
+    test "keeps a tag of the session in args, never its code" do
       job = ImportWorker.create_job("users", [%{"id" => 1}], :skip, "SESS1234")
       args = Ecto.Changeset.get_change(job, :args)
-      assert args["session_code"] == "SESS1234"
+
+      refute Map.has_key?(args, "session_code")
+      refute inspect(args) =~ "SESS1234"
+      assert args["session_ref"] =~ ~r/\A[0-9a-f]{8}\z/
+
+      # The batches of one transfer share the tag; another transfer's differ.
+      same = ImportWorker.create_job("posts", [%{"id" => 2}], :skip, "SESS1234")
+      other = ImportWorker.create_job("users", [%{"id" => 1}], :skip, "SESS9999")
+
+      assert Ecto.Changeset.get_change(same, :args)["session_ref"] == args["session_ref"]
+      refute Ecto.Changeset.get_change(other, :args)["session_ref"] == args["session_ref"]
     end
 
     test "uses the sync queue" do

@@ -65,6 +65,11 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   elements are read by the element type
   (`PhoenixKitSync.DataImporter.prepare_array/2`). A list for any other
   column (a json value) is passed as it came.
+
+  A map is read as the base64 wrapper of bytes
+  (`%{"__phoenix_kit_binary__" => ...}`) only in a `bytea` or `uuid` column;
+  in any other column the type of which is known it is passed as it came,
+  so a json object of that shape stays an object.
   """
   @spec value(any(), String.t(), %{String.t() => :decimal | :float}, %{
           String.t() => column_type() | nil
@@ -85,7 +90,20 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
     end
   end
 
+  # A map is the wrapper bytes travel in only where bytes are written: a
+  # bytea or a uuid column. In a column of any other known type (json and
+  # jsonb above all) an object of the same shape is the value itself.
+  def value(%{} = value, column, _numeric_cols, column_types)
+      when is_binary(column) and is_map(column_types) do
+    typed_map(value, Map.get(column_types, column))
+  end
+
   def value(value, _column, _numeric_cols, _column_types), do: value(value)
+
+  @binary_types ["bytea", "uuid"]
+
+  defp typed_map(value, type) when type in @binary_types or is_nil(type), do: value(value)
+  defp typed_map(value, _type), do: value
 
   @doc """
   Prepares a key value (a primary key, a unique column) for a lookup in a
@@ -98,6 +116,8 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
 
   def key_value(list, {:array, element_type}) when is_list(list),
     do: DataImporter.prepare_array(list, element_type)
+
+  def key_value(%{} = value, type), do: typed_map(value, type)
 
   def key_value(value, _type), do: value(value)
 

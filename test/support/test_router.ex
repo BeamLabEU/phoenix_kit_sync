@@ -53,7 +53,7 @@ defmodule PhoenixKitSync.Test.Router do
   # overridden to "") and `/phoenix_kit/sync/api/*` (used by
   # ConnectionNotifier with the default prefix, since the test env's
   # `PhoenixKit.Config.get_url_prefix/0` resolves to "/phoenix_kit").
-  scope "/sync/api", PhoenixKitSync.Web do
+  scope "/sync/api", PhoenixKitSync.Web, log: false do
     pipe_through(:api)
 
     post("/register-connection", ApiController, :register_connection)
@@ -68,7 +68,7 @@ defmodule PhoenixKitSync.Test.Router do
     get("/status", ApiController, :status)
   end
 
-  scope "/phoenix_kit/sync/api", PhoenixKitSync.Web do
+  scope "/phoenix_kit/sync/api", PhoenixKitSync.Web, log: false do
     pipe_through(:api)
 
     post("/register-connection", ApiController, :register_connection, as: :pk_register)
@@ -85,8 +85,8 @@ defmodule PhoenixKitSync.Test.Router do
 
   # WebSocket upgrade endpoint mirror of production routes.ex.
   # WebSocketClient connects here in self-loop tests.
-  forward("/sync/websocket", PhoenixKitSync.Web.SocketPlug)
-  forward("/phoenix_kit/sync/websocket", PhoenixKitSync.Web.SocketPlug)
+  forward("/sync/websocket", PhoenixKitSync.Web.SocketPlug, [], log: false)
+  forward("/phoenix_kit/sync/websocket", PhoenixKitSync.Web.SocketPlug, [], log: false)
 
   # Canned sender for receiver-side pull tests (see StubRemote).
   forward("/stub-remote", PhoenixKitSync.Test.StubRemote)

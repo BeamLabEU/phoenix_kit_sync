@@ -65,6 +65,18 @@ defmodule PhoenixKitSync.Connections do
   alias PhoenixKitSync.Connection
   alias PhoenixKitSync.ConnectionNotifier
 
+  @typedoc """
+  What `reserve_transfer/2` took from a connection's limits: `records` is
+  the number of rows the answer may carry, `held` what is charged to
+  `records_downloaded` until the reservation is settled or cancelled.
+  """
+  @type reservation :: %{
+          uuid: UUIDv7.t(),
+          downloads: 0 | 1,
+          records: pos_integer(),
+          held: non_neg_integer()
+        }
+
   # ===========================================
   # PUBSUB BROADCASTING
   # ===========================================
@@ -787,6 +799,11 @@ defmodule PhoenixKitSync.Connections do
   whitelist (when one is set), the hour is within the allowed hours, and
   the download password matches (when one is set).
 
+  The two limits are read here from the row as loaded, which refuses a
+  connection that has used them up before any work is done. It does not
+  hold them against requests arriving together: an answer that carries
+  rows takes its download and its records with `reserve_transfer/2`.
+
   ## Parameters
 
   - `connection` - The connection, freshly loaded
@@ -1001,7 +1018,10 @@ defmodule PhoenixKitSync.Connections do
   @doc """
   Records a transfer and updates connection statistics.
 
-  Should be called after each successful data transfer.
+  Adds to the counters without looking at the limits. An answer that
+  carries rows to a peer is counted through `reserve_transfer/2` and
+  `settle_transfer/3` instead, which is what holds `max_downloads` and
+  `max_records_total`.
 
   ## Parameters
 
@@ -1051,6 +1071,143 @@ defmodule PhoenixKitSync.Connections do
            ],
            set: [last_connected_at: now, last_transfer_at: now]
          ) do
+      {1, [updated]} -> {:ok, updated}
+      {0, _} -> {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Reserves a download and a page of records against the connection's limits.
+
+  The limits are held here and nowhere else: one conditional `UPDATE` adds
+  the download and the page only while `max_downloads` and
+  `max_records_total` allow, so two requests arriving together cannot both
+  take the last download or the last records. `authorize_request/3` reads
+  the same limits earlier only to refuse sooner.
+
+  Every answer that carries rows is reserved first, read with the granted
+  count as its limit, and then settled (`settle_transfer/3`) with the rows
+  it really sent, or cancelled (`cancel_transfer/1`) when it sent none.
+
+  The guarantee: the rows served under a connection never exceed
+  `max_records_total`, and the downloads never exceed `max_downloads`. A
+  request in flight holds its whole page against the record limit until it
+  settles, so `records_downloaded` can read above the limit for that moment
+  (a request arriving then is refused), and stays charged if the serving
+  process dies before settling.
+
+  ## Parameters
+
+  - `connection` - The connection (only its uuid is read)
+  - `attrs`:
+    - `:downloads` - `1` for a new download, `0` for a further page of one
+      already counted
+    - `:records` - The most rows the answer may carry
+
+  ## Returns
+
+  - `{:ok, reservation}` - `reservation.records` is how many rows may be
+    sent: `:records`, or what was left of the limit when that is less
+  - `{:error, :download_limit_reached | :record_limit_reached | :not_found}`
+  """
+  @spec reserve_transfer(Connection.t(), %{downloads: 0 | 1, records: pos_integer()}) ::
+          {:ok, reservation()}
+          | {:error, :download_limit_reached | :record_limit_reached | :not_found}
+  def reserve_transfer(%Connection{uuid: uuid}, %{downloads: downloads, records: records})
+      when downloads in [0, 1] and is_integer(records) and records > 0 do
+    repo = RepoHelper.repo()
+
+    download_allowed =
+      if downloads == 0 do
+        dynamic(true)
+      else
+        dynamic([c], is_nil(c.max_downloads) or c.downloads_used < c.max_downloads)
+      end
+
+    query =
+      from(c in Connection,
+        where: c.uuid == ^uuid,
+        where: ^download_allowed,
+        where: is_nil(c.max_records_total) or c.records_downloaded < c.max_records_total,
+        # A connection without a record limit holds nothing against it.
+        update: [
+          inc: [downloads_used: ^downloads],
+          set: [
+            records_downloaded:
+              fragment(
+                "? + CASE WHEN ? IS NULL THEN 0 ELSE ?::bigint END",
+                c.records_downloaded,
+                c.max_records_total,
+                ^records
+              )
+          ]
+        ],
+        select: c
+      )
+
+    case repo.update_all(query, []) do
+      {1, [%Connection{max_records_total: nil}]} ->
+        {:ok, %{uuid: uuid, downloads: downloads, records: records, held: 0}}
+
+      {1, [%Connection{max_records_total: max, records_downloaded: now}]} ->
+        granted = records - max(now - max, 0)
+        {:ok, %{uuid: uuid, downloads: downloads, records: granted, held: records}}
+
+      {0, _} ->
+        refused_reservation(repo.get(Connection, uuid), downloads)
+    end
+  end
+
+  defp refused_reservation(nil, _downloads), do: {:error, :not_found}
+
+  defp refused_reservation(%Connection{} = connection, downloads) do
+    if downloads == 1 and not Connection.within_download_limits?(connection) do
+      {:error, :download_limit_reached}
+    else
+      {:error, :record_limit_reached}
+    end
+  end
+
+  @doc """
+  Settles a reservation with what the answer carried.
+
+  Gives back the part of the reserved page that was not sent and adds the
+  transfer to the connection's statistics.
+
+  - `served` - Number of rows sent
+  - `bytes_count` - Bytes sent (default 0)
+  """
+  @spec settle_transfer(reservation(), non_neg_integer(), non_neg_integer()) ::
+          {:ok, Connection.t()} | {:error, :not_found}
+  def settle_transfer(%{uuid: uuid} = reservation, served, bytes_count \\ 0)
+      when is_integer(served) and served >= 0 do
+    now = UtilsDate.utc_now()
+
+    update_counters(uuid,
+      inc: [
+        records_downloaded: served - reservation.held,
+        total_transfers: reservation.downloads,
+        total_records_transferred: served,
+        total_bytes_transferred: bytes_count
+      ],
+      set: [last_connected_at: now, last_transfer_at: now]
+    )
+  end
+
+  @doc """
+  Gives a reservation back whole: the request it was made for sent nothing.
+  """
+  @spec cancel_transfer(reservation()) :: {:ok, Connection.t()} | {:error, :not_found}
+  def cancel_transfer(%{uuid: uuid} = reservation) do
+    update_counters(uuid,
+      inc: [downloads_used: -reservation.downloads, records_downloaded: -reservation.held]
+    )
+  end
+
+  defp update_counters(uuid, updates) do
+    query = from(c in Connection, where: c.uuid == ^uuid, select: c)
+
+    case RepoHelper.repo().update_all(query, updates) do
       {1, [updated]} -> {:ok, updated}
       {0, _} -> {:error, :not_found}
     end

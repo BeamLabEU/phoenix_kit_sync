@@ -72,6 +72,6 @@ it.
 
 - A table whose key type has no cursor (see PR #27's follow-up for the
   list) is still paged by `LIMIT … OFFSET` on this path:
-  `lib/phoenix_kit_sync/data_exporter.ex:248-249`. Its rows can shift under
+  `lib/phoenix_kit_sync/data_exporter.ex:272-273`. Its rows can shift under
   concurrent writes as before; unlike the REST pull it is not cut, so the
   transfer completes.

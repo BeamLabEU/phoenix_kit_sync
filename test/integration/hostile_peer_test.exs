@@ -214,12 +214,13 @@ defmodule PhoenixKitSync.Integration.HostilePeerTest do
       refute_received {:sync_client, {:count, _table, _count}}
     end
 
-    test "records that are not maps are dropped from a page", %{state: state} do
+    test "a page with records that are not maps fails the request", %{state: state} do
       payload = %{"records" => [%{"id" => 1}, 5, "x", nil, %{"id" => 2}], "ref" => "1"}
       frame = Jason.encode!([nil, nil, "transfer:ABCD2345", "response:records", payload])
 
       assert {:ok, _state} = WebSocketClient.handle_frame({:text, frame}, state)
-      assert_received {:sync_client, {:records, @table, %{records: [%{"id" => 1}, %{"id" => 2}]}}}
+      assert_received {:sync_client, {:request_error, {:records, @table}, :invalid_response}}
+      refute_received {:sync_client, {:records, _table, _result}}
     end
   end
 

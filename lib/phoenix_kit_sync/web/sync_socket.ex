@@ -32,6 +32,11 @@ defmodule PhoenixKitSync.Web.SyncSocket do
     if PhoenixKitSync.enabled?() do
       # Validate the connection code
       case PhoenixKitSync.validate_code(code) do
+        # Only a `:send` session serves rows (see SocketPlug).
+        {:ok, %{direction: direction}} when direction != :send ->
+          Logger.warning("Sync: Session code of a session that does not send")
+          {:error, :invalid_code}
+
         {:ok, session} ->
           Logger.info("Sync: Sender connected with a session code")
 

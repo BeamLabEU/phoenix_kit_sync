@@ -351,6 +351,37 @@ defmodule PhoenixKitSync.Integration.PullCursorSenderTest do
       refute Map.has_key?(body, "unsupported_key_type")
     end
 
+    test "a key value too long for a cursor cuts the answer and says why", %{hash: hash} do
+      repo().query!("CREATE TABLE pc_long (code text PRIMARY KEY)")
+
+      # Repeated text compresses, so the index takes a value the cursor
+      # does not. Short keys sort first; the long one ends the first page.
+      repo().query!(
+        "INSERT INTO pc_long SELECT repeat('a', 20000) || g FROM generate_series(1, 5) g"
+      )
+
+      body = pull(hash, "pc_long", %{"paged" => true})
+
+      assert length(body["data"]) == @limit
+      assert body["truncated"] == true
+      assert body["unsupported_key_type"] == "text value over 8192 bytes"
+      refute Map.has_key?(body, "next_after")
+      refute Map.has_key?(body, "cursor")
+    end
+
+    test "a long key value within the cap pages to the end", %{hash: hash} do
+      repo().query!("CREATE TABLE pc_long_ok (code text PRIMARY KEY)")
+
+      repo().query!(
+        "INSERT INTO pc_long_ok SELECT repeat('a', 2000) || g FROM generate_series(1, 7) g"
+      )
+
+      pages = walk(hash, "pc_long_ok")
+
+      assert pages |> Enum.flat_map(& &1["data"]) |> length() == 7
+      refute Enum.any?(pages, &Map.has_key?(&1, "unsupported_key_type"))
+    end
+
     test "a filter and a cursor apply together", %{hash: hash} do
       pages = walk(hash, "pc_int", %{"id_start" => 2, "id_end" => 9})
 

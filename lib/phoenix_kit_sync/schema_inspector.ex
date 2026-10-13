@@ -268,8 +268,11 @@ defmodule PhoenixKitSync.SchemaInspector do
     %{"columns" => columns, "primary_key" => primary_key} = normalize_schema_def(schema_def)
 
     # The schema comes from the sender: every name and type is checked
-    # before it goes into the DDL, which cannot take bind parameters.
+    # before it goes into the DDL, which cannot take bind parameters. A
+    # table that is never synced is never created either, and the check is
+    # here so that no caller can come before it.
     with :ok <- check_create_table_name(table_name, db_schema),
+         :ok <- check_not_excluded(table_name),
          :ok <- check_create_columns(columns, primary_key) do
       column_defs = Enum.map_join(columns, ",\n  ", &column_to_sql/1)
 
@@ -320,6 +323,10 @@ defmodule PhoenixKitSync.SchemaInspector do
     if valid_identifier?(table_name) and valid_identifier?(db_schema),
       do: :ok,
       else: {:error, :invalid_table_name}
+  end
+
+  defp check_not_excluded(table_name) do
+    if excluded_table?(table_name), do: {:error, :table_excluded}, else: :ok
   end
 
   defp check_create_columns(columns, primary_key) do
@@ -767,6 +774,8 @@ defmodule PhoenixKitSync.SchemaInspector do
     added by another module is excluded before anyone lists it here
   - the host's own list, `config :phoenix_kit_sync, excluded_tables: [...]`
 
+  Names are compared without regard to case, on every rule.
+
   The sender's own table list is data, not trusted: a pull checks the name
   here before it writes anything locally.
   """
@@ -779,12 +788,20 @@ defmodule PhoenixKitSync.SchemaInspector do
   # `config :phoenix_kit_sync, excluded_tables: ["my_app_api_clients"]`.
   defp extra_excluded_tables do
     case Application.get_env(:phoenix_kit_sync, :excluded_tables, []) do
-      tables when is_list(tables) -> tables
-      _ -> []
+      tables when is_list(tables) ->
+        for table <- tables, is_binary(table), do: String.downcase(table)
+
+      _ ->
+        []
     end
   end
 
+  # Every rule compares lower-cased names: Postgres keeps the case of a
+  # quoted name, so `"PHOENIX_KIT_SETTINGS"` is a table of its own, and one
+  # no rule may miss for its spelling.
   defp excluded_table?(name, include_phoenix_kit) do
+    name = String.downcase(name)
+
     cond do
       name in @excluded_tables ->
         true
@@ -792,7 +809,7 @@ defmodule PhoenixKitSync.SchemaInspector do
       Enum.any?(@excluded_prefixes, &String.starts_with?(name, &1)) ->
         true
 
-      Enum.any?(@excluded_name_parts, &String.contains?(String.downcase(name), &1)) ->
+      Enum.any?(@excluded_name_parts, &String.contains?(name, &1)) ->
         true
 
       name in extra_excluded_tables() ->

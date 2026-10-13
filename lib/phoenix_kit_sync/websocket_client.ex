@@ -428,33 +428,36 @@ defmodule PhoenixKitSync.WebSocketClient do
   end
 
   # Records are what the import writes, so a page is taken only as a list
-  # of maps; anything else falls to the catch-all below.
+  # of maps. A page with anything else in it is a malformed answer and
+  # fails the request: dropping the element would shift every offset after
+  # it (a row repeated or skipped) and turn a page of nothing but such
+  # elements into the end of the table.
   defp handle_phoenix_message(
          _topic,
          "response:records",
          %{"records" => records} = payload,
          _msg_ref,
          state
-       )
-       when is_list(records) do
-    records = Enum.filter(records, &is_map/1)
+       ) do
     ref = Map.get(payload, "ref")
-    offset = Map.get(payload, "offset", 0)
-    has_more = Map.get(payload, "has_more", false)
-
-    Logger.debug("Sync.WebSocketClient: Received #{length(records)} records")
     {request_type, state} = pop_request(state, ref)
 
-    case request_type do
-      {:records, table} ->
+    case {request_type, well_formed_records?(records)} do
+      {{:records, table}, true} ->
+        Logger.debug("Sync.WebSocketClient: Received #{length(records)} records")
+
         result = %{
           records: records,
-          offset: offset,
-          has_more: has_more,
+          offset: Map.get(payload, "offset", 0),
+          has_more: Map.get(payload, "has_more", false),
           next_after: next_after(payload)
         }
 
         notify_caller(state, {:records, table, result})
+
+      {{:records, table}, false} ->
+        Logger.warning("Sync.WebSocketClient: Malformed page of records for #{table}")
+        notify_caller(state, {:request_error, {:records, table}, :invalid_response})
 
       _ ->
         :ok
@@ -476,10 +479,9 @@ defmodule PhoenixKitSync.WebSocketClient do
     {:ok, state}
   end
 
-  defp handle_phoenix_message(topic, event, payload, _ref, state) do
-    Logger.debug(
-      "Sync.WebSocketClient: Received #{event} on #{topic}: #{inspect(payload, limit: 5)}"
-    )
+  # The topic is "transfer:" and the session code, so it is not logged.
+  defp handle_phoenix_message(_topic, event, payload, _ref, state) do
+    Logger.debug("Sync.WebSocketClient: Received #{event}: #{inspect(payload, limit: 5)}")
 
     notify_caller(state, {:message, event, payload})
     {:ok, state}
@@ -553,6 +555,8 @@ defmodule PhoenixKitSync.WebSocketClient do
   end
 
   defp notify_caller(_, _), do: :ok
+
+  defp well_formed_records?(records), do: is_list(records) and Enum.all?(records, &is_map/1)
 
   # The position the sender says the next page continues from, or nil from
   # a sender that pages by offset. It is the peer's data: only the shape a
