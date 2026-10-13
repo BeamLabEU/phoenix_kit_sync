@@ -14,6 +14,10 @@ defmodule PhoenixKitSync.Connection do
 
   ## Approval Modes (Sender-side)
 
+  Stored, and answered for by `requires_approval?/2`, but not applied to
+  pulls: no transfer is held for approval, so every mode behaves as
+  `"auto_approve"`.
+
   - `"auto_approve"` - All transfers are automatically approved
   - `"require_approval"` - Each transfer needs manual approval
   - `"per_table"` - Tables in `auto_approve_tables` don't need approval, others do
@@ -23,10 +27,16 @@ defmodule PhoenixKitSync.Connection do
   ```
   pending → active → suspended → revoked
                   ↘
-                  expired (auto-set when limits exceeded or past expires_at)
+                  expired (set by `Connections.expire_connections/0`)
   ```
 
+  A connection past `expires_at` or its limits is refused whatever its
+  stored status (`Connections.authorize_request/3`); nothing in this module
+  schedules `expire_connections/0`.
+
   ## Security Features
+
+  Checked on every request by `Connections.authorize_request/3`:
 
   - Token-based authentication (auth_token_hash)
   - Optional download password
@@ -34,6 +44,8 @@ defmodule PhoenixKitSync.Connection do
   - Time-of-day restrictions
   - Download and record limits
   - Expiration date
+
+  `rate_limit_requests_per_minute` is stored and not applied.
 
   ## Usage Examples
 
@@ -180,6 +192,8 @@ defmodule PhoenixKitSync.Connection do
       :created_by_uuid
     ])
     |> validate_required([:name, :direction, :site_url])
+    |> validate_length(:name, max: 255)
+    |> validate_length(:site_url, max: 255)
     |> validate_base_url()
     |> validate_inclusion(:direction, @valid_directions)
     |> validate_inclusion(:status, @valid_statuses)
@@ -209,7 +223,8 @@ defmodule PhoenixKitSync.Connection do
     |> change(%{
       status: "active",
       approved_at: UtilsDate.utc_now(),
-      approved_by_uuid: resolve_user_uuid(admin_user_uuid)
+      approved_by_uuid: resolve_user_uuid(admin_user_uuid),
+      metadata: local_status_metadata(connection)
     })
   end
 
@@ -223,7 +238,8 @@ defmodule PhoenixKitSync.Connection do
       status: "suspended",
       suspended_at: UtilsDate.utc_now(),
       suspended_by_uuid: resolve_user_uuid(admin_user_uuid),
-      suspended_reason: reason
+      suspended_reason: reason,
+      metadata: local_status_metadata(connection)
     })
   end
 
@@ -237,7 +253,8 @@ defmodule PhoenixKitSync.Connection do
       status: "revoked",
       revoked_at: UtilsDate.utc_now(),
       revoked_by_uuid: resolve_user_uuid(admin_user_uuid),
-      revoked_reason: reason
+      revoked_reason: reason,
+      metadata: local_status_metadata(connection)
     })
   end
 
@@ -251,9 +268,87 @@ defmodule PhoenixKitSync.Connection do
       status: "active",
       suspended_at: nil,
       suspended_by_uuid: nil,
-      suspended_reason: nil
+      suspended_reason: nil,
+      metadata: local_status_metadata(connection)
     })
   end
+
+  @remote_suspension_key "suspended_by_remote"
+
+  @doc """
+  Changeset for a status the remote site reports through the API.
+
+  The peer is not trusted with this site's decisions, so only these moves
+  exist, and only on a `"receiver"` row (the sender is the side that
+  notifies):
+
+  - `active` to `suspended` or `revoked`
+  - `suspended` to `active` or `revoked`, when the suspension itself came
+    from the peer (a suspension set here stays until an admin here lifts it)
+
+  A `pending`, `revoked` or `expired` row never changes, and neither does a
+  `"sender"` row: those statuses decide what the peer may read.
+
+  Returns `{:ok, changeset}`, `:unchanged` when the row already has that
+  status, or `{:error, :status_change_not_allowed}`.
+  """
+  @spec remote_status_changeset(t(), String.t()) ::
+          {:ok, Ecto.Changeset.t()} | :unchanged | {:error, :status_change_not_allowed}
+  def remote_status_changeset(%__MODULE__{direction: "receiver"} = connection, status)
+      when is_binary(status) do
+    remote_suspended? = remote_suspended?(connection)
+
+    case {connection.status, status} do
+      {same, same} ->
+        :unchanged
+
+      {"active", "suspended"} ->
+        {:ok,
+         change(connection, %{
+           status: "suspended",
+           suspended_at: UtilsDate.utc_now(),
+           suspended_by_uuid: nil,
+           suspended_reason: nil,
+           metadata: Map.put(connection.metadata || %{}, @remote_suspension_key, true)
+         })}
+
+      {"suspended", "active"} when remote_suspended? ->
+        {:ok, reactivate_changeset(connection)}
+
+      {from, "revoked"} when from == "active" or (from == "suspended" and remote_suspended?) ->
+        {:ok,
+         change(connection, %{
+           status: "revoked",
+           revoked_at: UtilsDate.utc_now(),
+           revoked_by_uuid: nil,
+           revoked_reason: nil,
+           metadata: local_status_metadata(connection)
+         })}
+
+      _other ->
+        {:error, :status_change_not_allowed}
+    end
+  end
+
+  def remote_status_changeset(%__MODULE__{}, _status), do: {:error, :status_change_not_allowed}
+
+  @doc """
+  Whether the connection's suspension was reported by the remote site
+  rather than set by an admin here.
+  """
+  @spec remote_suspended?(t()) :: boolean()
+  def remote_suspended?(%__MODULE__{
+        status: "suspended",
+        metadata: %{@remote_suspension_key => true}
+      }),
+      do: true
+
+  def remote_suspended?(%__MODULE__{}), do: false
+
+  # A status set on this site is this site's own: the marker that lets the
+  # peer lift a suspension it reported goes with it.
+  defp local_status_metadata(%__MODULE__{metadata: metadata}),
+    do: Map.delete(metadata || %{}, @remote_suspension_key)
 
   @doc """
   Changeset for updating connection statistics.
@@ -366,7 +461,7 @@ defmodule PhoenixKitSync.Connection do
   @doc """
   Verifies an auth token against the stored hash.
   """
-  @spec verify_auth_token(t() | any(), String.t() | any()) :: boolean()
+  @spec verify_auth_token(term(), term()) :: boolean()
   def verify_auth_token(%__MODULE__{auth_token_hash: hash}, token)
       when is_binary(token) and is_binary(hash) do
     Plug.Crypto.secure_compare(hash_token(token), hash)
@@ -377,7 +472,7 @@ defmodule PhoenixKitSync.Connection do
   @doc """
   Verifies a download password against the stored hash.
   """
-  @spec verify_download_password(t() | any(), String.t() | any()) :: boolean()
+  @spec verify_download_password(term(), term()) :: boolean()
   def verify_download_password(%__MODULE__{download_password_hash: nil}, _), do: true
   def verify_download_password(%__MODULE__{download_password_hash: ""}, _), do: true
 
@@ -399,7 +494,7 @@ defmodule PhoenixKitSync.Connection do
   @doc """
   Checks if a connection is currently active and within limits.
   """
-  @spec active?(t() | any()) :: boolean()
+  @spec active?(term()) :: boolean()
   def active?(%__MODULE__{status: "active"} = conn) do
     not expired?(conn) and within_download_limits?(conn) and within_record_limits?(conn)
   end
@@ -469,7 +564,7 @@ defmodule PhoenixKitSync.Connection do
   # returns false for any connection that hasn't explicitly opted into a
   # whitelist — exactly the AGENTS.md:140 trap. Callers like SocketPlug
   # pass a real client IP, which previously hit the catch-all and 403'd.
-  @spec ip_allowed?(t() | any(), String.t() | any()) :: boolean()
+  @spec ip_allowed?(term(), term()) :: boolean()
   def ip_allowed?(%__MODULE__{ip_whitelist: []}, _ip), do: true
   def ip_allowed?(%__MODULE__{ip_whitelist: nil}, _ip), do: true
 
@@ -482,7 +577,7 @@ defmodule PhoenixKitSync.Connection do
   @doc """
   Checks if a table requires approval based on the connection's approval mode.
   """
-  @spec requires_approval?(t() | any(), String.t() | any()) :: boolean()
+  @spec requires_approval?(term(), term()) :: boolean()
   def requires_approval?(%__MODULE__{approval_mode: "auto_approve"}, _table), do: false
   def requires_approval?(%__MODULE__{approval_mode: "require_approval"}, _table), do: true
 
@@ -548,32 +643,40 @@ defmodule PhoenixKitSync.Connection do
 
   defp validate_base_url_string(changeset, url) do
     uri = URI.parse(url)
+    host = normalize_host(uri.host)
 
     cond do
       uri.scheme not in ["http", "https"] ->
         add_error(changeset, :site_url, "must use http or https scheme")
 
-      is_nil(uri.host) or uri.host == "" ->
+      host == "" ->
         add_error(changeset, :site_url, "must include a hostname")
 
       Application.get_env(:phoenix_kit_sync, :allow_internal_urls, false) ->
         changeset
 
-      String.ends_with?(uri.host, ".local") ->
+      true ->
+        validate_public_host(changeset, host)
+    end
+  end
+
+  defp validate_public_host(changeset, host) do
+    cond do
+      host == "local" or String.ends_with?(host, ".local") ->
         add_error(
           changeset,
           :site_url,
           "cannot point at .local mDNS hostnames (set allow_internal_urls if you need this)"
         )
 
-      uri.host == "localhost" ->
+      host == "localhost" or String.ends_with?(host, ".localhost") ->
         add_error(
           changeset,
           :site_url,
           "cannot point at localhost (set allow_internal_urls if you need this)"
         )
 
-      internal_host?(uri.host) ->
+      internal_host?(host) ->
         add_error(
           changeset,
           :site_url,
@@ -583,6 +686,16 @@ defmodule PhoenixKitSync.Connection do
       true ->
         changeset
     end
+  end
+
+  # A hostname compares without case, and a fully-qualified name may end in
+  # one dot: "LOCALHOST" and "localhost." are both localhost to a resolver.
+  defp normalize_host(nil), do: ""
+
+  defp normalize_host(host) when is_binary(host) do
+    host = String.downcase(host)
+
+    if String.ends_with?(host, "."), do: String.slice(host, 0..-2//1), else: host
   end
 
   defp internal_host?(host) when is_binary(host) do
@@ -605,5 +718,11 @@ defmodule PhoenixKitSync.Connection do
   defp internal_ip?({0, 0, 0, 0, 0, 0, 0, 1}), do: true
   defp internal_ip?({a, _, _, _, _, _, _, _}) when a in 0xFC00..0xFDFF, do: true
   defp internal_ip?({a, _, _, _, _, _, _, _}) when a in 0xFE80..0xFEBF, do: true
+
+  # IPv4-mapped (`::ffff:a.b.c.d`): the address a dual-stack socket connects
+  # to is the IPv4 one.
+  defp internal_ip?({0, 0, 0, 0, 0, 0xFFFF, hi, lo}),
+    do: internal_ip?({div(hi, 256), rem(hi, 256), div(lo, 256), rem(lo, 256)})
+
   defp internal_ip?(_), do: false
 end

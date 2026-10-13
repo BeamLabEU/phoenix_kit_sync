@@ -65,7 +65,7 @@ defmodule PhoenixKitSync.ErrorsTest do
       {:table_not_found, "Table not found"},
       {:timeout, "Request timed out"},
       {:truncated,
-       "Table only partly pulled: the sender hit max_records_per_request. Its admin can raise it for this connection (not in the form), or pull the rest by ID range in Precise Transfer (single integer key)"},
+       "Table only partly pulled: the sender stopped at its max_records_per_request limit and gave no way to continue. Update sync on the source site, or have its admin raise that limit"},
       {:unauthorized, "Unauthorized"},
       {:unavailable, "Unavailable"},
       {:unsupported_key_type,

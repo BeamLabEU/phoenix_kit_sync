@@ -5,16 +5,15 @@ defmodule PhoenixKitSync.Web.ApiController.Validators do
   Each validator accepts the raw `params` map from the Phoenix controller
   action, checks that the required fields are present and non-empty, and
   returns either `{:ok, validated_struct}` (with typed field names as
-  atoms) or `{:error, :missing_fields, [String.t()]}`.
+  atoms) or `{:error, :missing_fields, [String.t()]}`. A required field
+  that is not a string (a number, a list, an object) counts as missing.
 
   `validate_status_params/1` additionally checks that `"status"` is one of
   `"active"`, `"suspended"`, or `"revoked"` and returns
   `{:error, :invalid_status}` if not.
 
-  Extracted from `ApiController` in 2026-04 to shrink the controller module
-  without changing any request/response behavior. The validators are
-  stateless and have no dependency on Phoenix or Connections — they're
-  pure param shape checks.
+  The validators are stateless and have no dependency on Phoenix or
+  Connections — they're pure param shape checks.
   """
 
   alias PhoenixKitSync.Params
@@ -94,7 +93,7 @@ defmodule PhoenixKitSync.Web.ApiController.Validators do
        %{
          auth_token_hash: params["auth_token_hash"],
          table_name: params["table_name"],
-         conflict_strategy: params["conflict_strategy"] || "skip"
+         conflict_strategy: conflict_strategy(params["conflict_strategy"])
        }}
     end
   end
@@ -138,12 +137,20 @@ defmodule PhoenixKitSync.Web.ApiController.Validators do
   # Shared helpers
   # ---------------------------------------------------------------------------
 
+  # Every required field is a non-empty string. JSON lets a peer send a
+  # number, a list or an object in its place; that is a missing field, not
+  # a value for the lookups downstream to choke on.
   defp require_all(params, fields) do
-    case Enum.filter(fields, &(is_nil(params[&1]) or params[&1] == "")) do
+    case Enum.reject(fields, &present_string?(params[&1])) do
       [] -> :ok
       missing -> {:error, :missing_fields, missing}
     end
   end
+
+  defp present_string?(value), do: is_binary(value) and value != ""
+
+  defp conflict_strategy(strategy) when is_binary(strategy) and strategy != "", do: strategy
+  defp conflict_strategy(_strategy), do: "skip"
 
   defp require_status_value(status) when status in ["active", "suspended", "revoked"], do: :ok
   defp require_status_value(_), do: {:error, :invalid_status}

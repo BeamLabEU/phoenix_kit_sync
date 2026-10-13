@@ -24,10 +24,13 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.PreciseFilterTest do
       Connections.create_connection(%{
         "name" => "Stub sender #{System.unique_integer([:positive])}",
         "direction" => "receiver",
+        "status" => "active",
         "site_url" => StubRemote.url()
       })
 
-    {:ok, conn: put_test_scope(conn, fake_scope()), connection: connection}
+    {:ok,
+     conn: put_test_scope(conn, fake_scope(user_uuid: PhoenixKitSync.TestActor.uuid())),
+     connection: connection}
   end
 
   defp assigns(view), do: :sys.get_state(view.pid).socket.assigns

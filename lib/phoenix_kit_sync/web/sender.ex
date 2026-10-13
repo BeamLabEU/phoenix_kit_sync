@@ -13,7 +13,7 @@ defmodule PhoenixKitSync.Web.Sender do
   """
 
   use PhoenixKitWeb, :live_view
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitSync.Gettext
 
   alias PhoenixKit.Settings
   alias PhoenixKit.Utils.Date, as: UtilsDate

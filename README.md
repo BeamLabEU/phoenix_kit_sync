@@ -26,8 +26,10 @@ The module uses **permanent connections** with automatic cross-site registration
 2. **System automatically notifies** the remote site via API
 3. **Remote site registers the connection** based on their incoming settings:
    - **Auto Accept**: Connection activates immediately
-   - **Require Approval**: Connection appears as pending
-   - **Require Password**: Only accepts with correct password
+   - **Require Approval** (the default): Connection is created `pending`
+     and does nothing until an admin of that site approves it
+   - **Require Password**: Only accepts with the correct password, then
+     activates
    - **Deny All**: Rejects the connection request
 4. **Both sites have matching connection records** for data sync
 5. **All transfers are tracked** in the history with full audit trail
@@ -35,18 +37,20 @@ The module uses **permanent connections** with automatic cross-site registration
 ### Connection Types
 
 - **Sender**: "I allow this remote site to pull data from me"
-- **Receiver**: "I can pull data from this remote site" (auto-created via API)
+- **Receiver**: "I can pull data from this remote site" (created via API)
 
-When you create a sender connection, the remote site automatically receives a corresponding receiver connection.
+When you create a sender connection, the remote site receives a corresponding
+receiver connection. Only a sender connection grants access: its token is
+what the remote site presents to read your tables. A receiver connection is
+this site's own pass to the other site's data and gives that site nothing here.
 
 ## Features
 
 - **Ephemeral Code-Based Transfers**: One-time manual sync with 8-character secure codes
 - **Permanent Token-Based Connections**: Recurring sync with full access controls
 - **Token-Based Authentication**: Secure tokens, hashed in database, shown only once
-- **Approval Modes**: Auto-approve, require approval, or per-table approval
 - **Access Controls**: Allowed/excluded tables, download limits, record limits
-- **Security Features**: IP whitelist, time-of-day restrictions, expiration dates
+- **Security Features**: IP whitelist, time-of-day restrictions, expiration dates, download password
 - **Conflict Resolution**: skip, overwrite, merge, append strategies
 - **Transfer Tracking**: Full history with statistics and approval workflow
 - **Audit Trail**: Track who created, approved, suspended, or revoked connections
@@ -54,36 +58,55 @@ When you create a sender connection, the remote site automatically receives a co
 - **Background Import**: Async processing via Oban workers
 - **Cross-Site Protocol**: HTTP API + WebSocket for data transfer
 - **Activity Audit**: Every connection mutation (create, approve, suspend, revoke, reactivate, delete, token rotate) and every transfer mutation (create, complete, fail, cancel, approve, deny) writes a `sync.<resource>.<verb>` row to `phoenix_kit_activities` with the actor's UUID — visible in the core admin Activity feed
-- **Centralised error translation**: Context functions return `{:error, :atom}` tuples; UI / API layers translate via `PhoenixKitSync.Errors.message/1`, which dispatches to gettext-wrapped strings (translations live in core `phoenix_kit`)
+- **Centralised error translation**: Context functions return `{:error, :atom}` tuples; UI / API layers translate via `PhoenixKitSync.Errors.message/1`, which dispatches to gettext-wrapped strings
+- **Translations**: The module has its own Gettext backend (`PhoenixKitSync.Gettext`, `priv/gettext`) with English, Estonian and Russian
 
 ## Connection Settings
 
 ### Sender-Side Controls
 
-| Setting | Description |
-|---------|-------------|
-| **Approval Mode** | `auto_approve`, `require_approval`, or `per_table` |
-| **Allowed Tables** | Whitelist of tables the receiver can access |
-| **Excluded Tables** | Blacklist of tables to hide from receiver |
-| **Auto-Approve Tables** | Tables that don't need approval (when mode is `per_table`) |
-| **Max Downloads** | Limit total number of transfer sessions |
-| **Max Records Total** | Limit total records that can be downloaded |
-| **Max Records Per Request** | Limit records per single request (default: 10,000) |
-| **Rate Limit** | Requests per minute limit (default: 60) |
-| **Download Password** | Optional password required for each transfer |
-| **IP Whitelist** | Only allow connections from specific IPs |
-| **Allowed Hours** | Time-of-day restrictions (e.g., only 2am-5am) |
-| **Expiration Date** | Auto-expire the connection after a date |
+These settings are checked on every request the remote site makes with the
+connection's token: each REST call (`list-tables`, `pull-data`,
+`table-schema`, `table-records`), the WebSocket upgrade, and every message
+on an open socket. One function decides
+(`PhoenixKitSync.Connections.authorize_request/3`), and it reads the
+connection as it is in the database at that moment, so a change made while a
+socket is open takes effect on its next message.
+
+| Setting | Enforced | Description |
+|---------|----------|-------------|
+| **Allowed Tables** | Yes | Whitelist of tables the receiver can access |
+| **Excluded Tables** | Yes | Blacklist of tables to hide from receiver |
+| **Max Downloads** | Yes | Total pulls. A table read page by page with the sender's cursor is one pull |
+| **Max Records Total** | Yes | Total records that can be downloaded; a page is cut where the allowance ends |
+| **Max Records Per Request** | Yes | Records per page (default: 10,000). A larger table is sent in pages |
+| **Download Password** | Yes | The request must carry it (`password` in the REST body, `?password=` on the socket) |
+| **IP Whitelist** | Yes | Only the listed client addresses (see "Client address" below) |
+| **Allowed Hours** | Yes | Time-of-day window, in UTC (e.g., only 2am-5am) |
+| **Expiration Date** | Yes | Requests after `expires_at` are refused |
+| **Approval Mode** | **No** | `auto_approve` / `require_approval` / `per_table` and **Auto-Approve Tables** are stored, and `Connections.requires_approval?/2` answers for them, but no pull is held for approval: every mode behaves as `auto_approve` |
+| **Rate Limit** | **No** | `rate_limit_requests_per_minute` is stored but not applied |
+
+The download password, the limits and the approval and rate-limit fields are
+not in the connection form; set them with `Connections.update_connection/2`.
 
 ### Connection Statuses
 
 | Status | Description |
 |--------|-------------|
-| **Pending** | Just created, awaiting activation |
-| **Active** | Ready to accept connections |
+| **Pending** | Created, awaiting approval. Grants and uses nothing |
+| **Active** | In use |
 | **Suspended** | Temporarily disabled (can be reactivated) |
 | **Revoked** | Permanently disabled |
-| **Expired** | Auto-expired due to limits or date |
+| **Expired** | Set by `Connections.expire_connections/0`, which nothing in this module schedules; call it from a job of your own if you want the status to follow. A connection past its expiry date or limits is refused either way |
+
+A status changes only on the site that owns the connection, with one
+exception: the sender reports its suspensions and revocations
+(`update-status`), and the receiving site mirrors them onto its **receiver**
+connection. The remote site can suspend or revoke an active receiver
+connection and lift a suspension it reported itself. It cannot activate a
+pending, revoked or locally suspended connection, and it cannot touch a
+sender connection at all.
 
 ## Incoming Connection Settings
 
@@ -92,9 +115,15 @@ Control how your site handles connection requests from other sites:
 | Mode | Behavior |
 |------|----------|
 | **Auto Accept** | Incoming connections activate immediately |
-| **Require Approval** | Connections appear as pending, need manual approval |
-| **Require Password** | Sender must provide correct password |
+| **Require Approval** | The default. Connections are created pending and need an admin's approval (the Approve button in the Incoming list) |
+| **Require Password** | Sender must provide the correct password; the connection then activates |
 | **Deny All** | Reject all incoming connection requests |
+
+The registration request is unauthenticated unless the mode asks for a
+password. At most 50 registrations wait for approval at a time
+(`config :phoenix_kit_sync, max_pending_incoming: 50`); further ones are
+answered 429 until some are approved or deleted. A pending connection's site
+is never contacted.
 
 ## Workflow
 
@@ -141,6 +170,17 @@ When you create a sender connection:
   would clash with another local row's unique value (a composite key, the
   precise pull, or an update of an existing key) is skipped under skip,
   overwrite and merge.
+- **Large tables come in pages.** The sender answers at most its
+  connection's `max_records_per_request` rows and says where the rest
+  starts; the pull follows until the table ends, for integer, uuid, text,
+  numeric, date and timestamp keys and composites of them. A sender from
+  before cursors (or a key of another type, such as a float) answers its
+  first page only: those rows are imported and the table is reported as
+  only partly pulled.
+- **Some tables are never synced**, whatever a connection allows: this
+  module's own tables, `phoenix_kit_settings`, and the tables that hold
+  session tokens, OAuth tokens, invitations and provider keys. See
+  "Security Considerations".
 - **The table must exist on this site.** A table missing here is reported
   as an error rather than pulled; create it first (Precise Transfer >
   Create Table). Both checks run before anything is requested from the
@@ -179,33 +219,42 @@ alias PhoenixKitSync.Connections
     "created_by_uuid" => current_user.uuid
   })
 
-# Approve a pending connection (admin_user_uuid is recorded as the actor
-# on the resulting `sync.connection.approved` activity-log row).
-{:ok, connection} = Connections.approve_connection(connection, admin_user_uuid)
+# Approve a pending connection. Every status change takes `actor_uuid:`,
+# recorded as the actor on its activity-log row
+# (`sync.connection.approved`, ...).
+{:ok, connection} = Connections.approve_connection(connection, actor_uuid: admin_user_uuid)
 
 # Suspend a connection
-{:ok, connection} = Connections.suspend_connection(connection, admin_user_uuid, "Security audit")
+{:ok, connection} =
+  Connections.suspend_connection(connection, actor_uuid: admin_user_uuid, reason: "Security audit")
 
-# Reactivate a suspended connection. Pass `actor_uuid:` in opts so the
-# activity log records who reactivated it.
+# Reactivate a suspended connection
 {:ok, connection} = Connections.reactivate_connection(connection, actor_uuid: admin_user_uuid)
 
 # Revoke permanently
-{:ok, connection} = Connections.revoke_connection(connection, admin_user_uuid, "No longer needed")
+{:ok, connection} =
+  Connections.revoke_connection(connection, actor_uuid: admin_user_uuid, reason: "No longer needed")
 
 # Rotate the auth token (returns the new raw token, hash stored in DB).
 # Logged as `sync.connection.token_regenerated`.
 {:ok, connection, new_token} = Connections.regenerate_token(connection, actor_uuid: admin_user_uuid)
 
-# Validate a token (used by receiver when connecting)
-case Connections.validate_connection(token, client_ip) do
-  {:ok, connection} -> # Token is valid, connection is active
-  {:error, :invalid_token} -> # Token doesn't exist
-  {:error, :connection_expired} -> # Expired or revoked
+# Validate a token (a sender connection's; what the socket upgrade does)
+case Connections.validate_connection(token, client_ip, password: password) do
+  {:ok, connection} -> # Token is valid and the connection may be used now
+  {:error, :invalid_token} -> # No sender connection has this token
+  {:error, :connection_not_active} -> # Pending, suspended, revoked or expired
+  {:error, :connection_expired} -> # Past expires_at
   {:error, :download_limit_reached} -> # Max downloads reached
+  {:error, :record_limit_reached} -> # Max records reached
   {:error, :ip_not_allowed} -> # IP not in whitelist
   {:error, :outside_allowed_hours} -> # Outside time window
+  {:error, :invalid_password} -> # Download password missing or wrong
 end
+
+# The same decision for a connection already loaded (what every REST action
+# and every socket message calls)
+:ok = Connections.authorize_request(connection, client_ip, password: password)
 ```
 
 ### Transfer Tracking
@@ -213,15 +262,18 @@ end
 ```elixir
 alias PhoenixKitSync.Transfers
 
-# Record a transfer
-{:ok, transfer} = Transfers.create_transfer(%{
-  direction: "send",
-  connection_uuid: connection.uuid,
-  table_name: "users",
-  records_transferred: 150,
-  bytes_transferred: 45000,
-  status: "completed"
-})
+# Record a transfer that is already over, in one write
+{:ok, transfer} =
+  Transfers.record_finished(
+    %{
+      direction: "send",
+      connection_uuid: connection.uuid,
+      table_name: "users",
+      records_transferred: 150,
+      bytes_transferred: 45000
+    },
+    :completed
+  )
 
 # Get transfer history
 transfers = Transfers.list_transfers(
@@ -268,12 +320,19 @@ Client.disconnect(client)
 
 Cross-site communication endpoints (under the configured URL prefix):
 
-- `POST /sync/api/register-connection` — Register incoming connection
+- `POST /sync/api/register-connection` — Register incoming connection.
+  Unauthenticated; the answer's `connection_status` is `"active"` or
+  `"pending"` (see "Incoming Connection Settings")
 - `POST /sync/api/delete-connection` — Delete a connection
 - `POST /sync/api/verify-connection` — Verify connection token
-- `POST /sync/api/update-status` — Update connection status
+- `POST /sync/api/update-status` — The sender reports a status for the
+  receiving site's connection. 409 with
+  `"error_code": "status_change_not_allowed"` for a change the remote site
+  may not make (see "Connection Statuses"); 404 when no receiver connection
+  matches
 - `POST /sync/api/get-connection-status` — Query connection status
-- `POST /sync/api/list-tables` — List available tables
+- `POST /sync/api/list-tables` — List available tables.
+  `"include_checksums": false` leaves the per-table content checksum out
 - `POST /sync/api/pull-data` — Pull table data. Optional record filter:
   `ids` (up to 1000 key values) or `id_start` / `id_end` (an integer range;
   either bound may be left out), on a table with a single-column key. A
@@ -290,8 +349,28 @@ Cross-site communication endpoints (under the configured URL prefix):
   previews: a filter on a table with a composite key or none (a view
   included), an empty `ids` list, or `ids` together with a range is now a
   400, where it used to filter on the first key column or on `id`.
-- `POST /sync/api/table-schema` — Get table schema
+  **Paging.** An answer holds at most the connection's
+  `max_records_per_request` rows, in primary-key order, and always says
+  `"has_more"`. When rows are left it also carries `"truncated": true`
+  (what a receiver from before paging reads), `"next_after"` (the last
+  row's key values, as text by column) and `"cursor"`. Send both back as
+  `"after"` and `"cursor"` for the next page: the rows strictly after that
+  key. With the cursor, signed by the sender for that connection, table and
+  position, the page belongs to the pull that produced it; `"after"` alone
+  (or with any other cursor) also works but counts as a new download. A
+  receiver that pages sends `"paged": true`, so the sender records each page
+  as a completed send rather than a cut one. A table without a primary key
+  has no order to page in and is refused
+  (`"error_code": "no_primary_key"`); a bad `after` is `invalid_cursor`.
+- `POST /sync/api/table-schema` — Get table schema. Each column carries its
+  `element_type` (for an array) beside the `information_schema` names
 - `POST /sync/api/table-records` — Get table records
+
+The four table endpoints take the connection's download password as
+`"password"` and answer 403 with an `error_code` when the connection may not
+be used (`connection_not_active`, `connection_expired`,
+`download_limit_reached`, `record_limit_reached`, `ip_not_allowed`,
+`outside_allowed_hours`, `invalid_password`).
 - `GET /sync/api/status` — Check module status
 
 When notifying a remote site, `ConnectionNotifier` prepends the remote's URL
@@ -315,25 +394,43 @@ via `PhoenixKitSync.Migration.up/0`.
 
 See `docs/table_structure.md` in the source repository for full schema documentation.
 
-## Future Plans
+## Configuration
 
-### Auto-Sync Scheduling (Planned)
+```elixir
+config :phoenix_kit_sync,
+  # Let a connection's site_url point at localhost / private addresses
+  allow_internal_urls: false,
+  # URL prefix of the remote site's sync API (default: this site's own)
+  remote_url_prefix: "/phoenix_kit",
+  # Tables never synced, on top of the built-in list
+  excluded_tables: ["my_app_api_clients"],
+  # Registrations that may wait for approval at once
+  max_pending_incoming: 50,
+  # Largest answer accepted from a remote site for table data, in bytes
+  # (other answers are capped at 1 MB)
+  max_response_bytes: 268_435_456
+```
 
-Connections have fields for auto-sync but the scheduler isn't implemented yet:
-- `auto_sync_enabled`: Enable automatic periodic sync
-- `auto_sync_tables`: Tables to sync automatically
-- `auto_sync_interval_minutes`: How often to sync
+## Not Implemented
+
+- **Auto-sync scheduling.** Connections have `auto_sync_enabled`,
+  `auto_sync_tables` and `auto_sync_interval_minutes` columns; nothing reads
+  them, and the form does not offer them.
+- **Per-transfer approval** and **request rate limiting** (see "Sender-Side
+  Controls").
 
 ## Security Considerations
 
-- **Token Security**: Tokens are SHA-256 hashed in the database and only shown once on creation; comparisons use `Plug.Crypto.secure_compare/2` to defeat timing attacks
+- **Token Security**: Tokens are SHA-256 hashed in the database and only shown once on creation; comparisons use `Plug.Crypto.secure_compare/2` to defeat timing attacks. The hash is the credential of the REST API, so the connections table is never synced
+- **One authorization for every entry point**: `Connections.authorize_request/3` decides for the REST actions, the WebSocket upgrade and each message on an open socket, against the connection as stored at that moment. Only a `sender` connection authorizes anything
 - **Per-connection table authorization**: Even with a valid token, every API endpoint that returns or accepts table data (`list_tables`, `pull_data`, `table_schema`, `table_records`) filters through the connection's `excluded_tables` blocklist and `allowed_tables` allowlist
+- **Tables that are never synced**: `schema_migrations`, `oban_*`, `pg_*`, `phoenix_kit_sync_connections`, `phoenix_kit_sync_transfers`, `phoenix_kit_settings`, `phoenix_kit_users_tokens`, `phoenix_kit_user_oauth_providers`, `phoenix_kit_organization_invitations`, `phoenix_kit_ai_accounts`, `phoenix_kit_ai_endpoints`, `phoenix_kit_buckets`, `phoenix_kit_payment_provider_configs`; any table whose name contains `token`, `secret`, `credential`, `password`, `api_key`, `oauth` or `session`; and the host's own `excluded_tables`. They are refused on export and import, over REST and WebSocket, for token connections and code sessions alike, even when a connection lists them as allowed. `phoenix_kit_users` (with its password hashes) **is** syncable: restrict it with a connection's allowed or excluded tables where that matters
 - **Parameterised SQL with identifier validation**: Every dynamic table / column name interpolated into raw SQL passes through `SchemaInspector.valid_identifier?/1` first; values always go through `$N` parameterised binds
-- **Optional Password**: Additional password can be required per-transfer; refuses registration outright when `incoming_mode = "require_password"` but no password is configured (no silent bypass)
-- **IP Whitelisting**: Restrict connections to specific IP addresses
-- **Time Restrictions**: Allow connections only during specific hours
-- **Rate Limiting**: Per-connection download / record limits enforced by `Connections.validate_connection/2`
-- **Audit Trail**: Every state-changing operation lands a row in `phoenix_kit_activities` with `actor_uuid`, `resource_type`, `resource_uuid`, and a PII-safe metadata subset (no `site_url`, no `auth_token_hash`)
+- **Incoming registrations**: created pending unless the mode is `auto_accept` or the incoming password matched; refused outright when `incoming_mode = "require_password"` but no password is configured (no silent bypass)
+- **Client address**: the IP whitelist compares against the address core's `PhoenixKit.Utils.IpAddress.client_address/1` reports: `conn.remote_ip`, and a forwarded header only when that address is a proxy on the same box or network (the last `X-Forwarded-For` hop, which the proxy appended). A client-supplied `X-Forwarded-For` is never believed. Behind a proxy on another network, set `remote_ip` with your proxy plug, or the whitelist sees the proxy
+- **Session codes**: eight characters from the OS's CSPRNG, usable once, never written to the log
+- **Outbound requests**: `site_url` is checked against localhost, `.local`, private, loopback and link-local addresses (in any case, with or without a trailing dot, IPv4-mapped IPv6 included) unless `allow_internal_urls` is set; a name that resolves to an internal address only at request time is not caught. The size of every answer is capped
+- **Audit Trail**: Every state-changing operation lands a row in `phoenix_kit_activities` with `actor_uuid`, `resource_type`, `resource_uuid`, and a PII-safe metadata subset (no `site_url`, no `auth_token_hash`): connection changes (a status the remote site reported is logged with no actor and `reason: "remote_site"`), transfers, and tables created from a sender's schema (`sync.table.created`)
 
 ## Troubleshooting
 
@@ -341,7 +438,7 @@ Connections have fields for auto-sync but the scheduler isn't implemented yet:
 
 1. Verify the token is correct and hasn't been regenerated
 2. Check connection status is "active"
-3. Verify IP is in whitelist (if configured)
+3. Verify IP is in whitelist (if configured); behind a reverse proxy, check which address the site sees
 4. Check time-of-day restrictions
 5. Verify download/record limits haven't been exceeded
 
@@ -349,5 +446,5 @@ Connections have fields for auto-sync but the scheduler isn't implemented yet:
 
 1. Check transfer history for error messages
 2. Verify table is in allowed tables (if configured)
-3. Check approval status if approval mode is enabled
+3. "Only partly pulled": the sender has no cursors (update its sync module) or the table's key type has none
 4. Review server logs for detailed errors

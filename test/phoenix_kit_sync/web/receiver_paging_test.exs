@@ -47,7 +47,7 @@ defmodule PhoenixKitSync.Web.ReceiverPagingTest do
     _ = :sys.get_state(view.pid)
   end
 
-  defp rows(n), do: Enum.map(1..n, &%{"id" => &1})
+  defp rows(n, from \\ 1), do: Enum.map(from..(from + n - 1), &%{"id" => &1})
 
   defp mount_transfer(conn) do
     conn = put_test_scope(conn, fake_scope())
@@ -82,7 +82,7 @@ defmodule PhoenixKitSync.Web.ReceiverPagingTest do
     assert_received {:"$websockex_cast", {:request_records, "rx_table", first}}
     assert first[:offset] == 500
 
-    batch(view, "rx_table", rows(500), true, 0)
+    batch(view, "rx_table", rows(500, 501), true, 0)
     assert_received {:"$websockex_cast", {:request_records, "rx_table", second}}
     assert second[:offset] == 1_000
 
@@ -106,5 +106,24 @@ defmodule PhoenixKitSync.Web.ReceiverPagingTest do
     batch(view, "rx_table", [], false)
     refute_received {:"$websockex_cast", {:request_records, _table, _opts}}
     assert :sys.get_state(view.pid).socket.assigns.transfer_progress.status == :completed
+  end
+
+  test "a sender that answers the same page again ends the table instead of looping", %{
+    conn: conn
+  } do
+    view = mount_transfer(conn)
+
+    batch(view, "rx_table", rows(500), true)
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", first}}
+    assert first[:offset] == 500
+
+    # The offset was ignored: the page that came for 500 is the page for 0.
+    batch(view, "rx_table", rows(500), true)
+
+    refute_received {:"$websockex_cast", {:request_records, _table, _opts}}
+    progress = :sys.get_state(view.pid).socket.assigns.transfer_progress
+    assert progress.status == :completed
+    # The repeated page is not imported a second time.
+    assert progress.jobs_queued == 1
   end
 end

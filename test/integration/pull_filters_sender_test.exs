@@ -128,12 +128,16 @@ defmodule PhoenixKitSync.Integration.PullFiltersSenderTest do
     end
   end
 
-  test "a view answers a filter with 400, not as an unknown token", %{conn: conn, hash: hash} do
-    body = conn |> pull(hash, "pf_items_view", %{}) |> json_response(200)
-    assert length(body["data"]) == 6
-
-    assert %{"error_code" => "filter_needs_single_key"} =
-             conn |> pull(hash, "pf_items_view", %{"ids" => [1]}) |> json_response(400)
+  # A view has no primary key, so its rows have no order to page in and no
+  # single column to filter on.
+  test "a view is refused with 400 for having no primary key, not as an unknown token", %{
+    conn: conn,
+    hash: hash
+  } do
+    for extra <- [%{}, %{"ids" => [1]}] do
+      assert %{"error_code" => "no_primary_key"} =
+               conn |> pull(hash, "pf_items_view", extra) |> json_response(400)
+    end
   end
 
   test "table-records without a filter pages in key order", %{conn: conn, hash: hash} do

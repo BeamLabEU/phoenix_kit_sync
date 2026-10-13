@@ -9,16 +9,16 @@ defmodule PhoenixKitSync.Errors do
   consistent (every place that surfaces `:connection_expired` renders
   the exact same gettext string).
 
-  Translation files live in core `phoenix_kit`; this module only calls
-  `gettext/1` with literal strings so `mix gettext.extract` in core picks
-  them up correctly. Do NOT refactor this into a lookup map — the
-  extractor only sees literal arguments to `gettext/1` at the call site.
+  Translations are in this module's own catalogue (`PhoenixKitSync.Gettext`,
+  `priv/gettext`). Every clause calls `gettext/1` with a literal string so
+  `mix gettext.extract` sees it. Do NOT refactor this into a lookup map —
+  the extractor only sees literal arguments to `gettext/1` at the call site.
 
   Unknown atoms fall through to `inspect/1` so the catch-all returns a
   useful-if-ugly string rather than crashing.
   """
 
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitSync.Gettext
 
   @type error_atom ::
           :already_exists
@@ -37,6 +37,8 @@ defmodule PhoenixKitSync.Errors do
           | :import_failed
           | :incoming_denied
           | :invalid_code
+          | :invalid_cursor
+          | :invalid_registration
           | :invalid_column_name
           | :invalid_column_type
           | :invalid_filter
@@ -60,10 +62,16 @@ defmodule PhoenixKitSync.Errors do
           | :nxdomain
           | :offline
           | :outside_allowed_hours
+          | :paging_stalled
           | :password_required
           | :pull_failed
           | :record_limit_reached
+          | :response_too_large
           | :schema_without_primary_key
+          | :sent_truncated
+          | :source_without_primary_key
+          | :status_change_not_allowed
+          | :too_many_pending
           | :sender_ignores_filters
           | :table_missing_locally
           | :table_not_found
@@ -105,6 +113,12 @@ defmodule PhoenixKitSync.Errors do
   def message(:incoming_denied), do: gettext("Incoming connections are not allowed")
   def message(:invalid_code), do: gettext("Invalid session code")
 
+  def message(:invalid_cursor),
+    do: gettext("Invalid cursor: it does not name this table's primary key values")
+
+  def message(:invalid_registration),
+    do: gettext("The connection request is not valid: check the site URL and the name")
+
   def message(:invalid_column_name),
     do: gettext("The sender sent a column name that is not a valid identifier")
 
@@ -141,12 +155,37 @@ defmodule PhoenixKitSync.Errors do
   def message(:nxdomain), do: gettext("Could not resolve the remote site's domain")
   def message(:offline), do: gettext("Remote site is offline")
   def message(:outside_allowed_hours), do: gettext("Outside allowed connection hours")
+
+  def message(:paging_stalled),
+    do: gettext("Transfer stopped: the sender kept answering the same page of the table")
+
   def message(:password_required), do: gettext("Password required")
 
   def message(:pull_failed),
     do: gettext("Pulling this table failed; see the server log for details")
 
   def message(:record_limit_reached), do: gettext("Record limit reached")
+
+  def message(:sent_truncated),
+    do:
+      gettext(
+        "Stopped at this connection's max_records_per_request limit; the rest of the table was not sent"
+      )
+
+  def message(:source_without_primary_key),
+    do:
+      gettext(
+        "Not pulled: the table has no primary key on the source site, so its rows have no order to page in"
+      )
+
+  def message(:status_change_not_allowed),
+    do: gettext("The remote site may not change this connection's status")
+
+  def message(:too_many_pending),
+    do: gettext("Too many connection requests are awaiting approval; try again later")
+
+  def message(:response_too_large),
+    do: gettext("The remote site's answer was larger than this site accepts")
 
   def message(:sender_ignores_filters),
     do:
@@ -177,7 +216,7 @@ defmodule PhoenixKitSync.Errors do
   def message(:truncated),
     do:
       gettext(
-        "Table only partly pulled: the sender hit max_records_per_request. Its admin can raise it for this connection (not in the form), or pull the rest by ID range in Precise Transfer (single integer key)"
+        "Table only partly pulled: the sender stopped at its max_records_per_request limit and gave no way to continue. Update sync on the source site, or have its admin raise that limit"
       )
 
   def message(:unauthorized), do: gettext("Unauthorized")
@@ -206,4 +245,15 @@ defmodule PhoenixKitSync.Errors do
 
   def message(reason) when is_binary(reason), do: reason
   def message(reason), do: inspect(reason)
+
+  @doc """
+  The text for a transfer's stored `error_message`.
+
+  A reason this module classified is stored as its error atom's name and
+  translated here, so History shows it in the reader's language; any other
+  text (an older row, a remote site's own message) is shown as stored.
+  """
+  @spec transfer_error(String.t() | nil) :: String.t() | nil
+  def transfer_error("sent_truncated"), do: message(:sent_truncated)
+  def transfer_error(error_message), do: error_message
 end

@@ -35,7 +35,10 @@ defmodule PhoenixKitSync.SchemaInspector do
   alias PhoenixKit.RepoHelper
   alias PhoenixKitSync.{ColumnInfo, TableSchema}
 
-  # Tables to always exclude from sync
+  # Tables never listed, exported or imported, whatever a connection's own
+  # table lists say. A peer that could read one of these could act as this
+  # site (or as its users) elsewhere; a peer that could write one could
+  # plant a credential here.
   @excluded_tables [
     # Ecto/Phoenix internal tables
     "schema_migrations",
@@ -43,9 +46,25 @@ defmodule PhoenixKitSync.SchemaInspector do
     "oban_jobs",
     "oban_peers",
     "oban_producers",
-    # Session/token tables (security sensitive)
+    # This module's own tables: `auth_token_hash` is the credential of the
+    # REST API, and a transfer row carries a session code.
+    "phoenix_kit_sync_connections",
+    "phoenix_kit_sync_transfers",
+    # Every setting, the incoming password and each integration's keys among
+    # them.
+    "phoenix_kit_settings",
+    # Session and login tokens
     "phoenix_kit_user_tokens",
-    "phoenix_kit_users_tokens"
+    "phoenix_kit_users_tokens",
+    "phoenix_kit_user_oauth_providers",
+    "phoenix_kit_organization_invitations",
+    # Provider credentials: AI accounts and endpoints (API keys), storage
+    # buckets (access key and secret), payment providers (API and webhook
+    # secrets)
+    "phoenix_kit_ai_accounts",
+    "phoenix_kit_ai_endpoints",
+    "phoenix_kit_buckets",
+    "phoenix_kit_payment_provider_configs"
   ]
 
   # Prefixes for tables to exclude
@@ -53,6 +72,11 @@ defmodule PhoenixKitSync.SchemaInspector do
     "pg_",
     "oban_"
   ]
+
+  # A table whose name says it holds credentials is excluded without being
+  # listed, so a credentials table another module adds later is not exposed
+  # until someone remembers this file.
+  @excluded_name_parts ~w(token secret credential password api_key oauth session)
 
   @doc """
   Lists all available tables with row counts.
@@ -224,6 +248,8 @@ defmodule PhoenixKitSync.SchemaInspector do
 
   - `table_name` - Name of the table to create
   - `schema_def` - Schema definition map with columns and primary_key
+  - `opts` - `:schema` (default `"public"`), and `:actor_uuid`, the user the
+    creation is logged for (`sync.table.created` in the activity log)
 
   ## Example
 
@@ -262,10 +288,32 @@ defmodule PhoenixKitSync.SchemaInspector do
       """
 
       case RepoHelper.query(query, []) do
-        {:ok, _} -> :ok
-        {:error, reason} -> {:error, reason}
+        {:ok, _} ->
+          log_table_created(table_name, columns, opts, %{})
+          :ok
+
+        {:error, reason} ->
+          log_table_created(table_name, columns, opts, %{"db_pending" => true})
+          {:error, reason}
       end
     end
+  end
+
+  # DDL on the local database, run on a remote site's description of a
+  # table: it goes in the activity log with whoever asked for it
+  # (`actor_uuid:`), or as an automatic action when an import created the
+  # table on its own.
+  defp log_table_created(table_name, columns, opts, extra) do
+    actor_uuid = Keyword.get(opts, :actor_uuid)
+
+    PhoenixKit.Activity.log("sync", "sync.table.created",
+      actor_uuid: actor_uuid,
+      mode: if(actor_uuid, do: "manual", else: "auto"),
+      resource_type: "sync_table",
+      metadata: Map.merge(%{"table_name" => table_name, "columns" => length(columns)}, extra)
+    )
+
+    :ok
   end
 
   defp check_create_table_name(table_name, db_schema) do
@@ -702,8 +750,22 @@ defmodule PhoenixKitSync.SchemaInspector do
   end
 
   @doc """
-  True for a table this module never lists or syncs (`schema_migrations`,
-  `oban_*`, `pg_*`, `phoenix_kit_users_tokens`, and the previous singular exclusion).
+  True for a table this module never lists, exports or imports.
+
+  Three rules, any of which excludes a table:
+
+  - the list: `schema_migrations`, the `oban_*` and `pg_*` tables, this
+    module's own `phoenix_kit_sync_connections` and `phoenix_kit_sync_transfers`
+    (the token hash is the REST credential), `phoenix_kit_settings`, and the
+    tables that hold session tokens, OAuth tokens, invitations and provider
+    keys (`phoenix_kit_users_tokens`, `phoenix_kit_user_oauth_providers`,
+    `phoenix_kit_organization_invitations`, `phoenix_kit_ai_accounts`,
+    `phoenix_kit_ai_endpoints`, `phoenix_kit_buckets`,
+    `phoenix_kit_payment_provider_configs`)
+  - the name: any table whose name contains `token`, `secret`, `credential`,
+    `password`, `api_key`, `oauth` or `session`, so a credentials table
+    added by another module is excluded before anyone lists it here
+  - the host's own list, `config :phoenix_kit_sync, excluded_tables: [...]`
 
   The sender's own table list is data, not trusted: a pull checks the name
   here before it writes anything locally.
@@ -713,12 +775,27 @@ defmodule PhoenixKitSync.SchemaInspector do
   # Not a name at all: the identifier checks downstream refuse it.
   def excluded_table?(_name), do: false
 
+  # Tables the host adds to the list above:
+  # `config :phoenix_kit_sync, excluded_tables: ["my_app_api_clients"]`.
+  defp extra_excluded_tables do
+    case Application.get_env(:phoenix_kit_sync, :excluded_tables, []) do
+      tables when is_list(tables) -> tables
+      _ -> []
+    end
+  end
+
   defp excluded_table?(name, include_phoenix_kit) do
     cond do
       name in @excluded_tables ->
         true
 
       Enum.any?(@excluded_prefixes, &String.starts_with?(name, &1)) ->
+        true
+
+      Enum.any?(@excluded_name_parts, &String.contains?(String.downcase(name), &1)) ->
+        true
+
+      name in extra_excluded_tables() ->
         true
 
       not include_phoenix_kit and String.starts_with?(name, "phoenix_kit_") ->

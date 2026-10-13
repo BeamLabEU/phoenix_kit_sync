@@ -147,6 +147,7 @@ defmodule PhoenixKitSync.Transfer do
       :requester_ip,
       :requester_user_agent,
       :initiated_by_uuid,
+      :started_at,
       :metadata
     ])
     |> validate_required([:direction, :table_name])
@@ -155,6 +156,34 @@ defmodule PhoenixKitSync.Transfer do
     |> validate_conflict_strategy()
     |> foreign_key_constraint(:connection_uuid)
     |> foreign_key_constraint(:initiated_by_uuid)
+  end
+
+  @doc """
+  Changeset for a transfer recorded once it is over, in one write: the
+  creation fields plus its record counts, its final `status` (`"completed"`
+  or `"failed"`) and, for a failure, the `error_message`.
+  """
+  @spec finished_changeset(t(), map(), String.t(), String.t() | nil) :: Ecto.Changeset.t()
+  def finished_changeset(transfer, attrs, status, error_message \\ nil)
+      when status in ["completed", "failed"] do
+    now = UtilsDate.utc_now()
+
+    transfer
+    |> changeset(attrs)
+    |> cast(attrs, [
+      :records_transferred,
+      :records_created,
+      :records_updated,
+      :records_skipped,
+      :records_failed,
+      :bytes_transferred
+    ])
+    |> change(%{status: status, error_message: error_message, completed_at: now})
+    |> then(fn changeset ->
+      if get_field(changeset, :started_at),
+        do: changeset,
+        else: put_change(changeset, :started_at, now)
+    end)
   end
 
   @doc """
@@ -308,7 +337,7 @@ defmodule PhoenixKitSync.Transfer do
   @doc """
   Checks if a transfer is pending approval.
   """
-  @spec pending_approval?(t() | any()) :: boolean()
+  @spec pending_approval?(term()) :: boolean()
   def pending_approval?(%__MODULE__{status: "pending_approval"}), do: true
   def pending_approval?(_), do: false
 
@@ -325,7 +354,7 @@ defmodule PhoenixKitSync.Transfer do
   @doc """
   Checks if a transfer can be started.
   """
-  @spec can_start?(t() | any()) :: boolean()
+  @spec can_start?(term()) :: boolean()
   def can_start?(%__MODULE__{status: "pending", requires_approval: false}), do: true
   def can_start?(%__MODULE__{status: "approved"}), do: true
   def can_start?(_), do: false
@@ -333,7 +362,7 @@ defmodule PhoenixKitSync.Transfer do
   @doc """
   Checks if a transfer is in a terminal state.
   """
-  @spec terminal?(t() | any()) :: boolean()
+  @spec terminal?(term()) :: boolean()
   def terminal?(%__MODULE__{status: status})
       when status in ["completed", "failed", "cancelled", "denied", "expired"],
       do: true
@@ -343,7 +372,7 @@ defmodule PhoenixKitSync.Transfer do
   @doc """
   Checks if a transfer is currently active.
   """
-  @spec active?(t() | any()) :: boolean()
+  @spec active?(term()) :: boolean()
   def active?(%__MODULE__{status: "in_progress"}), do: true
   def active?(_), do: false
 

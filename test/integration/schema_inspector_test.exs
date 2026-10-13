@@ -10,7 +10,7 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
 
   describe "table_exists?/1" do
     test "returns true for an existing sync table" do
-      assert SchemaInspector.table_exists?("phoenix_kit_sync_connections")
+      assert SchemaInspector.table_exists?("phoenix_kit_staff_skills")
     end
 
     test "returns false for a nonexistent table" do
@@ -38,10 +38,24 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
       end)
     end
 
-    test "includes phoenix_kit_sync tables by default" do
+    test "includes phoenix_kit tables by default" do
       {:ok, tables} = SchemaInspector.list_tables()
       table_names = Enum.map(tables, & &1.name)
-      assert "phoenix_kit_sync_connections" in table_names
+      assert "phoenix_kit_staff_skills" in table_names
+    end
+
+    test "never lists a table that holds credentials, this module's own included" do
+      {:ok, tables} = SchemaInspector.list_tables()
+      table_names = Enum.map(tables, & &1.name)
+
+      for name <- ~w(phoenix_kit_sync_connections phoenix_kit_sync_transfers phoenix_kit_settings
+                     phoenix_kit_users_tokens phoenix_kit_user_oauth_providers phoenix_kit_buckets
+                     phoenix_kit_ai_accounts phoenix_kit_ai_endpoints
+                     phoenix_kit_payment_provider_configs phoenix_kit_organization_invitations) do
+        assert SchemaInspector.table_exists?(name), "#{name} is not in the test database"
+        refute name in table_names
+        assert {:error, :table_excluded} = SchemaInspector.get_schema(name)
+      end
     end
 
     test "each entry has an :estimated_count key" do
@@ -60,14 +74,14 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
 
   describe "get_schema/1" do
     test "returns schema for connections table with columns list" do
-      assert {:ok, schema} = SchemaInspector.get_schema("phoenix_kit_sync_connections")
-      assert schema.table == "phoenix_kit_sync_connections"
+      assert {:ok, schema} = SchemaInspector.get_schema("phoenix_kit_staff_skills")
+      assert schema.table == "phoenix_kit_staff_skills"
       assert is_list(schema.columns)
       assert schema.columns != []
     end
 
     test "primary_key includes uuid" do
-      {:ok, schema} = SchemaInspector.get_schema("phoenix_kit_sync_connections")
+      {:ok, schema} = SchemaInspector.get_schema("phoenix_kit_staff_skills")
       assert "uuid" in schema.primary_key
     end
 
@@ -76,10 +90,10 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
     end
 
     test "an array column reports its element type, a scalar column none" do
-      {:ok, schema} = SchemaInspector.get_schema("phoenix_kit_sync_connections")
+      {:ok, schema} = SchemaInspector.get_schema("phoenix_kit_shop_import_configs")
       by_name = Map.new(schema.columns, &{&1.name, &1})
 
-      assert %{type: "ARRAY", element_type: "character varying"} = by_name["allowed_tables"]
+      assert %{type: "ARRAY", element_type: "text"} = by_name["include_keywords"]
       assert %{type: "uuid", element_type: nil} = by_name["uuid"]
     end
 
@@ -115,7 +129,7 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
 
   describe "get_primary_key/1" do
     test "returns [\"uuid\"] for connections table" do
-      assert {:ok, ["uuid"]} = SchemaInspector.get_primary_key("phoenix_kit_sync_connections")
+      assert {:ok, ["uuid"]} = SchemaInspector.get_primary_key("phoenix_kit_staff_skills")
     end
   end
 
@@ -125,7 +139,7 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
 
   describe "get_local_count/1" do
     test "returns {:ok, count} where count >= 0 for connections table" do
-      assert {:ok, count} = SchemaInspector.get_local_count("phoenix_kit_sync_connections")
+      assert {:ok, count} = SchemaInspector.get_local_count("phoenix_kit_staff_skills")
       assert is_integer(count)
       assert count >= 0
     end
@@ -137,20 +151,13 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
 
   describe "get_table_checksum/1" do
     test "returns {:ok, \"empty\"} for an empty table" do
-      assert {:ok, "empty"} = SchemaInspector.get_table_checksum("phoenix_kit_sync_connections")
+      assert {:ok, "empty"} = SchemaInspector.get_table_checksum("phoenix_kit_staff_skills")
     end
 
     test "returns {:ok, checksum_string} after inserting data" do
-      alias PhoenixKitSync.Connections
+      PhoenixKitSync.SyncableTable.insert!("Checksum Test")
 
-      {:ok, _conn, _token} =
-        Connections.create_connection(%{
-          "name" => "Checksum Test",
-          "direction" => "sender",
-          "site_url" => "https://checksum-#{System.unique_integer([:positive])}.com"
-        })
-
-      assert {:ok, checksum} = SchemaInspector.get_table_checksum("phoenix_kit_sync_connections")
+      assert {:ok, checksum} = SchemaInspector.get_table_checksum("phoenix_kit_staff_skills")
       assert is_binary(checksum)
       assert checksum != "empty"
     end

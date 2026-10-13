@@ -47,6 +47,8 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
     :code,
     :session,
     :db_connection,
+    :password,
+    :refused,
     :joined,
     :receiver_info,
     :connection_info
@@ -67,7 +69,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
           code = Keyword.get(opts, :code)
           session = Keyword.get(opts, :session)
 
-          Logger.info("Sync.Websock: Session connection initialized for code #{code}")
+          Logger.info("Sync.Websock: Session connection initialized")
 
           %__MODULE__{
             auth_type: :session,
@@ -88,6 +90,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
             code: "conn:#{db_connection.uuid}",
             session: nil,
             db_connection: db_connection,
+            password: Keyword.get(opts, :password),
             joined: false,
             connection_info: connection_info
           }
@@ -99,8 +102,14 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   @impl WebSock
   def handle_in({text, [opcode: :text]}, state) do
     case Jason.decode(text) do
-      {:ok, [join_ref, ref, topic, event, payload]} ->
-        handle_message(join_ref, ref, topic, event, payload, state)
+      {:ok, [join_ref, ref, topic, event, payload]} when is_binary(topic) and is_binary(event) ->
+        handle_message(join_ref, ref, topic, event, payload, authorize(state))
+
+      # Valid JSON that is not a `[join_ref, ref, topic, event, payload]`
+      # frame: the peer's to get wrong, not this process's to crash on.
+      {:ok, _not_a_frame} ->
+        Logger.warning("Sync.Websock: Ignoring a message that is not a channel frame")
+        {:ok, state}
 
       {:error, reason} ->
         Logger.warning("Sync.Websock: Failed to decode message: #{inspect(reason)}")
@@ -127,7 +136,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
 
   @impl WebSock
   def terminate(reason, state) do
-    Logger.info("Sync.Websock: Terminated for code #{state.code}, reason: #{inspect(reason)}")
+    Logger.info("Sync.Websock: Terminated (#{state.auth_type}), reason: #{inspect(reason)}")
 
     # Notify sender's LiveView that receiver disconnected
     if state.session && state.session[:owner_pid] do
@@ -144,10 +153,14 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   # Handle join message
   defp handle_message(_join_ref, ref, "transfer:" <> code, "phx_join", payload, state) do
     if code == state.code do
-      Logger.info("Sync.Websock: Receiver joined for code #{code}")
+      Logger.info("Sync.Websock: Receiver joined")
 
       # Extract receiver info from join payload
-      receiver_info = get_in(payload, ["receiver_info"]) || %{}
+      receiver_info =
+        case payload do
+          %{"receiver_info" => %{} = info} -> info
+          _ -> %{}
+        end
 
       # Merge connection_info (from HTTP upgrade) with receiver_info (from join payload)
       full_connection_info = %{
@@ -177,7 +190,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
 
       {:push, {:text, reply}, state}
     else
-      Logger.warning("Sync.Websock: Code mismatch - expected #{state.code}, got #{code}")
+      Logger.warning("Sync.Websock: Join refused - topic does not match this socket")
 
       reply =
         encode_reply(ref, "transfer:#{code}", "phx_reply", %{
@@ -225,6 +238,27 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
     end
   end
 
+  # A permanent connection is authorized again for every request, against
+  # the row as it is now (see authorize/1): a refused one gets the reason
+  # and no data.
+  defp handle_message(
+         _join_ref,
+         _ref,
+         _topic,
+         "request:" <> _ = _event,
+         payload,
+         %{joined: true, refused: reason} = state
+       )
+       when not is_nil(reason) do
+    response =
+      encode_push("transfer:#{state.code}", "response:error", %{
+        "error" => "Access denied: #{reason}",
+        "ref" => if(is_map(payload), do: payload["ref"])
+      })
+
+    {:push, {:text, response}, state}
+  end
+
   # Handle tables request
   defp handle_message(_join_ref, _ref, _topic, "request:tables", %{"ref" => client_ref}, state) do
     if state.joined do
@@ -262,7 +296,8 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
          "request:schema",
          %{"table" => table, "ref" => client_ref},
          state
-       ) do
+       )
+       when is_binary(table) do
     if state.joined do
       Logger.debug("Sync.Websock: Schema requested for #{table}")
 
@@ -283,7 +318,8 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
          "request:count",
          %{"table" => table, "ref" => client_ref},
          state
-       ) do
+       )
+       when is_binary(table) do
     if state.joined do
       Logger.debug("Sync.Websock: Count requested for #{table}")
 
@@ -335,7 +371,8 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   # Catch-all for unknown messages
   defp handle_message(_join_ref, _ref, topic, event, payload, state) do
     Logger.warning(
-      "Sync.Websock: Unknown message - topic: #{topic}, event: #{event}, payload: #{inspect(payload)}"
+      "Sync.Websock: Unknown message - topic: #{inspect(topic)}, event: #{inspect(event)}, " <>
+        "payload: #{inspect(payload, limit: 5)}"
     )
 
     {:ok, state}
@@ -473,16 +510,43 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   end
 
   # Get the effective limit considering connection's max_records_per_request
+  # and what is left of its max_records_total
   defp get_effective_limit(requested_limit, %{auth_type: :session}), do: requested_limit
 
   defp get_effective_limit(requested_limit, %{auth_type: :connection, db_connection: conn}) do
     max_per_request = conn.max_records_per_request || 10_000
-    min(requested_limit, max_per_request)
+
+    case Connections.remaining_records(conn) do
+      :unlimited -> min(requested_limit, max_per_request)
+      remaining -> Enum.min([requested_limit, max_per_request, max(remaining, 1)])
+    end
   end
+
+  # The socket outlives the moment it was authorized: the admin may revoke
+  # or narrow the connection, a limit may be reached, the allowed hours may
+  # end. So a permanent connection is loaded again and passed through
+  # Connections.authorize_request/3 (what the upgrade and the REST actions
+  # use) before every message; the state carries the fresh row, or the
+  # reason it is refused.
+  defp authorize(%__MODULE__{auth_type: :connection, db_connection: snapshot} = state) do
+    with %Connection{} = connection <- Connections.get_connection(snapshot.uuid),
+         :ok <-
+           Connections.authorize_request(
+             connection,
+             Map.get(state.connection_info || %{}, :remote_ip),
+             password: state.password
+           ) do
+      %{state | db_connection: connection, refused: nil}
+    else
+      nil -> %{state | refused: :connection_not_active}
+      {:error, reason} -> %{state | refused: reason}
+    end
+  end
+
+  defp authorize(state), do: state
 
   # Track transfer for permanent connections
   defp track_transfer(db_connection, table_name, records_count, connection_info) do
-    # Create a transfer record
     attrs = %{
       direction: "send",
       connection_uuid: db_connection.uuid,
@@ -490,20 +554,14 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
       records_requested: records_count,
       records_transferred: records_count,
       records_created: records_count,
-      status: "completed",
       requester_ip: Map.get(connection_info, :remote_ip),
-      requester_user_agent: Map.get(connection_info, :user_agent)
+      requester_user_agent: truncate(Map.get(connection_info, :user_agent))
     }
 
-    case Transfers.create_transfer(attrs) do
-      {:ok, transfer} ->
-        # Update the transfer to completed immediately (single batch transfer)
-        Transfers.complete_transfer(transfer, %{
-          records_transferred: records_count,
-          records_created: records_count
-        })
-
-        # Update connection statistics
+    case Transfers.record_finished(attrs, :completed) do
+      {:ok, _transfer} ->
+        # Counted in the database, so every request on the socket adds its
+        # own download and records.
         Connections.record_transfer(db_connection, %{
           records_count: records_count,
           bytes_count: 0
@@ -513,4 +571,8 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
         Logger.warning("Sync.Websock: Failed to track transfer for #{table_name}")
     end
   end
+
+  # The user agent is the client's to choose; the column holds 255 characters.
+  defp truncate(value) when is_binary(value), do: String.slice(value, 0, 255)
+  defp truncate(_value), do: nil
 end

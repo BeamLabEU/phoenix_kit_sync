@@ -119,14 +119,20 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
     end
   end
 
+  defp extract_record_pk(record) when not is_map(record), do: ""
+
   defp extract_record_pk(record) do
     pk =
       Map.get(record, "uuid") || Map.get(record, :uuid) ||
         Map.get(record, "id") || Map.get(record, :id)
 
+    # The key is the sender's: a uuid column arrives as 16 raw bytes, which
+    # are not text, and anything else may be any JSON value.
     case pk do
       nil -> ""
-      value -> " (uuid: #{value})"
+      <<_::128>> = bytes -> " (uuid: #{Ecto.UUID.load!(bytes)})"
+      value when is_binary(value) -> " (uuid: #{inspect(value)})"
+      value -> " (uuid: #{inspect(value, limit: 5)})"
     end
   end
 

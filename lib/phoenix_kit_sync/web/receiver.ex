@@ -14,7 +14,7 @@ defmodule PhoenixKitSync.Web.Receiver do
   """
 
   use PhoenixKitWeb, :live_view
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitSync.Gettext
 
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth.Scope
@@ -738,6 +738,16 @@ defmodule PhoenixKitSync.Web.Receiver do
     # stuck at 0 would request the same batch forever.
     offset = requested_offset(progress, table)
 
+    # The loop below ends on an empty batch, so a sender that ignores the
+    # offset and answers the same batch again would keep it going for good.
+    # A batch that starts with the record the one before started with, or a
+    # table that runs past the paging cap, ends the table instead.
+    first_record = List.first(records)
+    stalled? = paging_stalled?(progress, table, first_record, offset)
+    records = if stalled?, do: [], else: records
+    progress = Map.put(progress, :last_first_record, {table, first_record})
+    socket = assign(socket, :transfer_progress, progress)
+
     strategy = socket.assigns.conflict_strategy
 
     # Get schema for this table (for auto-creation of missing tables)
@@ -746,7 +756,9 @@ defmodule PhoenixKitSync.Web.Receiver do
     # Queue import job for this batch
     socket =
       if records != [] do
-        case queue_import_job(table, records, strategy, offset, schema: table_schema) do
+        case queue_import_job(table, records, strategy, progress.jobs_queued,
+               schema: table_schema
+             ) do
           {:ok, _job} ->
             assign(socket, :transfer_progress, %{
               progress
@@ -1913,12 +1925,30 @@ defmodule PhoenixKitSync.Web.Receiver do
   defp requested_offset(%{pending_fetch: {table, offset}}, table), do: offset
   defp requested_offset(_progress, _table), do: 0
 
+  defp paging_stalled?(_progress, _table, nil, _offset), do: false
+
+  defp paging_stalled?(progress, table, first_record, offset) do
+    stalled? =
+      Map.get(progress, :last_first_record) == {table, first_record} or
+        offset >= PhoenixKitSync.Params.max_offset()
+
+    if stalled? do
+      Logger.warning(
+        "Sync.Receiver: the sender's paging of #{table} did not advance; table ended"
+      )
+    end
+
+    stalled?
+  end
+
+  # `batch_index` counts the batches queued so far. It is not derived from
+  # the record offset: a sender may answer fewer records than asked.
   defp queue_import_job(table, records, strategy, batch_index, opts) do
     # Generate a simple session code for tracking
     session_code = "transfer_#{:os.system_time(:millisecond)}"
     schema = Keyword.get(opts, :schema)
 
-    job_opts = [batch_index: div(batch_index, @batch_size)]
+    job_opts = [batch_index: batch_index]
     job_opts = if schema, do: Keyword.put(job_opts, :schema, schema), else: job_opts
 
     ImportWorker.create_job(table, records, strategy, session_code, job_opts)

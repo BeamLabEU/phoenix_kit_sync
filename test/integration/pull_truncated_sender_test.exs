@@ -141,7 +141,9 @@ defmodule PhoenixKitSync.Integration.PullTruncatedSenderTest do
 
     cut = send_transfer(connection, "pt_items")
     assert cut.status == "failed"
-    assert cut.error_message =~ "max_records_per_request"
+    # A classified reason, shown through Errors.transfer_error/1.
+    assert cut.error_message == "sent_truncated"
+    assert PhoenixKitSync.Errors.transfer_error(cut.error_message) =~ "max_records_per_request"
     assert cut.records_transferred == @limit
 
     whole = send_transfer(connection, "pt_exact")

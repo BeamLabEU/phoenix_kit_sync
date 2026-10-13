@@ -322,6 +322,73 @@ defmodule PhoenixKitSync.Web.ConnectionsLiveTest do
     end
   end
 
+  describe "an incoming registration awaiting approval" do
+    defp pending_incoming do
+      {:ok, receiver, _token} =
+        Connections.create_connection(%{
+          "name" => "From: Remote",
+          "direction" => "receiver",
+          # Nothing listens here; a pending row's site is never contacted.
+          "site_url" => "http://localhost:9/pending-#{System.unique_integer([:positive])}",
+          "status" => "pending"
+        })
+
+      receiver
+    end
+
+    test "shows as pending with an Approve button, and no Sync button", %{conn: conn} do
+      receiver = pending_incoming()
+      conn = put_test_scope(conn, fake_scope())
+      {:ok, view, _html} = live(conn, "/en/admin/sync/connections")
+
+      row = view |> element("tr", receiver.site_url) |> render()
+      assert row =~ "pending"
+      assert row =~ ~s|phx-click="approve_connection"|
+      refute row =~ ~s|phx-click="start_sync"|
+    end
+
+    test "the Approve button activates it, with the admin as the actor", %{conn: conn} do
+      receiver = pending_incoming()
+      admin_scope = fake_scope(user_uuid: PhoenixKitSync.TestActor.uuid())
+      conn = put_test_scope(conn, admin_scope)
+      {:ok, view, _html} = live(conn, "/en/admin/sync/connections")
+
+      view
+      |> element(~s|button[phx-click="approve_connection"][phx-value-uuid="#{receiver.uuid}"]|)
+      |> render_click()
+
+      approved = Connections.get_connection!(receiver.uuid)
+      assert approved.status == "active"
+      assert approved.approved_by_uuid == admin_scope.user.uuid
+
+      assert_activity_logged("sync.connection.approved",
+        resource_uuid: receiver.uuid,
+        actor_uuid: admin_scope.user.uuid
+      )
+
+      refute has_element?(view, ~s|button[phx-click="approve_connection"]|)
+    end
+
+    test "its sync page does not open until it is approved", %{conn: conn} do
+      receiver = pending_incoming()
+      conn = put_test_scope(conn, fake_scope())
+
+      {:ok, view, _html} =
+        live(conn, "/en/admin/sync/connections?action=sync&id=#{receiver.uuid}")
+
+      html = render(view)
+      assert html =~ "This connection is not active, so it cannot sync"
+      assert :sys.get_state(view.pid).socket.assigns.view_mode == :list
+
+      {:ok, _} = Connections.approve_connection(receiver, actor_uuid: nil)
+
+      {:ok, approved_view, _html} =
+        live(conn, "/en/admin/sync/connections?action=sync&id=#{receiver.uuid}")
+
+      assert :sys.get_state(approved_view.pid).socket.assigns.view_mode == :sync
+    end
+  end
+
   describe "admin header trail" do
     test "the list is Sync / Connections with no crumbs", %{conn: conn} do
       conn = put_test_scope(conn, fake_scope())
@@ -351,7 +418,13 @@ defmodule PhoenixKitSync.Web.ConnectionsLiveTest do
     end
 
     test "show, edit and sync keep the connection in the trail", %{conn: conn} do
-      connection = create_connection(%{"name" => "Trail Peer", "direction" => "receiver"})
+      connection =
+        create_connection(%{
+          "name" => "Trail Peer",
+          "direction" => "receiver",
+          "status" => "active"
+        })
+
       conn = put_test_scope(conn, fake_scope())
 
       {:ok, show, _html} =

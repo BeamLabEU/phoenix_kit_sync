@@ -78,6 +78,7 @@ defmodule PhoenixKitSync do
   """
 
   use PhoenixKit.Module
+  use Gettext, backend: PhoenixKitSync.Gettext
 
   alias PhoenixKit.Dashboard.Tab
   alias PhoenixKit.Settings
@@ -177,7 +178,11 @@ defmodule PhoenixKitSync do
       key: "sync",
       label: "Sync",
       icon: "hero-arrow-path",
-      description: "Peer-to-peer data synchronization and replication"
+      description: "Peer-to-peer data synchronization and replication",
+      # Renders the label translated in the admin permissions matrix, the same
+      # way the sidebar tabs below translate theirs.
+      gettext_backend: PhoenixKitSync.Gettext,
+      gettext_domain: "default"
     }
   end
 
@@ -187,6 +192,8 @@ defmodule PhoenixKitSync do
       Tab.new!(
         id: :admin_sync,
         label: "Sync",
+        gettext_backend: PhoenixKitSync.Gettext,
+        gettext_domain: "default",
         icon: "hero-arrows-right-left",
         path: "sync",
         priority: 640,
@@ -201,6 +208,8 @@ defmodule PhoenixKitSync do
       Tab.new!(
         id: :admin_sync_overview,
         label: "Overview",
+        gettext_backend: PhoenixKitSync.Gettext,
+        gettext_domain: "default",
         icon: "hero-home",
         path: "sync",
         priority: 641,
@@ -213,6 +222,8 @@ defmodule PhoenixKitSync do
       Tab.new!(
         id: :admin_sync_connections,
         label: "Connections",
+        gettext_backend: PhoenixKitSync.Gettext,
+        gettext_domain: "default",
         icon: "hero-link",
         path: "sync/connections",
         priority: 642,
@@ -224,6 +235,8 @@ defmodule PhoenixKitSync do
       Tab.new!(
         id: :admin_sync_history,
         label: "History",
+        gettext_backend: PhoenixKitSync.Gettext,
+        gettext_domain: "default",
         icon: "hero-clock",
         path: "sync/history",
         priority: 643,
@@ -232,6 +245,26 @@ defmodule PhoenixKitSync do
         parent: :admin_sync,
         live_view: {PhoenixKitSync.Web.History, :index}
       )
+    ]
+  end
+
+  @doc """
+  Pins every label this module declares as a gettext msgid.
+
+  `permission_metadata/0` and `admin_tabs/0` declare their labels as plain
+  string literals, which `mix gettext.extract` does not see: core translates
+  them at render time through each declaration's `gettext_backend` and
+  `gettext_domain`, and only a msgid that is in this module's catalogue has
+  a translation to find. `dgettext_noop/2` registers the msgid and returns
+  it unchanged; nothing here runs at request time.
+  """
+  @spec translatable_labels() :: [String.t()]
+  def translatable_labels do
+    [
+      dgettext_noop("default", "Sync"),
+      dgettext_noop("default", "Overview"),
+      dgettext_noop("default", "Connections"),
+      dgettext_noop("default", "History")
     ]
   end
 
@@ -397,18 +430,12 @@ defmodule PhoenixKitSync do
   """
   @spec validate_code(String.t()) :: {:ok, map()} | {:error, atom()}
   def validate_code(code) when is_binary(code) do
-    case SessionStore.get(code) do
-      {:ok, session} ->
-        if session.status == :connected do
-          {:error, :already_used}
-        else
-          updated_session = %{session | status: :connected, connected_at: UtilsDate.utc_now()}
-          SessionStore.update(code, updated_session)
-          {:ok, updated_session}
-        end
-
-      {:error, :not_found} ->
-        {:error, :invalid_code}
+    # One step in the store: of two connections racing on the same code,
+    # exactly one is told it is valid.
+    case SessionStore.claim(code, UtilsDate.utc_now()) do
+      {:ok, session} -> {:ok, session}
+      {:error, :already_used} -> {:error, :already_used}
+      {:error, :not_found} -> {:error, :invalid_code}
     end
   end
 
@@ -425,15 +452,7 @@ defmodule PhoenixKitSync do
   """
   @spec update_session(String.t(), map()) :: {:ok, map()} | {:error, :not_found}
   def update_session(code, updates) when is_binary(code) and is_map(updates) do
-    case SessionStore.get(code) do
-      {:ok, session} ->
-        updated_session = Map.merge(session, updates)
-        SessionStore.update(code, updated_session)
-        {:ok, updated_session}
-
-      error ->
-        error
-    end
+    SessionStore.merge(code, updates)
   end
 
   # ===========================================
@@ -585,12 +604,18 @@ defmodule PhoenixKitSync do
   # Exclude ambiguous characters: 0/O, 1/I/L
   @code_alphabet "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 
+  # The code is the whole credential of a session and grants a read of the
+  # database, so it comes from the OS's CSPRNG. A byte is used only when it
+  # falls in the largest multiple of the alphabet's length, so every
+  # character is equally likely.
   defp generate_secure_code do
     alphabet_length = String.length(@code_alphabet)
+    limit = 256 - rem(256, alphabet_length)
 
-    Enum.map_join(1..@code_length, fn _ ->
-      index = :rand.uniform(alphabet_length) - 1
-      String.at(@code_alphabet, index)
-    end)
+    Stream.repeatedly(fn -> :crypto.strong_rand_bytes(@code_length * 2) end)
+    |> Stream.flat_map(&:binary.bin_to_list/1)
+    |> Stream.filter(&(&1 < limit))
+    |> Enum.take(@code_length)
+    |> Enum.map_join(&String.at(@code_alphabet, rem(&1, alphabet_length)))
   end
 end

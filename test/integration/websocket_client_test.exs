@@ -50,9 +50,9 @@ defmodule PhoenixKitSync.Integration.WebSocketClientTest do
 
       assert_receive {:sync_client, :connected}, 5_000
 
-      WebSocketClient.request_schema(client, "phoenix_kit_sync_connections")
+      WebSocketClient.request_schema(client, "phoenix_kit_staff_skills")
 
-      assert_receive {:sync_client, {:schema, "phoenix_kit_sync_connections", _schema}}, 5_000
+      assert_receive {:sync_client, {:schema, "phoenix_kit_staff_skills", _schema}}, 5_000
 
       WebSocketClient.disconnect(client)
     end
@@ -65,9 +65,9 @@ defmodule PhoenixKitSync.Integration.WebSocketClientTest do
 
       assert_receive {:sync_client, :connected}, 5_000
 
-      WebSocketClient.request_records(client, "phoenix_kit_sync_connections", limit: 5)
+      WebSocketClient.request_records(client, "phoenix_kit_staff_skills", limit: 5)
 
-      assert_receive {:sync_client, {:records, "phoenix_kit_sync_connections", result}}, 5_000
+      assert_receive {:sync_client, {:records, "phoenix_kit_staff_skills", result}}, 5_000
       assert is_list(result.records)
 
       WebSocketClient.disconnect(client)

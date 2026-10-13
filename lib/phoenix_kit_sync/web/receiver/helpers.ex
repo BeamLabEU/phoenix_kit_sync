@@ -14,7 +14,7 @@ defmodule PhoenixKitSync.Web.Receiver.Helpers do
   changing any behavior.
   """
 
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitSync.Gettext
 
   alias PhoenixKitSync.SchemaInspector
 

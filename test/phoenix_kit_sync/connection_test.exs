@@ -662,11 +662,19 @@ defmodule PhoenixKitSync.ConnectionTest do
       assert "can't be blank" in errors_on(changeset).name
     end
 
-    test "very long site_url is accepted" do
-      long_url = "https://example.com/" <> String.duplicate("a", 2000)
-      attrs = %{@valid_attrs | site_url: long_url}
-      changeset = Connection.changeset(%Connection{}, attrs)
-      assert changeset.valid?
+    test "a site_url or name past the column's 255 characters is a changeset error" do
+      fits = "https://example.com/" <> String.duplicate("a", 235)
+      assert Connection.changeset(%Connection{}, %{@valid_attrs | site_url: fits}).valid?
+
+      for attrs <- [
+            %{@valid_attrs | site_url: fits <> "a"},
+            %{@valid_attrs | name: String.duplicate("n", 256)}
+          ] do
+        changeset = Connection.changeset(%Connection{}, attrs)
+        refute changeset.valid?
+        assert [{_field, {_message, opts}}] = changeset.errors
+        assert opts[:validation] == :length
+      end
     end
 
     test "non-empty name passes" do

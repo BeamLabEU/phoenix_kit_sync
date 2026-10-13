@@ -67,9 +67,13 @@ defmodule PhoenixKitSync.DataImporter do
          {:ok, schema} <- SchemaInspector.get_schema(table),
          primary_keys <- get_primary_keys(schema) do
       # Values are read back into their column's type once, here: every
-      # lookup and write below binds the prepared values.
+      # lookup and write below binds the prepared values. Each record is
+      # prepared on its own: one that cannot be read (a value of the wrong
+      # shape, from a broken or hostile sender) is that record's error, not
+      # the batch's.
       column_types = column_types(schema)
-      records = Enum.map(records, &prepare_record(&1, column_types))
+      prepared = Enum.map(records, &prepare_record(&1, column_types))
+      readable = for {:ok, record} <- prepared, do: record
 
       # Single pre-pass: fetch every existing row this batch might conflict
       # with in one SELECT, keyed by PK value, instead of running one SELECT
@@ -77,19 +81,23 @@ defmodule PhoenixKitSync.DataImporter do
       # fall back to the empty map and per-record find_existing — the
       # composite case is rare across phoenix_kit schemas (all use a single
       # UUIDv7 PK) and would need a row-constructor IN clause to batch.
-      existing_by_pk = prefetch_existing(repo, table, records, primary_keys, strategy)
+      existing_by_pk = prefetch_existing(repo, table, readable, primary_keys, strategy)
 
       result =
-        Enum.reduce(records, %{created: 0, updated: 0, skipped: 0, errors: []}, fn record, acc ->
-          accumulate_import_result(
-            acc,
-            repo,
-            table,
-            record,
-            primary_keys,
-            strategy,
-            existing_by_pk
-          )
+        Enum.reduce(prepared, %{created: 0, updated: 0, skipped: 0, errors: []}, fn
+          {:ok, record}, acc ->
+            accumulate_import_result(
+              acc,
+              repo,
+              table,
+              record,
+              primary_keys,
+              strategy,
+              existing_by_pk
+            )
+
+          {:error, record, reason}, acc ->
+            %{acc | errors: [{record, reason} | acc.errors]}
         end)
 
       {:ok, %{result | errors: Enum.reverse(result.errors)}}
@@ -204,7 +212,7 @@ defmodule PhoenixKitSync.DataImporter do
 
   defp extract_pk_values(records, pk) do
     records
-    |> Enum.map(fn record -> Map.get(record, pk) || Map.get(record, safe_atom(pk)) end)
+    |> Enum.map(fn record -> Map.get(record, pk) end)
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
   end
@@ -230,7 +238,7 @@ defmodule PhoenixKitSync.DataImporter do
   defp lookup_existing(_record, [_, _ | _], _existing_by_pk), do: :miss
 
   defp lookup_existing(record, [pk], existing_by_pk) do
-    case Map.get(record, pk) || Map.get(record, safe_atom(pk)) do
+    case Map.get(record, pk) do
       nil -> :miss
       pk_value -> {:hit, Map.get(existing_by_pk, pk_value)}
     end
@@ -244,9 +252,7 @@ defmodule PhoenixKitSync.DataImporter do
   defp find_existing(repo, table, record, primary_keys) do
     pk_pairs =
       primary_keys
-      |> Enum.map(fn pk ->
-        {pk, Map.get(record, pk) || Map.get(record, safe_atom(pk))}
-      end)
+      |> Enum.map(fn pk -> {pk, Map.get(record, pk)} end)
       |> Enum.reject(fn {_pk, v} -> is_nil(v) end)
 
     with :ok <- validate_identifiers([table | primary_keys]),
@@ -377,14 +383,30 @@ defmodule PhoenixKitSync.DataImporter do
   defp column_type(%{type: "ARRAY", element_type: type}), do: {:array, type}
   defp column_type(col), do: Map.get(col, :type)
 
+  # `{:ok, record}` with string keys and values ready to bind, or
+  # `{:error, record, reason}` for a record that cannot be read. Never
+  # raises: the records are the sender's.
   defp prepare_record(record, column_types) when is_map(record) do
-    Map.new(record, fn {key, value} ->
-      key = to_string(key)
-      {key, prepare_typed_value(value, Map.get(column_types, key))}
-    end)
+    {:ok,
+     Map.new(record, fn {key, value} ->
+       key = to_string(key)
+       {key, prepare_typed_value(value, Map.get(column_types, key))}
+     end)}
+  rescue
+    e -> {:error, record, Exception.message(e)}
+  catch
+    :throw, {:unreadable_value, what} -> {:error, record, "unreadable #{what} value"}
   end
 
-  defp prepare_record(record, _column_types), do: record
+  defp prepare_record(record, _column_types), do: {:error, record, "not a record"}
+
+  @temporal_types [
+    "date",
+    "time without time zone",
+    "time with time zone",
+    "timestamp without time zone",
+    "timestamp with time zone"
+  ]
 
   # Postgrex reads a nested list as one more array dimension, but in a json
   # array a list element is a JSON array: it goes pre-encoded so it stays
@@ -445,6 +467,15 @@ defmodule PhoenixKitSync.DataImporter do
     end
   end
 
+  # Text shaped like a date or a time is a date or a time only in a column
+  # of that type. In any other column the schema names (an enum, citext,
+  # an integer, ...) a string is bound as it came: Postgres reads it or
+  # refuses the record. A column the schema does not name has no type to
+  # go by and falls through to the shape rules below.
+  defp prepare_typed_value(value, type)
+       when is_binary(value) and is_binary(type) and type not in @temporal_types,
+       do: value
+
   defp prepare_typed_value(value, _type), do: prepare_value(value)
 
   defp json_element(list) when is_list(list), do: list |> Jason.encode!() |> Jason.Fragment.new()
@@ -495,6 +526,10 @@ defmodule PhoenixKitSync.DataImporter do
     end
   end
 
+  defp prepare_value(%{"__type__" => type, "value" => value})
+       when type in ["datetime", "date", "time", "decimal"] and not is_binary(value),
+       do: throw({:unreadable_value, type})
+
   defp prepare_value(%{"__type__" => "datetime", "value" => value}) do
     # Handle serialized datetime
     case DateTime.from_iso8601(value) do
@@ -521,7 +556,10 @@ defmodule PhoenixKitSync.DataImporter do
 
   defp prepare_value(%{"__type__" => "decimal", "value" => value}) do
     # Handle serialized decimal
-    Decimal.new(value)
+    case Decimal.parse(value) do
+      {decimal, ""} -> decimal
+      _ -> throw({:unreadable_value, "decimal"})
+    end
   end
 
   # Parse ISO8601 datetime strings (from exporter)
@@ -593,12 +631,6 @@ defmodule PhoenixKitSync.DataImporter do
     else
       {:error, :invalid_identifier}
     end
-  end
-
-  defp safe_atom(name) when is_binary(name) do
-    String.to_existing_atom(name)
-  rescue
-    ArgumentError -> nil
   end
 
   defp format_error(%{postgres: %{message: message}}) do

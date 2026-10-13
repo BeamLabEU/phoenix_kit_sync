@@ -2,7 +2,9 @@ defmodule PhoenixKitSync.Web.HistoryLiveTest do
   use PhoenixKitSync.LiveCase
 
   alias PhoenixKitSync.Connections
+  alias PhoenixKitSync.Transfer
   alias PhoenixKitSync.Transfers
+  alias PhoenixKitSync.Web.History
 
   defp create_active_connection do
     {:ok, conn, _token} =
@@ -39,6 +41,114 @@ defmodule PhoenixKitSync.Web.HistoryLiveTest do
       {:ok, _view, html} = live(conn, "/en/admin/sync/history")
 
       assert html =~ "history_pin_table"
+    end
+  end
+
+  describe "filters" do
+    setup %{conn: conn} do
+      for {direction, status, table} <- [
+            {"send", "completed", "sent_done"},
+            {"send", "failed", "sent_failed"},
+            {"receive", "completed", "received_done"}
+          ] do
+        {:ok, _} =
+          Transfers.record_finished(
+            %{direction: direction, table_name: table},
+            if(status == "completed", do: :completed, else: {:failed, :sent_truncated})
+          )
+      end
+
+      conn = put_test_scope(conn, fake_scope())
+      {:ok, view, _html} = live(conn, "/en/admin/sync/history")
+      {:ok, view: view}
+    end
+
+    # The two selects share one form: a select's phx-change reaches the
+    # server only from inside a form, and the event needs both fields.
+    test "choosing a direction and a status narrows the list", %{view: view} do
+      html =
+        view
+        |> form("#history-filters", %{"direction" => "send", "status" => ""})
+        |> render_change()
+
+      assert_patch(view, "/en/admin/sync/history?direction=send")
+      assert html =~ "sent_done"
+      assert html =~ "sent_failed"
+      refute html =~ "received_done"
+
+      html =
+        view
+        |> form("#history-filters", %{"direction" => "send", "status" => "failed"})
+        |> render_change()
+
+      assert html =~ "sent_failed"
+      refute html =~ "sent_done"
+    end
+
+    test "every transfer status is an option, labelled", %{view: view} do
+      for {status, label} <- [
+            {"pending", "Pending"},
+            {"pending_approval", "Pending Approval"},
+            {"approved", "Approved"},
+            {"denied", "Denied"},
+            {"in_progress", "In Progress"},
+            {"completed", "Completed"},
+            {"failed", "Failed"},
+            {"cancelled", "Cancelled"},
+            {"expired", "Expired"}
+          ] do
+        assert view
+               |> element(~s|#history-filter-status option[value="#{status}"]|)
+               |> render() =~ label
+
+        assert History.status_label(status) == label
+      end
+
+      assert History.status_label("from_the_future") == "from_the_future"
+    end
+
+    test "a classified failure reason is shown as a sentence, not as its code", %{view: view} do
+      failed =
+        PhoenixKit.RepoHelper.repo().get_by!(Transfer, table_name: "sent_failed")
+
+      html = render_click(view, "show_approval_modal", %{"uuid" => failed.uuid})
+
+      assert html =~ "max_records_per_request limit"
+      refute html =~ "sent_truncated"
+    end
+  end
+
+  describe "live refresh" do
+    test "a transfer written elsewhere appears without a reload", %{conn: conn} do
+      conn = put_test_scope(conn, fake_scope())
+      {:ok, view, html} = live(conn, "/en/admin/sync/history")
+      refute html =~ "arrives_live"
+
+      {:ok, transfer} =
+        Transfers.create_transfer(%{"direction" => "receive", "table_name" => "arrives_live"})
+
+      assert render(view) =~ "arrives_live"
+
+      {:ok, _} = Transfers.fail_transfer(transfer, "Sender offline")
+      render_click(view, "show_approval_modal", %{"uuid" => transfer.uuid})
+      assert render(view) =~ "Sender offline"
+    end
+
+    test "a renamed connection shows under its new name", %{conn: conn} do
+      connection = create_active_connection()
+
+      {:ok, _} =
+        Transfers.create_transfer(%{
+          "direction" => "send",
+          "table_name" => "named_table",
+          "connection_uuid" => connection.uuid
+        })
+
+      conn = put_test_scope(conn, fake_scope())
+      {:ok, view, _html} = live(conn, "/en/admin/sync/history")
+
+      {:ok, _} = Connections.update_connection(connection, %{name: "Renamed Peer"})
+      assert render(view) =~ "Renamed Peer"
     end
   end
 
@@ -123,16 +233,35 @@ defmodule PhoenixKitSync.Web.HistoryLiveTest do
       assert :sys.get_state(view.pid).socket.assigns.page == 2
     end
 
-    test "a page beyond 10 000 is reachable", %{conn: conn} do
-      # 20 per page: page 10_001 holds rows 200_001..200_020, and 21 rows
-      # more keep it short of the last page.
-      insert_transfers(200_021)
+    # A page number above 10 000 is a page like any other, not a broken link
+    # to send back to page 1: here it lies past the end, so it shows the
+    # last page. (Two pages of rows tell the two apart; no need for the
+    # 200 000 rows a real page 10 001 takes.)
+    test "a page number beyond 10 000 is still read as a page", %{conn: conn} do
+      insert_transfers(25)
 
       conn = put_test_scope(conn, fake_scope())
-      {:ok, view, html} = live(conn, "/en/admin/sync/history?page=10001")
+      {:ok, view, _html} = live(conn, "/en/admin/sync/history?page=10001")
 
-      assert html =~ "Page 10001 of 10002"
-      assert length(:sys.get_state(view.pid).socket.assigns.transfers) == 20
+      assert :sys.get_state(view.pid).socket.assigns.page == 2
+      assert render(view) =~ "Page 2 of 2"
+    end
+
+    test "a page past the last one puts the page shown in the address", %{conn: conn} do
+      insert_transfers(25)
+      conn = put_test_scope(conn, fake_scope())
+
+      {:ok, view, _html} = live(conn, "/en/admin/sync/history")
+
+      render_patch(view, "/en/admin/sync/history?page=999&direction=send&status=pending")
+      assert_patch(view, "/en/admin/sync/history?page=2&direction=send&status=pending")
+      assert render(view) =~ "Page 2 of 2"
+
+      # A page that exists is left where it is.
+      render_patch(view, "/en/admin/sync/history?page=1&direction=send")
+      assert_patch(view, "/en/admin/sync/history?page=1&direction=send")
+      refute_patched(view, "/en/admin/sync/history?page=2&direction=send")
+      assert :sys.get_state(view.pid).socket.assigns.page == 1
     end
   end
 

@@ -40,10 +40,12 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
     end
   end
 
-  # These replies are served by a live Postgres introspection query, so the
-  # default 100 ms assert_push deadline loses the race on a loaded machine and
-  # reports an empty mailbox as a protocol failure.
-  @reply_timeout 2_000
+  # These replies are served by live Postgres queries (the table list counts
+  # the rows of every table), so the default 100 ms assert_push deadline
+  # loses the race on a loaded machine and reports an empty mailbox as a
+  # protocol failure. The deadline is only how long a missing reply takes to
+  # fail: a reply that arrives ends the wait at once.
+  @reply_timeout 15_000
 
   test "a session cannot request token-table schema, counts, or records", %{
     socket: socket,
@@ -80,7 +82,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       ref = "sch-1"
-      push(channel, "request:schema", %{"table" => "phoenix_kit_sync_connections", "ref" => ref})
+      push(channel, "request:schema", %{"table" => "phoenix_kit_staff_skills", "ref" => ref})
 
       assert_push("response:schema", %{schema: schema, ref: ^ref}, @reply_timeout)
       assert is_list(schema.columns) or is_map(schema)
@@ -104,7 +106,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       ref = "cnt-1"
-      push(channel, "request:count", %{"table" => "phoenix_kit_sync_connections", "ref" => ref})
+      push(channel, "request:count", %{"table" => "phoenix_kit_staff_skills", "ref" => ref})
 
       assert_push("response:count", %{count: count, ref: ^ref}, @reply_timeout)
       assert is_integer(count)
@@ -119,7 +121,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
       ref = "rec-1"
 
       push(channel, "request:records", %{
-        "table" => "phoenix_kit_sync_connections",
+        "table" => "phoenix_kit_staff_skills",
         "ref" => ref,
         "limit" => 10
       })
@@ -143,18 +145,13 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
       socket: socket,
       session: session
     } do
-      {:ok, _connection, _token} =
-        PhoenixKitSync.Connections.create_connection(%{
-          "name" => "Channel uuid #{System.unique_integer([:positive])}",
-          "direction" => "sender",
-          "site_url" => "https://channel-uuid-#{System.unique_integer([:positive])}.example.com"
-        })
+      PhoenixKitSync.SyncableTable.insert!()
 
       {:ok, _reply, channel} =
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       push(channel, "request:records", %{
-        "table" => "phoenix_kit_sync_connections",
+        "table" => "phoenix_kit_staff_skills",
         "ref" => "uuid-json"
       })
 
@@ -186,7 +183,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
           channel,
           "request:records",
           Map.merge(
-            %{"table" => "phoenix_kit_sync_connections", "ref" => "bounded"},
+            %{"table" => "phoenix_kit_staff_skills", "ref" => "bounded"},
             unquote(Macro.escape(extra))
           )
         )
@@ -278,7 +275,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
       {:ok, _reply, channel} =
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
-      ref = push(channel, "request:records", %{"table" => "phoenix_kit_sync_connections"})
+      ref = push(channel, "request:records", %{"table" => "phoenix_kit_staff_skills"})
       assert_reply(ref, :error, %{reason: "missing_fields"})
       assert Process.alive?(channel.channel_pid)
     end

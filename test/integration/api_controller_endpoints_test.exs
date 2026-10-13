@@ -249,7 +249,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       conn =
         post(conn, "/sync/api/pull-data", %{
           "auth_token_hash" => String.duplicate("b", 64),
-          "table_name" => "phoenix_kit_sync_connections"
+          "table_name" => "phoenix_kit_staff_skills"
         })
 
       assert json_response(conn, 401)["success"] == false
@@ -259,13 +259,13 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       {connection, token} = create_active_sender()
 
       Connections.update_connection(connection, %{
-        "allowed_tables" => ["phoenix_kit_sync_connections"]
+        "allowed_tables" => ["phoenix_kit_staff_skills"]
       })
 
       conn =
         post(conn, "/sync/api/pull-data", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_sync_transfers"
+          "table_name" => "phoenix_kit_post_tags"
         })
 
       assert json_response(conn, 403)["success"] == false
@@ -277,12 +277,46 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       conn =
         post(conn, "/sync/api/pull-data", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_sync_connections"
+          "table_name" => "phoenix_kit_staff_skills"
         })
 
       body = json_response(conn, 200)
       assert body["success"] == true
       assert is_list(body["data"])
+    end
+  end
+
+  describe "POST /sync/api/list-tables checksums" do
+    setup do
+      PhoenixKitSync.SyncableTable.insert!()
+      {_connection, token} = create_active_sender()
+      {:ok, hash: token_hash(token)}
+    end
+
+    defp listed(conn, hash, extra) do
+      conn
+      |> post("/sync/api/list-tables", Map.merge(%{"auth_token_hash" => hash}, extra))
+      |> json_response(200)
+      |> Map.fetch!("tables")
+      |> Map.new(&{&1["name"], &1})
+    end
+
+    test "are sent unless the receiver opts out", %{conn: conn, hash: hash} do
+      table = PhoenixKitSync.SyncableTable.name()
+
+      for extra <- [%{}, %{"include_checksums" => true}, %{"include_checksums" => "false"}] do
+        assert %{"checksum" => checksum, "row_count" => 1} = listed(conn, hash, extra)[table]
+        assert checksum =~ ~r/\A[0-9a-f]{32}\z/
+      end
+    end
+
+    test "are left out, with everything else in place, when it does", %{conn: conn, hash: hash} do
+      tables = listed(conn, hash, %{"include_checksums" => false})
+
+      assert %{"checksum" => nil, "row_count" => 1, "depends_on" => _, "size_bytes" => _} =
+               tables[PhoenixKitSync.SyncableTable.name()]
+
+      assert Enum.all?(tables, fn {_name, table} -> is_nil(table["checksum"]) end)
     end
   end
 
@@ -296,13 +330,13 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       {connection, token} = create_active_sender()
 
       Connections.update_connection(connection, %{
-        "excluded_tables" => ["phoenix_kit_sync_connections"]
+        "excluded_tables" => ["phoenix_kit_staff_skills"]
       })
 
       conn =
         post(conn, "/sync/api/table-schema", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_sync_connections"
+          "table_name" => "phoenix_kit_staff_skills"
         })
 
       assert json_response(conn, 403)["success"] == false
@@ -314,7 +348,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       conn =
         post(conn, "/sync/api/table-schema", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_sync_connections"
+          "table_name" => "phoenix_kit_staff_skills"
         })
 
       body = json_response(conn, 200)
@@ -338,12 +372,13 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
   describe "POST /sync/api/table-records" do
     test "limit and offset out of range or not numbers still answer 200", %{conn: conn} do
       {_connection, token} = create_active_sender()
+      PhoenixKitSync.SyncableTable.insert!()
 
       for {limit, offset} <- [{"abc", "xyz"}, {-1, -5}, {0, 0}, {"5abc", "2x"}] do
         conn =
           post(conn, "/sync/api/table-records", %{
             "auth_token_hash" => token_hash(token),
-            "table_name" => "phoenix_kit_sync_connections",
+            "table_name" => "phoenix_kit_staff_skills",
             "limit" => limit,
             "offset" => offset
           })
@@ -378,13 +413,13 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       {connection, token} = create_active_sender()
 
       Connections.update_connection(connection, %{
-        "excluded_tables" => ["phoenix_kit_sync_connections"]
+        "excluded_tables" => ["phoenix_kit_staff_skills"]
       })
 
       conn =
         post(conn, "/sync/api/table-records", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_sync_connections"
+          "table_name" => "phoenix_kit_staff_skills"
         })
 
       assert json_response(conn, 403)["success"] == false
@@ -396,7 +431,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       conn =
         post(conn, "/sync/api/table-records", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_sync_connections",
+          "table_name" => "phoenix_kit_staff_skills",
           "limit" => "5"
         })
 
@@ -467,8 +502,17 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       assert json_response(conn, 404)["success"] == false
     end
 
+    # The sender reports its status for this site's receiver connection;
+    # the full table of what a peer may change is in
+    # remote_authorization_test.exs.
     test "valid update transitions status", %{conn: conn} do
-      {connection, token} = create_active_sender()
+      {:ok, connection, token} =
+        Connections.create_connection(%{
+          "name" => "From: peer",
+          "direction" => "receiver",
+          "site_url" => "https://peer-#{System.unique_integer([:positive])}.example.com",
+          "status" => "active"
+        })
 
       conn =
         post(conn, "/sync/api/update-status", %{

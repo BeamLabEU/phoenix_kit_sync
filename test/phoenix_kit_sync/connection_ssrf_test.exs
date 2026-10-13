@@ -119,6 +119,66 @@ defmodule PhoenixKitSync.ConnectionSSRFTest do
     test "rejects .local mDNS hostnames" do
       assert site_url_error("http://printer.local") =~ ".local mDNS"
     end
+
+    # A hostname compares without case and may end in the root dot; an IP
+    # literal has more than one spelling. Each row is a host and whether it
+    # may be a connection's site.
+    @hosts [
+      # localhost in every spelling
+      {"localhost", :refused},
+      {"LOCALHOST", :refused},
+      {"LocalHost", :refused},
+      {"localhost.", :refused},
+      {"LOCALHOST.", :refused},
+      {"app.localhost", :refused},
+      {"APP.LOCALHOST.", :refused},
+      # mDNS
+      {"printer.local", :refused},
+      {"PRINTER.LOCAL", :refused},
+      {"X.LOCAL", :refused},
+      {"printer.local.", :refused},
+      {"local", :refused},
+      # IPv4 literals
+      {"127.0.0.1", :refused},
+      {"127.1", :refused},
+      {"10.1.2.3", :refused},
+      {"192.168.0.1", :refused},
+      {"169.254.169.254", :refused},
+      {"0.0.0.0", :refused},
+      # IPv6 literals, IPv4-mapped included
+      {"[::1]", :refused},
+      {"[::]", :refused},
+      {"[fe80::1]", :refused},
+      {"[fd00::1]", :refused},
+      {"[::ffff:127.0.0.1]", :refused},
+      {"[::ffff:10.0.0.1]", :refused},
+      {"[::ffff:169.254.169.254]", :refused},
+      {"[::FFFF:192.168.1.1]", :refused},
+      {"[::ffff:7f00:1]", :refused},
+      # public hosts, including names that merely contain the words
+      {"example.com", :allowed},
+      {"EXAMPLE.COM.", :allowed},
+      {"localhost.example.com", :allowed},
+      {"mylocal.example.com", :allowed},
+      {"local.example.com", :allowed},
+      {"notlocalhost.com", :allowed},
+      {"8.8.8.8", :allowed},
+      {"[2001:4860:4860::8888]", :allowed},
+      {"[::ffff:8.8.8.8]", :allowed}
+    ]
+
+    for {host, expected} <- @hosts, scheme <- ["http", "https"], port <- ["", ":4000"] do
+      url = "#{scheme}://#{host}#{port}"
+
+      test "#{url} is #{expected}" do
+        changeset = changeset_for(unquote(url))
+
+        case unquote(expected) do
+          :refused -> assert site_url_error(unquote(url)) =~ "cannot point at"
+          :allowed -> assert changeset.valid?, inspect(changeset.errors)
+        end
+      end
+    end
   end
 
   describe "allow_internal_urls bypass" do

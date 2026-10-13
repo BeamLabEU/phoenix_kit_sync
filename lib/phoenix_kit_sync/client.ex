@@ -47,6 +47,10 @@ defmodule PhoenixKitSync.Client do
 
   require Logger
 
+  # The furthest a paged transfer reads: the largest offset the sender
+  # accepts from a request.
+  @max_offset PhoenixKitSync.Params.max_offset()
+
   @default_timeout 30_000
   @default_batch_size 500
 
@@ -398,23 +402,45 @@ defmodule PhoenixKitSync.Client do
       timeout: timeout
     }
 
-    fetch_and_import_loop(loop_state, 0, %{
-      created: 0,
-      updated: 0,
-      skipped: 0,
-      errors: []
-    })
+    fetch_and_import_loop(
+      loop_state,
+      0,
+      %{
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        errors: []
+      },
+      nil
+    )
   end
 
-  defp fetch_and_import_loop(state, offset, acc) do
+  # `prev_first` is the first record of the page before: a sender that
+  # ignores `offset` answers the same page again, and without this the loop
+  # below, which ends only on an empty page, would never end.
+  defp fetch_and_import_loop(state, offset, acc, prev_first) do
     %{client: client, table: table, batch_size: batch_size, timeout: timeout} = state
 
     case fetch_records(client, table, offset: offset, limit: batch_size, timeout: timeout) do
-      {:ok, %{records: records}} when records != [] ->
-        import_and_continue(state, offset, acc, records)
+      {:ok, %{records: [first | _]}} when first == prev_first ->
+        Logger.warning("Sync.Client: the sender repeated a page of #{table}; transfer stopped")
+        {:error, :paging_stalled}
+
+      {:ok, %{records: [_ | _]}} when offset >= @max_offset ->
+        Logger.warning(
+          "Sync.Client: #{table} did not end within the paging cap; transfer stopped"
+        )
+
+        {:error, :paging_stalled}
+
+      {:ok, %{records: [first | _] = records}} ->
+        import_and_continue(state, offset, acc, records, first)
 
       {:ok, %{records: []}} ->
         {:ok, acc}
+
+      {:ok, _not_a_page} ->
+        {:error, :invalid_response}
 
       {:error, reason} ->
         {:error, reason}
@@ -426,11 +452,16 @@ defmodule PhoenixKitSync.Client do
   # max_records_per_request, another version) returns fewer records than
   # asked and may still say there are no more. The price is one extra
   # request per table.
-  defp import_and_continue(state, offset, acc, records) do
+  defp import_and_continue(state, offset, acc, records, first) do
     case PhoenixKitSync.import_records(state.table, records, state.strategy) do
       {:ok, result} ->
         # Advance by what arrived, not by what was asked.
-        fetch_and_import_loop(state, offset + length(records), merge_results(acc, result))
+        fetch_and_import_loop(
+          state,
+          offset + length(records),
+          merge_results(acc, result),
+          first
+        )
 
       {:error, reason} ->
         {:error, reason}

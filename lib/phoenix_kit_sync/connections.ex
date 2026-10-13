@@ -13,6 +13,10 @@ defmodule PhoenixKitSync.Connections do
 
   ## Approval Modes (Sender-side)
 
+  Stored, and answered for by `requires_approval?/2`, but not applied to
+  pulls: no transfer is held for approval, so every mode behaves as
+  `"auto_approve"`.
+
   - `"auto_approve"` - All transfers are automatically approved
   - `"require_approval"` - Each transfer needs manual approval
   - `"per_table"` - Tables in `auto_approve_tables` don't need approval
@@ -22,8 +26,12 @@ defmodule PhoenixKitSync.Connections do
   ```
   pending → active → suspended → revoked
                   ↘
-                  expired (auto-set when limits exceeded or past expires_at)
+                  expired (set by `Connections.expire_connections/0`)
   ```
+
+  A connection past `expires_at` or its limits is refused whatever its
+  stored status (`Connections.authorize_request/3`); nothing in this module
+  schedules `expire_connections/0`.
 
   ## Usage Examples
 
@@ -47,7 +55,7 @@ defmodule PhoenixKitSync.Connections do
 
   import Ecto.Query, warn: false
 
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitSync.Gettext
 
   require Logger
 
@@ -235,15 +243,13 @@ defmodule PhoenixKitSync.Connections do
     end
   end
 
-  defp parse_url(_), do: {nil, nil, nil}
-
   @doc """
   Gets a connection by UUID.
 
   Accepts:
   - UUID string: `get_connection("01234567-89ab-cdef-0123-456789abcdef")`
   """
-  @spec get_connection(String.t() | any()) :: Connection.t() | nil
+  @spec get_connection(term()) :: Connection.t() | nil
   def get_connection(id) when is_binary(id) do
     repo = RepoHelper.repo()
 
@@ -451,18 +457,21 @@ defmodule PhoenixKitSync.Connections do
   @doc """
   Approves a pending connection, making it active.
 
-  ## Parameters
+  ## Options
 
-  - `connection` - The connection to approve
-  - `admin_user_uuid` - The user ID approving the connection
+  - `:actor_uuid` - The user approving the connection
 
   ## Examples
 
-      {:ok, conn} = Connections.approve_connection(conn, current_user.uuid)
+      {:ok, conn} = Connections.approve_connection(conn, actor_uuid: current_user.uuid)
   """
-  @spec approve_connection(Connection.t(), String.t()) ::
+  @spec approve_connection(Connection.t(), keyword() | String.t() | nil) ::
           {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
-  def approve_connection(%Connection{} = connection, admin_user_uuid) do
+  def approve_connection(connection, opts \\ [])
+
+  def approve_connection(%Connection{} = connection, opts) when is_list(opts) do
+    admin_user_uuid = Keyword.get(opts, :actor_uuid)
+
     Logger.info(
       "[Sync.Connections] Approving connection " <>
         "| uuid=#{connection.uuid} " <>
@@ -486,22 +495,31 @@ defmodule PhoenixKitSync.Connections do
     end
   end
 
+  # The actor as a bare second argument, the form older callers use.
+  def approve_connection(%Connection{} = connection, actor_uuid),
+    do: approve_connection(connection, actor_uuid: actor_uuid)
+
   @doc """
   Suspends an active connection.
 
-  ## Parameters
+  ## Options
 
-  - `connection` - The connection to suspend
-  - `admin_user_uuid` - The user ID suspending the connection
-  - `reason` - Optional reason for suspension
+  - `:actor_uuid` - The user suspending the connection
+  - `:reason` - Optional reason for suspension
 
   ## Examples
 
-      {:ok, conn} = Connections.suspend_connection(conn, current_user.uuid, "Security audit")
+      {:ok, conn} =
+        Connections.suspend_connection(conn, actor_uuid: current_user.uuid, reason: "Security audit")
   """
-  @spec suspend_connection(Connection.t(), String.t(), String.t() | nil) ::
+  @spec suspend_connection(Connection.t(), keyword() | String.t() | nil) ::
           {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
-  def suspend_connection(%Connection{} = connection, admin_user_uuid, reason \\ nil) do
+  def suspend_connection(connection, opts \\ [])
+
+  def suspend_connection(%Connection{} = connection, opts) when is_list(opts) do
+    admin_user_uuid = Keyword.get(opts, :actor_uuid)
+    reason = Keyword.get(opts, :reason)
+
     Logger.info(
       "[Sync.Connections] Suspending connection " <>
         "| uuid=#{connection.uuid} " <>
@@ -530,22 +548,36 @@ defmodule PhoenixKitSync.Connections do
     end
   end
 
+  def suspend_connection(%Connection{} = connection, actor_uuid),
+    do: suspend_connection(connection, actor_uuid: actor_uuid)
+
+  @doc false
+  @spec suspend_connection(Connection.t(), String.t() | nil, String.t() | nil) ::
+          {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
+  def suspend_connection(%Connection{} = connection, actor_uuid, reason),
+    do: suspend_connection(connection, actor_uuid: actor_uuid, reason: reason)
+
   @doc """
   Revokes a connection permanently.
 
-  ## Parameters
+  ## Options
 
-  - `connection` - The connection to revoke
-  - `admin_user_uuid` - The user ID revoking the connection
-  - `reason` - Optional reason for revocation
+  - `:actor_uuid` - The user revoking the connection
+  - `:reason` - Optional reason for revocation
 
   ## Examples
 
-      {:ok, conn} = Connections.revoke_connection(conn, current_user.uuid, "Compromised")
+      {:ok, conn} =
+        Connections.revoke_connection(conn, actor_uuid: current_user.uuid, reason: "Compromised")
   """
-  @spec revoke_connection(Connection.t(), String.t(), String.t() | nil) ::
+  @spec revoke_connection(Connection.t(), keyword() | String.t() | nil) ::
           {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
-  def revoke_connection(%Connection{} = connection, admin_user_uuid, reason \\ nil) do
+  def revoke_connection(connection, opts \\ [])
+
+  def revoke_connection(%Connection{} = connection, opts) when is_list(opts) do
+    admin_user_uuid = Keyword.get(opts, :actor_uuid)
+    reason = Keyword.get(opts, :reason)
+
     Logger.info(
       "[Sync.Connections] Revoking connection " <>
         "| uuid=#{connection.uuid} " <>
@@ -573,6 +605,15 @@ defmodule PhoenixKitSync.Connections do
         error
     end
   end
+
+  def revoke_connection(%Connection{} = connection, actor_uuid),
+    do: revoke_connection(connection, actor_uuid: actor_uuid)
+
+  @doc false
+  @spec revoke_connection(Connection.t(), String.t() | nil, String.t() | nil) ::
+          {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
+  def revoke_connection(%Connection{} = connection, actor_uuid, reason),
+    do: revoke_connection(connection, actor_uuid: actor_uuid, reason: reason)
 
   @doc """
   Reactivates a suspended connection.
@@ -603,6 +644,61 @@ defmodule PhoenixKitSync.Connections do
     end
   end
 
+  @doc """
+  Applies a status the remote site reported for one of this site's
+  connections (the `update-status` API).
+
+  Every move goes through `Connection.remote_status_changeset/2`, the one
+  place that says what a peer may change: it can mirror the sender's
+  suspension or revocation onto an active `"receiver"` row and lift a
+  suspension it reported itself, and nothing else. It cannot activate a
+  pending row, undo what an admin here set, or touch a `"sender"` row.
+
+  Returns `{:ok, connection}` (also when the row already has that status)
+  or `{:error, :status_change_not_allowed}`.
+  """
+  @spec apply_remote_status(Connection.t(), String.t()) ::
+          {:ok, Connection.t()}
+          | {:error, :status_change_not_allowed | Ecto.Changeset.t()}
+  def apply_remote_status(%Connection{} = connection, status) do
+    case Connection.remote_status_changeset(connection, status) do
+      :unchanged ->
+        {:ok, connection}
+
+      {:ok, changeset} ->
+        with {:ok, updated} <- RepoHelper.repo().update(changeset) do
+          Logger.info(
+            "[Sync.Connections] Status set by the remote site " <>
+              "| uuid=#{updated.uuid} " <>
+              "| from=#{connection.status} " <>
+              "| to=#{updated.status}"
+          )
+
+          log_sync_activity(remote_status_verb(updated.status), updated, [], %{
+            "reason" => "remote_site"
+          })
+
+          broadcast({:connection_status_changed, updated.uuid, updated.status})
+          {:ok, updated}
+        end
+
+      {:error, :status_change_not_allowed} = error ->
+        Logger.warning(
+          "[Sync.Connections] Refused a status change from the remote site " <>
+            "| uuid=#{connection.uuid} " <>
+            "| direction=#{connection.direction} " <>
+            "| from=#{connection.status} " <>
+            "| to=#{inspect(status)}"
+        )
+
+        error
+    end
+  end
+
+  defp remote_status_verb("active"), do: "reactivated"
+  defp remote_status_verb("suspended"), do: "suspended"
+  defp remote_status_verb("revoked"), do: "revoked"
+
   # ===========================================
   # AUTHENTICATION & VALIDATION
   # ===========================================
@@ -618,6 +714,11 @@ defmodule PhoenixKitSync.Connections do
   - Record limits check
   - IP whitelist check (if provided)
   - Time-of-day restrictions check
+  - Download password check (when the connection has one)
+
+  Only a `"sender"` connection is found: the token of a `"receiver"` row
+  authorizes nothing on this site. The checks are `authorize_request/3`'s,
+  and `opts` goes to it.
 
   ## Parameters
 
@@ -635,6 +736,7 @@ defmodule PhoenixKitSync.Connections do
     - `:record_limit_reached` - Max records exceeded
     - `:ip_not_allowed` - Client IP not in whitelist
     - `:outside_allowed_hours` - Current time outside allowed hours
+    - `:invalid_password` - Download password missing or wrong
 
   ## Examples
 
@@ -644,16 +746,11 @@ defmodule PhoenixKitSync.Connections do
         {:error, reason} -> send_error("Access denied: \#{reason}")
       end
   """
-  @spec validate_connection(String.t(), String.t() | nil) ::
+  @spec validate_connection(String.t(), String.t() | nil, keyword()) ::
           {:ok, Connection.t()} | {:error, atom()}
-  def validate_connection(token, client_ip \\ nil) do
-    with {:ok, connection} <- find_by_token(token),
-         :ok <- check_status(connection),
-         :ok <- check_expiration(connection),
-         :ok <- check_download_limits(connection),
-         :ok <- check_record_limits(connection),
-         :ok <- check_ip_whitelist(connection, client_ip),
-         :ok <- check_allowed_hours(connection) do
+  def validate_connection(token, client_ip \\ nil, opts \\ []) do
+    with {:ok, connection} <- find_sender_by_token(token),
+         :ok <- authorize_request(connection, client_ip, opts) do
       Logger.debug(
         "[Sync.Connections] Token validated " <>
           "| uuid=#{connection.uuid} " <>
@@ -672,6 +769,51 @@ defmodule PhoenixKitSync.Connections do
         )
 
         error
+    end
+  end
+
+  @doc """
+  Decides whether a request made under `connection` may proceed.
+
+  The one authorization every entry point shares: the REST actions, the
+  WebSocket upgrade and each message on an open socket call it with the
+  row as it is in the database now, so a restriction holds on all of them
+  alike.
+
+  Checks, in order: the row is a `"sender"` one (a `"receiver"` row is this
+  site's own pass to the peer's data and gives the peer nothing here),
+  status is `"active"`, not past `expires_at`, within
+  `max_downloads` and `max_records_total`, the client IP is in the
+  whitelist (when one is set), the hour is within the allowed hours, and
+  the download password matches (when one is set).
+
+  ## Parameters
+
+  - `connection` - The connection, freshly loaded
+  - `client_ip` - The client's address as a string, or nil when unknown
+    (refused when a whitelist is set)
+  - `opts`:
+    - `:password` - The download password the client supplied
+    - `:continuation` - `true` for a further page of a download already
+      counted, which is not held to `max_downloads` again
+
+  ## Returns
+
+  `:ok`, or `{:error, reason}` with `:unauthorized`, `:connection_not_active`,
+  `:connection_expired`, `:download_limit_reached`, `:record_limit_reached`,
+  `:ip_not_allowed`, `:outside_allowed_hours` or `:invalid_password`.
+  """
+  @spec authorize_request(Connection.t(), String.t() | nil, keyword()) ::
+          :ok | {:error, atom()}
+  def authorize_request(%Connection{} = connection, client_ip, opts \\ []) do
+    with :ok <- check_direction(connection),
+         :ok <- check_status(connection),
+         :ok <- check_expiration(connection),
+         :ok <- check_download_limits(connection, Keyword.get(opts, :continuation, false)),
+         :ok <- check_record_limits(connection),
+         :ok <- check_ip_whitelist(connection, client_ip),
+         :ok <- check_allowed_hours(connection) do
+      validate_download_password(connection, Keyword.get(opts, :password))
     end
   end
 
@@ -747,6 +889,25 @@ defmodule PhoenixKitSync.Connections do
   end
 
   @doc """
+  Finds a connection by site URL, auth token hash and direction.
+
+  For requests only one side of a connection may make: a status the sender
+  reports names this site's `"receiver"` row, never a `"sender"` one.
+  """
+  @spec find_by_site_url_and_hash(String.t(), String.t(), String.t()) :: Connection.t() | nil
+  def find_by_site_url_and_hash(site_url, auth_token_hash, direction)
+      when is_binary(site_url) and is_binary(auth_token_hash) and is_binary(direction) do
+    repo = RepoHelper.repo()
+
+    from(c in Connection,
+      where:
+        c.site_url == ^site_url and c.auth_token_hash == ^auth_token_hash and
+          c.direction == ^direction
+    )
+    |> repo.one()
+  end
+
+  @doc """
   Finds a connection by auth token hash and direction.
 
   The auth_token_hash is unique per connection pair, so this can be used
@@ -778,6 +939,8 @@ defmodule PhoenixKitSync.Connections do
   - `attrs` - Transfer statistics:
     - `:records_count` - Number of records transferred
     - `:bytes_count` - Bytes transferred
+    - `:downloads` - Downloads this counts as (default 1; 0 for a further
+      page of a download already counted)
 
   ## Examples
 
@@ -794,27 +957,33 @@ defmodule PhoenixKitSync.Connections do
   # Logging both would flood the activity feed without adding signal.
   # touch_connected/1 and Transfers.update_progress/2 are excluded for
   # the same reason.
-  @spec record_transfer(Connection.t(), map()) ::
-          {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
-  def record_transfer(%Connection{} = connection, attrs) do
+  @spec record_transfer(Connection.t(), map()) :: {:ok, Connection.t()} | {:error, :not_found}
+  def record_transfer(%Connection{uuid: uuid}, attrs) do
     repo = RepoHelper.repo()
 
     records_count = Map.get(attrs, :records_count, 0)
     bytes_count = Map.get(attrs, :bytes_count, 0)
+    downloads = Map.get(attrs, :downloads, 1)
+    now = UtilsDate.utc_now()
 
-    stats_attrs = %{
-      downloads_used: connection.downloads_used + 1,
-      records_downloaded: connection.records_downloaded + records_count,
-      total_transfers: connection.total_transfers + 1,
-      total_records_transferred: connection.total_records_transferred + records_count,
-      total_bytes_transferred: connection.total_bytes_transferred + bytes_count,
-      last_connected_at: UtilsDate.utc_now(),
-      last_transfer_at: UtilsDate.utc_now()
-    }
+    # Incremented in the database, never from the caller's copy of the row:
+    # concurrent requests each add their own count, and a long-lived socket
+    # does not write back the numbers it saw when it connected.
+    query = from(c in Connection, where: c.uuid == ^uuid, select: c)
 
-    connection
-    |> Connection.stats_changeset(stats_attrs)
-    |> repo.update()
+    case repo.update_all(query,
+           inc: [
+             downloads_used: downloads,
+             records_downloaded: records_count,
+             total_transfers: downloads,
+             total_records_transferred: records_count,
+             total_bytes_transferred: bytes_count
+           ],
+           set: [last_connected_at: now, last_transfer_at: now]
+         ) do
+      {1, [updated]} -> {:ok, updated}
+      {0, _} -> {:error, :not_found}
+    end
   end
 
   @doc """
@@ -1020,6 +1189,21 @@ defmodule PhoenixKitSync.Connections do
   defp maybe_preload(query, nil), do: query
   defp maybe_preload(query, preloads), do: preload(query, ^preloads)
 
+  defp check_direction(%Connection{direction: "sender"}), do: :ok
+  defp check_direction(%Connection{}), do: {:error, :unauthorized}
+
+  # Both ends of a connection store the same token hash, so on a site that
+  # holds the two rows of a pair the token names two of them. Only the
+  # sender row answers for incoming requests.
+  defp find_sender_by_token(token) when is_binary(token) do
+    case find_by_hash_and_direction(hash_token(token), "sender") do
+      nil -> {:error, :invalid_token}
+      connection -> {:ok, connection}
+    end
+  end
+
+  defp find_sender_by_token(_token), do: {:error, :invalid_token}
+
   defp check_status(%Connection{status: "active"}), do: :ok
   defp check_status(_), do: {:error, :connection_not_active}
 
@@ -1031,7 +1215,9 @@ defmodule PhoenixKitSync.Connections do
     end
   end
 
-  defp check_download_limits(%Connection{} = connection) do
+  defp check_download_limits(%Connection{}, true = _continuation), do: :ok
+
+  defp check_download_limits(%Connection{} = connection, _continuation) do
     if Connection.within_download_limits?(connection) do
       :ok
     else

@@ -257,9 +257,11 @@ defmodule PhoenixKitSync.Web.SyncWebsockCallbacksTest do
     end
 
     test "answers with the records, uuids as text", %{state: state, conn: conn} do
+      PhoenixKitSync.SyncableTable.insert!()
+
       payload =
         encode(nil, "u1", "transfer:conn:#{conn.uuid}", "request:records", %{
-          "table" => "phoenix_kit_sync_connections",
+          "table" => "phoenix_kit_staff_skills",
           "ref" => "u1"
         })
 

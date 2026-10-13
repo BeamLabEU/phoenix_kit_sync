@@ -457,12 +457,29 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
       refute transfer.error_message =~ "not a record"
     end
 
-    test "the pull without remap fails its transfer the same way", %{connection: connection} do
-      # `data` that is not a list: counting the records raises.
+    test "on the pull without remap a record that is not a map is that record's error", %{
+      connection: connection
+    } do
+      StubRemote.put_data(@parents, ["not a record"])
+
+      assert {:ok, %{imported: 0, errors: 1}} =
+               ConnectionNotifier.pull_table_data(connection, @parents, conflict_strategy: "skip")
+
+      assert %{status: "completed", records_failed: 1} = transfer_for(@parents)
+    end
+
+    test "`data` that is not a list is an invalid response, on both pulls", %{
+      connection: connection
+    } do
       StubRemote.put_data(@parents, %{"not" => "a list"})
 
-      assert {:error, :import_failed} =
+      assert {:error, :invalid_response} =
                ConnectionNotifier.pull_table_data(connection, @parents, conflict_strategy: "skip")
+
+      assert {:error, :invalid_response, %{}} =
+               ConnectionNotifier.pull_table_data_with_remap(connection, @parents, %{},
+                 conflict_strategy: "skip"
+               )
 
       assert %{status: "failed"} = transfer_for(@parents)
     end

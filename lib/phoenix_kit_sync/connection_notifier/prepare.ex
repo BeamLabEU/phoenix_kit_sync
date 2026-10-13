@@ -5,13 +5,15 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
 
   Three concerns:
 
-  1. **`value/1` and `value/3`** — convert JSON-transported scalars back
-     into Postgrex-ready terms. ISO8601 strings become DateTime / Date /
-     Time. Numeric strings are parsed only when the target column is
-     numeric (the 3-arity form): a `%Decimal{}` for numeric/decimal, a
-     float for double precision/real. The broad 1-arity form (Decimal
-     only) is kept for the PK/unique-key lookup paths where values are
-     known keys, not free-text.
+  1. **`value/4`, `key_value/2`, `value/3` and `value/1`** — convert
+     JSON-transported scalars back into Postgrex-ready terms. A string is
+     read by the type of the column it goes into, never by its shape:
+     ISO8601 text becomes a DateTime / Date / Time only in a timestamp /
+     date / time column, and a numeric string a `%Decimal{}` (numeric,
+     decimal) or a float (double precision, real) only in a numeric one.
+     `"2026-01-01"` in a `text` column stays text. `value/3` and `value/1`
+     are the forms for a caller with no column type to go by; they read by
+     shape.
   2. **`numeric_column_types/1`** — maps each numeric column of a table to
      `:decimal` or `:float`. Cached once per table-import by the importer;
      empty map on error (safe "don't coerce" fallback).
@@ -21,12 +23,72 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
      helpers access/modify fields uniformly without creating atoms from
      untrusted data.
 
-  Extracted from `ConnectionNotifier` in 2026-04. All functions are pure
-  or depend only on `SchemaInspector` (for column introspection) — none
-  touch HTTP, the socket, or the websocket client.
+  All functions are pure or depend only on `SchemaInspector` (for column
+  introspection) — none touch HTTP, the socket, or the websocket client.
   """
 
   alias PhoenixKitSync.SchemaInspector
+
+  # "double precision" is one type name of two words.
+  @numeric_types %{
+    "numeric" => :decimal,
+    "decimal" => :decimal,
+    "double precision" => :float,
+    "real" => :float
+  }
+
+  # ===========================================
+  # value/4 — reads a string by its column's type
+  # ===========================================
+
+  @datetime_types ["timestamp without time zone", "timestamp with time zone"]
+  @time_types ["time without time zone", "time with time zone"]
+
+  @doc """
+  Prepares `value` for `column`, whose SQL type `column_types` names
+  (`%{column => information_schema data_type}`). A string is parsed only as
+  what that type holds; in any other column (text, varchar, citext, an
+  enum, ...) it is passed as it came. `numeric_cols` is the map
+  `numeric_column_types/1` returns.
+
+  A column `column_types` does not name is read by shape, as `value/3` does.
+  """
+  @spec value(any(), String.t(), %{String.t() => :decimal | :float}, %{
+          String.t() => String.t() | nil
+        }) :: any()
+  def value(value, column, numeric_cols, column_types)
+      when is_binary(value) and is_binary(column) and is_map(column_types) do
+    case Map.get(column_types, column) do
+      nil -> value(value, column, numeric_cols)
+      type -> typed_string(value, type, Map.get(numeric_cols, column))
+    end
+  end
+
+  def value(value, _column, _numeric_cols, _column_types), do: value(value)
+
+  @doc """
+  Prepares a key value (a primary key, a unique column) for a lookup in a
+  column of SQL type `type`. Read by that type like `value/4`; by shape
+  when `type` is nil.
+  """
+  @spec key_value(any(), String.t() | nil) :: any()
+  def key_value(value, type) when is_binary(value) and is_binary(type),
+    do: typed_string(value, type, @numeric_types[type])
+
+  def key_value(value, _type), do: value(value)
+
+  defp typed_string(value, type, numeric_kind) do
+    parsed =
+      cond do
+        type in @datetime_types -> parse_datetime_string(value)
+        type == "date" -> parse_date_string(value)
+        type in @time_types -> parse_time_string(value)
+        numeric_kind -> parse_numeric_string(value, numeric_kind)
+        true -> nil
+      end
+
+    parsed || value
+  end
 
   # ===========================================
   # value/3 — scopes decimal coercion to numeric columns
@@ -67,14 +129,6 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   # ===========================================
   # Column-type caching
   # ===========================================
-
-  # "double precision" is one type name of two words.
-  @numeric_types %{
-    "numeric" => :decimal,
-    "decimal" => :decimal,
-    "double precision" => :float,
-    "real" => :float
-  }
 
   @doc """
   Maps each numeric column of `table_name` to the term a numeric string in

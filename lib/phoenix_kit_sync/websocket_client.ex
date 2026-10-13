@@ -146,8 +146,14 @@ defmodule PhoenixKitSync.WebSocketClient do
   @impl true
   def handle_frame({:text, msg}, state) do
     case Jason.decode(msg) do
-      {:ok, [_join_ref, ref, topic, event, payload]} ->
+      {:ok, [_join_ref, ref, topic, event, payload]} when is_binary(topic) and is_binary(event) ->
         handle_phoenix_message(topic, event, payload, ref, state)
+
+      # Valid JSON that is not a `[join_ref, ref, topic, event, payload]`
+      # frame: the sender's to get wrong, not this process's to crash on.
+      {:ok, _not_a_frame} ->
+        Logger.warning("Sync.WebSocketClient: Ignoring a message that is not a channel frame")
+        {:ok, state}
 
       {:error, reason} ->
         Logger.warning("Sync.WebSocketClient: Failed to decode message: #{inspect(reason)}")
@@ -356,7 +362,8 @@ defmodule PhoenixKitSync.WebSocketClient do
          %{"tables" => tables, "ref" => ref},
          _msg_ref,
          state
-       ) do
+       )
+       when is_list(tables) do
     Logger.debug("Sync.WebSocketClient: Received #{length(tables)} tables")
     {request_type, state} = pop_request(state, ref)
 
@@ -374,10 +381,12 @@ defmodule PhoenixKitSync.WebSocketClient do
          _msg_ref,
          state
        ) do
-    Logger.info("Sync.WebSocketClient: Received schema response, ref: #{ref}")
+    Logger.info("Sync.WebSocketClient: Received schema response, ref: #{inspect(ref)}")
     {request_type, state} = pop_request(state, ref)
 
-    Logger.info("Sync.WebSocketClient: Request type for ref #{ref}: #{inspect(request_type)}")
+    Logger.info(
+      "Sync.WebSocketClient: Request type for ref #{inspect(ref)}: #{inspect(request_type)}"
+    )
 
     case request_type do
       {:schema, table} ->
@@ -397,7 +406,8 @@ defmodule PhoenixKitSync.WebSocketClient do
          %{"count" => count, "ref" => ref},
          _msg_ref,
          state
-       ) do
+       )
+       when is_integer(count) do
     Logger.debug("Sync.WebSocketClient: Received count: #{count}")
     {request_type, state} = pop_request(state, ref)
 
@@ -409,8 +419,17 @@ defmodule PhoenixKitSync.WebSocketClient do
     {:ok, state}
   end
 
-  defp handle_phoenix_message(_topic, "response:records", payload, _msg_ref, state) do
-    records = Map.get(payload, "records", [])
+  # Records are what the import writes, so a page is taken only as a list
+  # of maps; anything else falls to the catch-all below.
+  defp handle_phoenix_message(
+         _topic,
+         "response:records",
+         %{"records" => records} = payload,
+         _msg_ref,
+         state
+       )
+       when is_list(records) do
+    records = Enum.filter(records, &is_map/1)
     ref = Map.get(payload, "ref")
     offset = Map.get(payload, "offset", 0)
     has_more = Map.get(payload, "has_more", false)
@@ -437,14 +456,17 @@ defmodule PhoenixKitSync.WebSocketClient do
          _msg_ref,
          state
        ) do
-    Logger.warning("Sync.WebSocketClient: Error response - #{error}")
+    Logger.warning("Sync.WebSocketClient: Error response - #{inspect(error)}")
     {request_type, state} = pop_request(state, ref)
     notify_caller(state, {:request_error, request_type, error})
     {:ok, state}
   end
 
   defp handle_phoenix_message(topic, event, payload, _ref, state) do
-    Logger.debug("Sync.WebSocketClient: Received #{event} on #{topic}: #{inspect(payload)}")
+    Logger.debug(
+      "Sync.WebSocketClient: Received #{event} on #{topic}: #{inspect(payload, limit: 5)}"
+    )
+
     notify_caller(state, {:message, event, payload})
     {:ok, state}
   end

@@ -122,6 +122,38 @@ defmodule PhoenixKitSync.SessionStore do
   end
 
   @doc """
+  Marks a pending session as connected, once.
+
+  The check and the write happen in the store's own process, so two callers
+  racing on one code cannot both be told it is free.
+
+  ## Returns
+
+  - `{:ok, session}` - The session, now `:connected` at `connected_at`
+  - `{:error, :already_used}` - It was connected before
+  - `{:error, :not_found}` - No such session
+  """
+  @spec claim(String.t(), DateTime.t()) ::
+          {:ok, map()} | {:error, :already_used | :not_found}
+  def claim(code, connected_at) when is_binary(code) do
+    GenServer.call(__MODULE__, {:claim, code, connected_at})
+  end
+
+  @doc """
+  Merges `updates` into an existing session, in the store's own process so
+  the merge cannot write back a copy read before a concurrent `claim/2`.
+
+  ## Returns
+
+  - `{:ok, session}` - The merged session
+  - `{:error, :not_found}` - No such session
+  """
+  @spec merge(String.t(), map()) :: {:ok, map()} | {:error, :not_found}
+  def merge(code, updates) when is_binary(code) and is_map(updates) do
+    GenServer.call(__MODULE__, {:merge, code, updates})
+  end
+
+  @doc """
   Deletes a session by code.
   """
   @spec delete(String.t()) :: :ok
@@ -183,11 +215,45 @@ defmodule PhoenixKitSync.SessionStore do
   end
 
   @impl true
+  def handle_call({:claim, code, connected_at}, _from, state) do
+    reply =
+      case :ets.lookup(@table_name, code) do
+        [{^code, %{status: :connected}}] ->
+          {:error, :already_used}
+
+        [{^code, session}] ->
+          claimed = %{session | status: :connected, connected_at: connected_at}
+          :ets.insert(@table_name, {code, claimed})
+          {:ok, claimed}
+
+        [] ->
+          {:error, :not_found}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:merge, code, updates}, _from, state) do
+    reply =
+      case :ets.lookup(@table_name, code) do
+        [{^code, session}] ->
+          merged = Map.merge(session, updates)
+          :ets.insert(@table_name, {code, merged})
+          {:ok, merged}
+
+        [] ->
+          {:error, :not_found}
+      end
+
+    {:reply, reply, state}
+  end
+
+  @impl true
   def handle_cast({:monitor_session, code, pid}, state) do
     ref = Process.monitor(pid)
     # Store mapping from monitor ref to session code
     :ets.insert(@monitors_table, {ref, code})
-    Logger.debug("Sync.SessionStore: Monitoring #{inspect(pid)} for session #{code}")
+    Logger.debug("Sync.SessionStore: Monitoring #{inspect(pid)} for a session")
     {:noreply, state}
   end
 
@@ -199,7 +265,7 @@ defmodule PhoenixKitSync.SessionStore do
         :ets.delete(@monitors_table, ref)
         :ets.delete(@table_name, code)
 
-        Logger.debug("Sync.SessionStore: Session #{code} deleted (owner process terminated)")
+        Logger.debug("Sync.SessionStore: Session deleted (owner process terminated)")
 
       [] ->
         :ok

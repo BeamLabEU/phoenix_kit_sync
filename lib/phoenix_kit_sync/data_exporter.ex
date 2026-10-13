@@ -82,6 +82,9 @@ defmodule PhoenixKitSync.DataExporter do
   - `:limit` - Maximum records to return (default: 100, max: 1000)
   - `:schema` - Database schema (default: "public")
   - `:order_by` - Column(s) to order by (default: primary key)
+
+  Returns `{:error, :no_primary_key}` for a table with no primary key and
+  no `:order_by`: its rows have no order to page in.
   """
   @spec fetch_records(String.t(), keyword()) :: {:ok, [map()]} | {:error, any()}
   def fetch_records(table_name, opts \\ []) do
@@ -140,9 +143,19 @@ defmodule PhoenixKitSync.DataExporter do
   # PRIVATE FUNCTIONS
   # ===========================================
 
+  # Pages are cut with LIMIT/OFFSET, which only means something over a fixed
+  # order: without one, Postgres is free to return rows in a different
+  # order on each query, and a paged read skips some rows and repeats
+  # others. A table with no primary key (and no `:order_by`) is refused.
   defp do_fetch_records(table_name, schema, table_schema, offset, limit, opts) do
+    case Keyword.get(opts, :order_by) || table_schema.primary_key do
+      [] -> {:error, :no_primary_key}
+      order_by -> fetch_ordered(table_name, schema, table_schema, offset, limit, order_by)
+    end
+  end
+
+  defp fetch_ordered(table_name, schema, table_schema, offset, limit, order_by) do
     columns = Enum.map(table_schema.columns, & &1.name)
-    order_by = Keyword.get(opts, :order_by) || table_schema.primary_key
 
     # Build column list for SELECT
     column_list = Enum.map_join(columns, ", ", &quote_identifier/1)
@@ -205,8 +218,6 @@ defmodule PhoenixKitSync.DataExporter do
   # bytes for a uuid column.
   defp serialize_typed("uuid", <<_::128>> = bytes), do: Ecto.UUID.load!(bytes)
   defp serialize_typed(_type, value), do: serialize_value(value)
-
-  defp build_order_clause([]), do: ""
 
   defp build_order_clause(columns) when is_list(columns) do
     order_cols = Enum.map_join(columns, ", ", &quote_identifier/1)

@@ -52,12 +52,10 @@ defmodule PhoenixKitSync.Web.SyncChannel do
       # Notify the sender's LiveView that a receiver has joined
       send_to_sender(socket.assigns.session, {:receiver_joined, self()})
 
-      Logger.info("Sync: Receiver joined channel for code #{code}")
+      Logger.info("Sync: Receiver joined channel")
       {:ok, socket}
     else
-      Logger.warning(
-        "Sync: Channel join mismatch - expected #{socket.assigns.session_code}, got #{code}"
-      )
+      Logger.warning("Sync: Channel join refused - topic does not match the socket's session")
 
       {:error, %{reason: "code_mismatch"}}
     end
@@ -203,9 +201,7 @@ defmodule PhoenixKitSync.Web.SyncChannel do
 
   @impl true
   def terminate(reason, socket) do
-    Logger.info(
-      "Sync: Channel terminated for code #{socket.assigns.session_code}, reason: #{inspect(reason)}"
-    )
+    Logger.info("Sync: Channel terminated, reason: #{inspect(reason)}")
 
     # Notify the sender's LiveView that receiver has disconnected (with PID for multi-receiver support)
     send_to_sender(socket.assigns.session, {:receiver_disconnected, self()})
