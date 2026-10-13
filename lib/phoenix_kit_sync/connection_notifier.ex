@@ -443,7 +443,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp parse_status_response(resp_body) do
     case Jason.decode(resp_body) do
-      {:ok, %{"success" => true, "status" => status}} -> {:ok, status}
+      {:ok, %{"success" => true, "status" => status}} when is_binary(status) -> {:ok, status}
       {:ok, %{"success" => false}} -> {:ok, :not_found}
       _ -> {:error, :invalid_response}
     end

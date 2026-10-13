@@ -121,6 +121,14 @@ defmodule PhoenixKitSync.ExtensionTypes do
   defp netmask(_other, _bits), do: :error
 
   @doc """
+  The unsupported marker for a value that has no wire form and is not a
+  struct (a composite column's tuple, a `bit(n)` bitstring), named by
+  `label`.
+  """
+  @spec unsupported_marker(String.t()) :: %{String.t() => String.t()}
+  def unsupported_marker(label) when is_binary(label), do: %{@unsupported => label}
+
+  @doc """
   The type named by an unsupported marker, or nil for any other value.
   """
   @spec unsupported(term()) :: String.t() | nil

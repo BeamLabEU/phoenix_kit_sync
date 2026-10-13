@@ -149,7 +149,9 @@ defmodule PhoenixKitSync.Web.ApiController.Validators do
 
   defp present_string?(value), do: is_binary(value) and value != ""
 
-  defp conflict_strategy(strategy) when is_binary(strategy) and strategy != "", do: strategy
+  # The peer's word is stored on the sender's own history row, which only
+  # takes the four strategies: anything else would drop that row.
+  defp conflict_strategy(strategy) when strategy in ~w(skip overwrite merge append), do: strategy
   defp conflict_strategy(_strategy), do: "skip"
 
   defp require_status_value(status) when status in ["active", "suspended", "revoked"], do: :ok

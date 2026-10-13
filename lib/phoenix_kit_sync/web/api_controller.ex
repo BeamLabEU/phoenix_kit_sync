@@ -969,7 +969,6 @@ defmodule PhoenixKitSync.Web.ApiController do
           "[Sync.API] Incoming connection created " <>
             "| uuid=#{connection.uuid} " <>
             "| site_url=#{connection.site_url} " <>
-            "| auth_token_hash=#{String.slice(connection.auth_token_hash || "", 0, 8)}… " <>
             "| status=#{connection.status}"
         )
 
@@ -1388,6 +1387,15 @@ defmodule PhoenixKitSync.Web.ApiController do
   # that travel and marks the rest.
   defp serialize_value(%_{} = struct), do: ExtensionTypes.serialize(struct)
   defp serialize_value([%Postgrex.Lexeme{} = lexeme | _]), do: ExtensionTypes.serialize(lexeme)
+
+  # Jason cannot encode a composite column's tuple or a `bit(n)` bitstring,
+  # and the page has been charged to the connection by the time it is
+  # encoded: they travel as the marker that fails their record on import.
+  defp serialize_value(val) when is_tuple(val),
+    do: ExtensionTypes.unsupported_marker("tuple")
+
+  defp serialize_value(val) when is_bitstring(val) and not is_binary(val),
+    do: ExtensionTypes.unsupported_marker("bitstring")
 
   defp serialize_value(val), do: val
 

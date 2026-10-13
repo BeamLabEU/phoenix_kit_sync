@@ -57,7 +57,7 @@ msgstr ""
 msgid "-- Select a table --"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:94
+#: lib/phoenix_kit_sync/errors.ex:95
 #, elixir-autogen, elixir-format
 msgid "A connection already exists"
 msgstr ""
@@ -107,12 +107,12 @@ msgstr ""
 msgid "Allow remote site to pull data from here"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:91
+#: lib/phoenix_kit_sync/errors.ex:92
 #, elixir-autogen, elixir-format
 msgid "Already exists"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:92
+#: lib/phoenix_kit_sync/errors.ex:93
 #, elixir-autogen, elixir-format
 msgid "Already used"
 msgstr ""
@@ -212,7 +212,7 @@ msgstr ""
 msgid "Cancelled"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:93
+#: lib/phoenix_kit_sync/errors.ex:94
 #, elixir-autogen, elixir-format
 msgid "Cannot start"
 msgstr ""
@@ -312,12 +312,12 @@ msgstr ""
 msgid "Connection failed: %{reason}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:95
+#: lib/phoenix_kit_sync/errors.ex:96
 #, elixir-autogen, elixir-format
 msgid "Connection has expired"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:96
+#: lib/phoenix_kit_sync/errors.ex:97
 #, elixir-autogen, elixir-format
 msgid "Connection is not active"
 msgstr ""
@@ -348,12 +348,12 @@ msgstr ""
 msgid "Connection suspended"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:97
+#: lib/phoenix_kit_sync/errors.ex:98
 #, elixir-autogen, elixir-format
 msgid "Connection timed out"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:143
+#: lib/phoenix_kit_sync/errors.ex:147
 #, elixir-autogen, elixir-format
 msgid "Connection timed out while joining"
 msgstr ""
@@ -386,7 +386,7 @@ msgstr ""
 msgid "Could not connect to sender. Please check the URL."
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:100
+#: lib/phoenix_kit_sync/errors.ex:101
 #, elixir-autogen, elixir-format
 msgid "Could not connect to the remote site"
 msgstr ""
@@ -401,7 +401,7 @@ msgstr ""
 msgid "Could not get schema for %{table}, table won't be auto-created"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:155
+#: lib/phoenix_kit_sync/errors.ex:159
 #, elixir-autogen, elixir-format
 msgid "Could not resolve the remote site's domain"
 msgstr ""
@@ -529,7 +529,7 @@ msgstr ""
 msgid "Disconnect this receiver"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:98
+#: lib/phoenix_kit_sync/errors.ex:99
 #, elixir-autogen, elixir-format
 msgid "Disconnected"
 msgstr ""
@@ -552,7 +552,7 @@ msgstr ""
 msgid "Done"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:99
+#: lib/phoenix_kit_sync/errors.ex:100
 #, elixir-autogen, elixir-format
 msgid "Download limit reached"
 msgstr ""
@@ -695,7 +695,7 @@ msgstr ""
 msgid "Failed to suspend connection"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:102
+#: lib/phoenix_kit_sync/errors.ex:103
 #, elixir-autogen, elixir-format
 msgid "Fetch failed"
 msgstr ""
@@ -741,7 +741,7 @@ msgstr ""
 msgid "ID Range"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:141
+#: lib/phoenix_kit_sync/errors.ex:145
 #, elixir-autogen, elixir-format
 msgid "IP address not in whitelist"
 msgstr ""
@@ -758,7 +758,7 @@ msgstr ""
 msgid "Imported"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:111
+#: lib/phoenix_kit_sync/errors.ex:112
 #, elixir-autogen, elixir-format
 msgid "Importing this table failed; see the server log for details"
 msgstr ""
@@ -778,57 +778,57 @@ msgstr ""
 msgid "Incoming connections appear when a remote site connects"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:113
+#: lib/phoenix_kit_sync/errors.ex:114
 #, elixir-autogen, elixir-format
 msgid "Incoming connections are not allowed"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:135
+#: lib/phoenix_kit_sync/errors.ex:139
 #, elixir-autogen, elixir-format
 msgid "Invalid JSON"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:140
+#: lib/phoenix_kit_sync/errors.ex:144
 #, elixir-autogen, elixir-format
 msgid "Invalid auth token"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:117
+#: lib/phoenix_kit_sync/errors.ex:118
 #, elixir-autogen, elixir-format
 msgid "Invalid cursor: it does not name this table's primary key values"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:134
+#: lib/phoenix_kit_sync/errors.ex:138
 #, elixir-autogen, elixir-format
 msgid "Invalid identifier"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:136
+#: lib/phoenix_kit_sync/errors.ex:140
 #, elixir-autogen, elixir-format
 msgid "Invalid password"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:130
+#: lib/phoenix_kit_sync/errors.ex:134
 #, elixir-autogen, elixir-format
 msgid "Invalid record filter: enter at least one ID (up to 1000), or a range with at least one bound. An integer key takes only whole-number IDs, and a range needs an integer key"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:137
+#: lib/phoenix_kit_sync/errors.ex:141
 #, elixir-autogen, elixir-format
 msgid "Invalid response from remote site"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:114
+#: lib/phoenix_kit_sync/errors.ex:115
 #, elixir-autogen, elixir-format
 msgid "Invalid session code"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:138
+#: lib/phoenix_kit_sync/errors.ex:142
 #, elixir-autogen, elixir-format
 msgid "Invalid status"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:139
+#: lib/phoenix_kit_sync/errors.ex:143
 #, elixir-autogen, elixir-format
 msgid "Invalid table name"
 msgstr ""
@@ -903,17 +903,17 @@ msgstr ""
 msgid "Merge data"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:145
+#: lib/phoenix_kit_sync/errors.ex:149
 #, elixir-autogen, elixir-format
 msgid "Missing connection info"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:142
+#: lib/phoenix_kit_sync/errors.ex:146
 #, elixir-autogen, elixir-format
 msgid "Missing required fields"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:144
+#: lib/phoenix_kit_sync/errors.ex:148
 #, elixir-autogen, elixir-format
 msgid "Missing session code"
 msgstr ""
@@ -1000,28 +1000,28 @@ msgstr ""
 msgid "Not connected to sender"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:154
+#: lib/phoenix_kit_sync/errors.ex:158
 #: lib/phoenix_kit_sync/web/connections_live.ex:1782
 #, elixir-autogen, elixir-format
 msgid "Not found"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:192
+#: lib/phoenix_kit_sync/errors.ex:196
 #, elixir-autogen, elixir-format
 msgid "Not imported: the source site ignored the record filter. Update its sync module and try again"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:150
+#: lib/phoenix_kit_sync/errors.ex:154
 #, elixir-autogen, elixir-format
 msgid "Not pulled: the table has no primary key here, so repeat pulls would duplicate its rows"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:177
+#: lib/phoenix_kit_sync/errors.ex:181
 #, elixir-autogen, elixir-format
 msgid "Not pulled: the table has no primary key on the source site, so its rows have no order to page in"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:209
+#: lib/phoenix_kit_sync/errors.ex:213
 #, elixir-autogen, elixir-format
 msgid "Not pulled: this table does not exist on this site. Create it from the Precise Transfer tab first"
 msgstr ""
@@ -1046,7 +1046,7 @@ msgstr ""
 msgid "Outgoing Only"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:157
+#: lib/phoenix_kit_sync/errors.ex:161
 #, elixir-autogen, elixir-format
 msgid "Outside allowed connection hours"
 msgstr ""
@@ -1081,7 +1081,7 @@ msgstr ""
 msgid "Page %{page} of %{total}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:162
+#: lib/phoenix_kit_sync/errors.ex:166
 #, elixir-autogen, elixir-format
 msgid "Password required"
 msgstr ""
@@ -1147,7 +1147,7 @@ msgstr[1] ""
 msgid "Pull data from"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:165
+#: lib/phoenix_kit_sync/errors.ex:169
 #, elixir-autogen, elixir-format
 msgid "Pulling this table failed; see the server log for details"
 msgstr ""
@@ -1195,7 +1195,7 @@ msgstr ""
 msgid "Record counts:"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:167
+#: lib/phoenix_kit_sync/errors.ex:171
 #, elixir-autogen, elixir-format
 msgid "Record limit reached"
 msgstr ""
@@ -1221,12 +1221,12 @@ msgstr ""
 msgid "Regenerating…"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:156
+#: lib/phoenix_kit_sync/errors.ex:160
 #, elixir-autogen, elixir-format
 msgid "Remote site is offline"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:214
+#: lib/phoenix_kit_sync/errors.ex:218
 #, elixir-autogen, elixir-format
 msgid "Request timed out"
 msgstr ""
@@ -1453,7 +1453,7 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:171
+#: lib/phoenix_kit_sync/errors.ex:175
 #, elixir-autogen, elixir-format
 msgid "Stopped at this connection's max_records_per_request limit; the rest of the table was not sent"
 msgstr ""
@@ -1523,7 +1523,7 @@ msgstr ""
 msgid "Sync failed: %{reason}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:146
+#: lib/phoenix_kit_sync/errors.ex:150
 #, elixir-autogen, elixir-format
 msgid "Sync module is disabled"
 msgstr ""
@@ -1562,7 +1562,7 @@ msgstr ""
 msgid "Table doesn't exist locally"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:213
+#: lib/phoenix_kit_sync/errors.ex:217
 #, elixir-autogen, elixir-format
 msgid "Table not found"
 msgstr ""
@@ -1572,7 +1572,7 @@ msgstr ""
 msgid "Table not found on sender"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:218
+#: lib/phoenix_kit_sync/errors.ex:222
 #, elixir-autogen, elixir-format
 msgid "Table only partly pulled: the sender stopped at its max_records_per_request limit and gave no way to continue. Update sync on the source site, or have its admin raise that limit"
 msgstr ""
@@ -1593,7 +1593,7 @@ msgstr ""
 msgid "The connection appears on your end, pending your approval"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:120
+#: lib/phoenix_kit_sync/errors.ex:121
 #, elixir-autogen, elixir-format
 msgid "The connection request is not valid: check the site URL and the name"
 msgstr ""
@@ -1603,37 +1603,32 @@ msgstr ""
 msgid "The remote site is notified automatically"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:182
+#: lib/phoenix_kit_sync/errors.ex:186
 #, elixir-autogen, elixir-format
 msgid "The remote site may not change this connection's status"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:188
+#: lib/phoenix_kit_sync/errors.ex:192
 #, elixir-autogen, elixir-format
 msgid "The remote site's answer was larger than this site accepts"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:203
+#: lib/phoenix_kit_sync/errors.ex:207
 #, elixir-autogen, elixir-format
 msgid "The sender did not report a primary key for this table. Update sync on the source site, or create the table here by hand"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:123
+#: lib/phoenix_kit_sync/errors.ex:124
 #, elixir-autogen, elixir-format
 msgid "The sender sent a column name that is not a valid identifier"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:126
-#, elixir-autogen, elixir-format
-msgid "The sender's schema has a column type that is not a plain type name"
-msgstr ""
-
-#: lib/phoenix_kit_sync/errors.ex:101
+#: lib/phoenix_kit_sync/errors.ex:102
 #, elixir-autogen, elixir-format
 msgid "The sender's schema lists no columns"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:106
+#: lib/phoenix_kit_sync/errors.ex:107
 #, elixir-autogen, elixir-format
 msgid "The source table has no single-column primary key (a view has none), so it takes no ID filter"
 msgstr ""
@@ -1643,17 +1638,17 @@ msgstr ""
 msgid "This connection is not active, so it cannot sync"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:199
+#: lib/phoenix_kit_sync/errors.ex:203
 #, elixir-autogen, elixir-format
 msgid "This connection is not authorised to access that table"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:196
+#: lib/phoenix_kit_sync/errors.ex:200
 #, elixir-autogen, elixir-format
 msgid "This table is never synced"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:237
+#: lib/phoenix_kit_sync/errors.ex:241
 #, elixir-autogen, elixir-format
 msgid "This table's key type does not take an ID filter (it takes integer, uuid or text keys)"
 msgstr ""
@@ -1668,7 +1663,7 @@ msgstr ""
 msgid "Token regenerated"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:185
+#: lib/phoenix_kit_sync/errors.ex:189
 #, elixir-autogen, elixir-format
 msgid "Too many connection requests are awaiting approval; try again later"
 msgstr ""
@@ -1720,7 +1715,7 @@ msgstr ""
 msgid "Transfer denied"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:160
+#: lib/phoenix_kit_sync/errors.ex:164
 #, elixir-autogen, elixir-format
 msgid "Transfer stopped: the sender kept answering the same page of the table"
 msgstr ""
@@ -1741,7 +1736,7 @@ msgstr ""
 msgid "Type"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:231
+#: lib/phoenix_kit_sync/errors.ex:235
 #, elixir-autogen, elixir-format
 msgid "Unauthorized"
 msgstr ""
@@ -1751,12 +1746,12 @@ msgstr ""
 msgid "Unauthorized - check connection token"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:232
+#: lib/phoenix_kit_sync/errors.ex:236
 #, elixir-autogen, elixir-format
 msgid "Unavailable"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:233
+#: lib/phoenix_kit_sync/errors.ex:237
 #, elixir-autogen, elixir-format
 msgid "Unexpected response from remote site"
 msgstr ""
@@ -1807,7 +1802,7 @@ msgstr ""
 msgid "View details"
 msgstr ""
 
-#: lib/phoenix_kit_sync/connections.ex:170
+#: lib/phoenix_kit_sync/connections.ex:182
 #, elixir-autogen, elixir-format
 msgid "cannot create a connection to yourself"
 msgstr ""
@@ -1918,7 +1913,7 @@ msgstr ""
 msgid "Records per request"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:226
+#: lib/phoenix_kit_sync/errors.ex:230
 #, elixir-autogen, elixir-format
 msgid "Table only partly pulled: its key is of type %{type}, which the sender cannot continue from once it stops at its max_records_per_request limit. Have the source site's admin raise that limit for this connection"
 msgstr ""
@@ -1946,4 +1941,14 @@ msgstr ""
 #: lib/phoenix_kit_sync/web/connections_live.ex:788
 #, elixir-autogen, elixir-format
 msgid "This connection asks for its download password"
+msgstr ""
+
+#: lib/phoenix_kit_sync/errors.ex:128
+#, elixir-autogen, elixir-format
+msgid "The sender's schema has a column type that is not a plain type name, or an array column without its element type. If the source site runs an older sync, update it and try again"
+msgstr ""
+
+#: lib/phoenix_kit_sync/errors.ex:246
+#, elixir-autogen, elixir-format
+msgid "The table has a column type that cannot be created automatically"
 msgstr ""

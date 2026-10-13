@@ -473,9 +473,9 @@ defmodule PhoenixKitSync.WebSocketClient do
          _msg_ref,
          state
        ) do
-    Logger.warning("Sync.WebSocketClient: Error response - #{inspect(error)}")
+    Logger.warning("Sync.WebSocketClient: Error response - #{inspect(error, limit: 5)}")
     {request_type, state} = pop_request(state, ref)
-    notify_caller(state, {:request_error, request_type, error})
+    notify_caller(state, {:request_error, request_type, error_text(error)})
     {:ok, state}
   end
 
@@ -486,6 +486,11 @@ defmodule PhoenixKitSync.WebSocketClient do
     notify_caller(state, {:message, event, payload})
     {:ok, state}
   end
+
+  # The sender's `error` is any JSON term, and the callers print it: only
+  # text goes on, anything else is a malformed answer.
+  defp error_text(error) when is_binary(error), do: error
+  defp error_text(_error), do: :invalid_response
 
   # ===========================================
   # PRIVATE FUNCTIONS

@@ -776,8 +776,7 @@ defmodule PhoenixKitSync.Connections do
         Logger.warning(
           "[Sync.Connections] Token validation failed " <>
             "| reason=#{reason} " <>
-            "| client_ip=#{client_ip} " <>
-            "| token_prefix=#{String.slice(token || "", 0, 8)}…"
+            "| client_ip=#{client_ip}"
         )
 
         error

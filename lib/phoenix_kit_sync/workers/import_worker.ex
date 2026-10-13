@@ -111,10 +111,13 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
 
   defp log_import_errors(errors, table) do
     for {record, error} <- errors do
-      Logger.warning("Sync.ImportWorker: Error importing record in #{table}: #{inspect(error)}")
-
+      # The record itself is not logged: a synced table can hold credentials
+      # (`phoenix_kit_users` carries `hashed_password`), and a database
+      # error can quote the failing row, so the text is cut short.
       pk_info = extract_record_pk(record)
-      Logger.debug("Sync.ImportWorker: Failed record#{pk_info}: #{inspect(record)}")
+      reason = inspect(error, limit: 5, printable_limit: 120)
+
+      Logger.warning("Sync.ImportWorker: Error importing record#{pk_info} in #{table}: #{reason}")
     end
   end
 

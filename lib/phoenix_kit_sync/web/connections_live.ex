@@ -1507,8 +1507,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             "| uuid=#{connection.uuid} " <>
             "| direction=#{connection.direction} " <>
             "| site_url=#{connection.site_url} " <>
-            "| status=#{connection.status} " <>
-            "| auth_token_hash=#{String.slice(connection.auth_token_hash || "", 0, 8)}…"
+            "| status=#{connection.status}"
         )
 
         # Notify the remote site to register this connection (async)
