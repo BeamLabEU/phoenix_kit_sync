@@ -113,8 +113,9 @@ defmodule PhoenixKitSync.DataExporter do
   - `:order_by` - Column(s) to order by (default: primary key)
   - `:after` - A `PhoenixKitSync.PullCursor` position; see `fetch_page/2`
 
-  Returns `{:error, :no_primary_key}` for a table with no primary key and
-  no `:order_by`: its rows have no order to page in.
+  A table with no primary key (and no `:order_by`) has no order to page in,
+  so it is served only when it fits in one page (at most `:limit` rows,
+  whatever the `:offset`): a larger one returns `{:error, :no_primary_key}`.
   """
   @spec fetch_records(String.t(), keyword()) :: {:ok, [map()]} | {:error, any()}
   def fetch_records(table_name, opts \\ []) do
@@ -209,13 +210,17 @@ defmodule PhoenixKitSync.DataExporter do
   # Pages are cut with LIMIT/OFFSET, which only means something over a fixed
   # order: without one, Postgres is free to return rows in a different
   # order on each query, and a paged read skips some rows and repeats
-  # others. A table with no primary key (and no `:order_by`) is refused.
-  # A position (`:after`) is a place in primary-key order, so it is refused
-  # under any other order.
+  # others. A table with no primary key (and no `:order_by`) is refused,
+  # unless it fits in one page: then there is nothing to page over and the
+  # order does not matter. A position (`:after`) is a place in primary-key
+  # order, so it is refused under any other order.
   defp do_fetch_page(table_name, schema, table_schema, offset, limit, opts) do
     source = {table_name, schema, table_schema}
 
     case {Keyword.get(opts, :order_by), table_schema.primary_key, Keyword.get(opts, :after)} do
+      {nil, [], nil} ->
+        fetch_single_page(source, offset, limit)
+
       {nil, [], _after} ->
         {:error, :no_primary_key}
 
@@ -233,6 +238,18 @@ defmodule PhoenixKitSync.DataExporter do
 
       {_order_by, _primary_key, _after} ->
         {:error, :invalid_cursor}
+    end
+  end
+
+  # A keyless table is read whole, one row past the limit to tell a table
+  # that fits in one page from one that does not; `:offset` only skips rows
+  # of that one page, so the page after the last is empty. A table that grows
+  # past the limit between two requests is refused on the second.
+  defp fetch_single_page(source, offset, limit) do
+    with {:ok, %{records: records}} <- fetch_ordered(source, [], [], {:offset, 0}, limit + 1) do
+      if length(records) > limit,
+        do: {:error, :no_primary_key},
+        else: {:ok, %{records: Enum.drop(records, offset), next_after: nil}}
     end
   end
 
@@ -340,6 +357,8 @@ defmodule PhoenixKitSync.DataExporter do
   # bytes for a uuid column.
   defp serialize_typed("uuid", <<_::128>> = bytes), do: Ecto.UUID.load!(bytes)
   defp serialize_typed(_type, value), do: serialize_value(value)
+
+  defp build_order_clause([]), do: ""
 
   defp build_order_clause(columns) when is_list(columns) do
     order_cols = Enum.map_join(columns, ", ", &quote_identifier/1)

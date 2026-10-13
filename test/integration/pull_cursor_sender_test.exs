@@ -672,11 +672,18 @@ defmodule PhoenixKitSync.Integration.PullCursorSenderTest do
       end
     end
 
-    test "is refused by the exporter the WebSocket path reads through" do
-      assert {:error, :no_primary_key} = PhoenixKitSync.DataExporter.fetch_records("pc_keyless")
+    test "is served by the exporter the WebSocket path reads through only while it fits in one page" do
+      assert {:ok, records} = PhoenixKitSync.DataExporter.fetch_records("pc_keyless", limit: 10)
+      assert length(records) == 10
+
+      assert {:error, :no_primary_key} =
+               PhoenixKitSync.DataExporter.fetch_records("pc_keyless", limit: 9)
 
       assert {:ok, [_ | _]} =
-               PhoenixKitSync.DataExporter.fetch_records("pc_keyless", order_by: "label")
+               PhoenixKitSync.DataExporter.fetch_records("pc_keyless",
+                 order_by: "label",
+                 limit: 9
+               )
     end
   end
 end

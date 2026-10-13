@@ -344,6 +344,51 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
     end
   end
 
+  describe "request:records — a table without a primary key" do
+    setup do
+      PhoenixKit.RepoHelper.repo().query!("CREATE TABLE ch_keyless (label text)")
+
+      PhoenixKit.RepoHelper.repo().query!(
+        "INSERT INTO ch_keyless SELECT 'r' || g FROM generate_series(1, 4) g"
+      )
+
+      :ok
+    end
+
+    test "is sent whole when it fits in the page, and the page after it is empty", %{
+      socket: socket,
+      session: session
+    } do
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      push(channel, "request:records", %{"table" => "ch_keyless", "ref" => "k1", "limit" => 4})
+      assert_push("response:records", %{ref: "k1", records: records}, @reply_timeout)
+      assert length(records) == 4
+
+      push(channel, "request:records", %{
+        "table" => "ch_keyless",
+        "ref" => "k2",
+        "limit" => 4,
+        "offset" => 4
+      })
+
+      assert_push("response:records", %{ref: "k2", records: []}, @reply_timeout)
+    end
+
+    test "is refused when it has more rows than the page holds", %{
+      socket: socket,
+      session: session
+    } do
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      push(channel, "request:records", %{"table" => "ch_keyless", "ref" => "k3", "limit" => 3})
+      assert_push("response:error", %{ref: "k3", error: error}, @reply_timeout)
+      assert error =~ "no_primary_key"
+    end
+  end
+
   describe "request:records — malformed payload (DoS hardening)" do
     # Pre-fix sync_channel.ex used Map.fetch! on the "table" and "ref"
     # keys; missing keys crashed the channel and triggered a reconnect
