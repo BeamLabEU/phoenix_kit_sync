@@ -336,10 +336,53 @@ defmodule PhoenixKitSync.SchemaInspector do
     cond do
       columns == [] -> {:error, :empty_schema}
       not Enum.all?(names ++ primary_key, &valid_identifier?/1) -> {:error, :invalid_column_name}
+      Enum.any?(types, &unsupported_type?/1) -> {:error, :unsupported_column_type}
       not Enum.all?(types, &valid_column_type?/1) -> {:error, :invalid_column_type}
       Enum.any?(types, &unspecific_type?/1) -> {:error, :invalid_column_type}
       true -> :ok
     end
+  end
+
+  # information_schema reports a user-defined type (an enum, a composite) as
+  # "USER-DEFINED", without its name, and an array of one the same way: the
+  # type would have to exist here first, so the table cannot be built from
+  # the schema. An array is created only from the element types below: the
+  # sender names the type, and these are the ones known to create cleanly.
+  # Elements are created unbounded ("character varying[]", "numeric[]"): the
+  # schema names only the element type, without the column's length or
+  # precision, and every value fits. Postgres does not enforce an array's
+  # dimensions, so "integer[]" also holds int[][]. "bit" is left out: bare,
+  # it is bit(1).
+  @array_element_types ~w(text uuid integer bigint smallint numeric real boolean date interval
+                          json jsonb bytea inet cidr macaddr macaddr8 money xml tsvector
+                          int4range int8range numrange tsrange tstzrange daterange bpchar) ++
+                         [
+                           "bit varying",
+                           "character varying",
+                           "double precision",
+                           "timestamp without time zone",
+                           "timestamp with time zone",
+                           "time without time zone",
+                           "time with time zone"
+                         ]
+
+  # The brackets are peeled one by one, not matched with a regex: a long run
+  # of "[]" would make a backtracking pattern quadratic.
+  defp unsupported_type?(type) when is_binary(type) do
+    if String.ends_with?(type, "[]") do
+      String.downcase(strip_brackets(type)) not in @array_element_types
+    else
+      String.upcase(type) == "USER-DEFINED"
+    end
+  end
+
+  # Not a string: valid_column_type?/1 refuses it as an invalid type.
+  defp unsupported_type?(_type), do: false
+
+  defp strip_brackets(type) do
+    if String.ends_with?(type, "[]"),
+      do: type |> binary_part(0, byte_size(type) - 2) |> strip_brackets(),
+      else: type
   end
 
   # information_schema's placeholder for an array whose element type did not
@@ -483,6 +526,9 @@ defmodule PhoenixKitSync.SchemaInspector do
   end
 
   defp map_column_type("character varying"), do: "varchar(255)"
+
+  # A bare "character" is character(1); "bpchar" keeps any length.
+  defp map_column_type("character[]"), do: "bpchar[]"
 
   defp map_column_type("character varying(" <> rest), do: "varchar(" <> rest
 

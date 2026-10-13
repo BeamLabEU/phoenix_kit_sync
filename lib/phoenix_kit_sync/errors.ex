@@ -81,6 +81,7 @@ defmodule PhoenixKitSync.Errors do
           | :unavailable
           | :unexpected_response
           | :unsupported_key_type
+          | :unsupported_column_type
 
   @doc """
   Returns a human-readable message for an error atom, changeset, or other
@@ -123,7 +124,10 @@ defmodule PhoenixKitSync.Errors do
     do: gettext("The sender sent a column name that is not a valid identifier")
 
   def message(:invalid_column_type),
-    do: gettext("The sender's schema has a column type that is not a plain type name")
+    do:
+      gettext(
+        "The sender's schema has a column type that is not a plain type name, or an array column without its element type. If the source site runs an older sync, update it and try again"
+      )
 
   def message(:invalid_filter),
     do:
@@ -237,6 +241,9 @@ defmodule PhoenixKitSync.Errors do
       gettext(
         "This table's key type does not take an ID filter (it takes integer, uuid or text keys)"
       )
+
+  def message(:unsupported_column_type),
+    do: gettext("The table has a column type that cannot be created automatically")
 
   def message({:error, reason}), do: message(reason)
 
