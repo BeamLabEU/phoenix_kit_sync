@@ -28,7 +28,11 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   - `request:tables` - List available tables
   - `request:schema` - Get table schema
   - `request:count` - Get record count
-  - `request:records` - Fetch records with pagination
+  - `request:records` - Fetch records with pagination: `table`, `limit`
+    and `offset`, or `after` (the `next_after` of the reply before) to
+    continue from that key instead of the offset. The reply carries
+    `records`, `offset`, `has_more` and, when the table's key has a cursor
+    (`PhoenixKitSync.PullCursor`), `next_after`
   """
 
   @behaviour WebSock
@@ -39,6 +43,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   alias PhoenixKitSync.Connections
   alias PhoenixKitSync.DataExporter
   alias PhoenixKitSync.Params
+  alias PhoenixKitSync.PullCursor
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Transfers
 
@@ -362,7 +367,10 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
           "Sync.Websock: Records requested for #{table} (offset: #{offset}, limit: #{effective_limit})"
         )
 
-        response = fetch_and_respond_records(table, offset, effective_limit, client_ref, state)
+        # A receiver that pages by key sends the position the page before
+        # answered; one that does not sends an offset alone.
+        page = [offset: offset, limit: effective_limit, after: PullCursor.from_params(payload)]
+        response = fetch_and_respond_records(table, page, client_ref, state)
 
         {:push, {:text, response}, state}
     end
@@ -440,9 +448,9 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   # RECORDS FETCHING HELPER
   # ===========================================
 
-  defp fetch_and_respond_records(table, offset, limit, client_ref, state) do
+  defp fetch_and_respond_records(table, page, client_ref, state) do
     if table_allowed?(table, state) do
-      fetch_records_for_table(table, offset, limit, client_ref, state)
+      fetch_records_for_table(table, page, client_ref, state)
     else
       encode_push("transfer:#{state.code}", "response:error", %{
         "error" => "Access denied to table: #{table}",
@@ -451,29 +459,42 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
     end
   end
 
-  defp fetch_records_for_table(table, offset, limit, client_ref, state) do
-    case DataExporter.fetch_records(table, offset: offset, limit: limit) do
-      {:ok, records} ->
-        records_count = Enum.count(records)
+  defp fetch_records_for_table(table, page, client_ref, state) do
+    with {:ok, position} <- page[:after],
+         {:ok, %{records: records, next_after: next_after}} <-
+           DataExporter.fetch_page(table, Keyword.put(page, :after, position)) do
+      records_count = Enum.count(records)
 
-        # Track transfer for permanent connections
-        if state.auth_type == :connection && records_count > 0 do
-          track_transfer(state.db_connection, table, records_count, state.connection_info)
-        end
+      # Track transfer for permanent connections
+      if state.auth_type == :connection && records_count > 0 do
+        track_transfer(state.db_connection, table, records_count, state.connection_info)
+      end
 
-        encode_push("transfer:#{state.code}", "response:records", %{
-          "records" => records,
-          "offset" => offset,
-          "has_more" => records_count == limit,
-          "ref" => client_ref
-        })
-
+      encode_push(
+        "transfer:#{state.code}",
+        "response:records",
+        records_reply(records, records_count, next_after, page, client_ref)
+      )
+    else
       {:error, reason} ->
         encode_push("transfer:#{state.code}", "response:error", %{
           "error" => "Failed to fetch records: #{inspect(reason)}",
           "ref" => client_ref
         })
     end
+  end
+
+  # "next_after" is only added, never nil: a receiver from before it reads
+  # "records" and "offset" and pages by offset as it always did.
+  defp records_reply(records, records_count, next_after, page, client_ref) do
+    reply = %{
+      "records" => records,
+      "offset" => page[:offset],
+      "has_more" => records_count == page[:limit],
+      "ref" => client_ref
+    }
+
+    if next_after, do: Map.put(reply, "next_after", next_after), else: reply
   end
 
   # ===========================================

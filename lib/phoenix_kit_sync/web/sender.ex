@@ -54,15 +54,10 @@ defmodule PhoenixKitSync.Web.Sender do
     {:noreply, socket}
   end
 
-  @impl true
-  def terminate(_reason, socket) do
-    # Clean up session on unmount
-    if socket.assigns.session do
-      PhoenixKitSync.delete_session(socket.assigns.session.code)
-    end
-
-    :ok
-  end
+  # No terminate/2: the session is removed by SessionStore, which monitors
+  # this process as the session's owner (PhoenixKitSync.create_session/2),
+  # so it goes on a closed tab, a crash and a kill alike. terminate/2 would
+  # only run on a graceful stop, since this process does not trap exits.
 
   # ===========================================
   # EVENT HANDLERS

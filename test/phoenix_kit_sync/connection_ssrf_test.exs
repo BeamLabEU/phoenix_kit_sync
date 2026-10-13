@@ -141,6 +141,19 @@ defmodule PhoenixKitSync.ConnectionSSRFTest do
       # IPv4 literals
       {"127.0.0.1", :refused},
       {"127.1", :refused},
+      # one address in the other spellings an IPv4 parser takes: a single
+      # decimal number, octal and hex parts, and private and metadata
+      # addresses written the same ways
+      {"2130706433", :refused},
+      {"0177.0.0.1", :refused},
+      {"0x7f.0.0.1", :refused},
+      {"0x7f000001", :refused},
+      {"017700000001", :refused},
+      {"167772161", :refused},
+      {"0xa9.0xfe.0xa9.0xfe", :refused},
+      {"0251.0376.0251.0376", :refused},
+      {"2852039166", :refused},
+      {"134744072", :allowed},
       {"10.1.2.3", :refused},
       {"192.168.0.1", :refused},
       {"169.254.169.254", :refused},

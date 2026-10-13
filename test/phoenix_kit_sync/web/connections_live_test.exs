@@ -1,7 +1,9 @@
 defmodule PhoenixKitSync.Web.ConnectionsLiveTest do
   use PhoenixKitSync.LiveCase
 
+  alias PhoenixKitSync.Connection
   alias PhoenixKitSync.Connections
+  alias PhoenixKitSync.Test.StubRemote
 
   defp create_connection(attrs \\ %{}) do
     defaults = %{
@@ -65,6 +67,130 @@ defmodule PhoenixKitSync.Web.ConnectionsLiveTest do
       # Error styling comes from the <.input> component; at minimum we
       # see the form still rendered (didn't navigate away on failure).
       assert html =~ "New Connection"
+    end
+  end
+
+  describe "records per request in the connection form" do
+    # The most rows one answer carries. It is the way out for a table whose
+    # key has no cursor, so the admin has to be able to set it.
+    @field ~s|name="connection[max_records_per_request]"|
+
+    defp admin_conn(conn),
+      do: put_test_scope(conn, fake_scope(user_uuid: PhoenixKitSync.TestActor.uuid()))
+
+    # A site that answers at once, so the registration notice the create
+    # sends has somewhere to go.
+    defp remote_url,
+      do: "#{StubRemote.url()}/form-#{System.unique_integer([:positive])}"
+
+    defp submit_new(conn, limit) do
+      {:ok, view, _html} = live(admin_conn(conn), "/en/admin/sync/connections/new")
+      url = remote_url()
+
+      html =
+        view
+        |> form("form",
+          connection: %{
+            "name" => "Limited",
+            "site_url" => url,
+            "max_records_per_request" => limit
+          }
+        )
+        |> render_submit()
+
+      {html, PhoenixKit.RepoHelper.repo().get_by(Connection, site_url: url)}
+    end
+
+    test "the new form offers it with the schema's bounds and default", %{conn: conn} do
+      {:ok, view, _html} = live(admin_conn(conn), "/en/admin/sync/connections/new")
+
+      range = Connection.max_records_per_request_range()
+
+      assert has_element?(
+               view,
+               ~s|input[type="number"][name="connection[max_records_per_request]"]| <>
+                 ~s|[min="#{range.first}"][max="#{range.last}"][value="10000"]|
+             )
+
+      assert has_element?(view, "label", "Records per request")
+    end
+
+    test "a value in range is saved with the new connection", %{conn: conn} do
+      {_html, connection} = submit_new(conn, "250")
+
+      assert connection.max_records_per_request == 250
+    end
+
+    for {label, value} <- [
+          {"zero", "0"},
+          {"a negative number", "-5"},
+          {"a number past the column", "2147483648"},
+          {"a fraction", "2.5"},
+          {"text", "many"}
+        ] do
+      test "#{label} is refused with an error on the field, and nothing is created", %{
+        conn: conn
+      } do
+        {html, connection} = submit_new(conn, unquote(value))
+
+        assert connection == nil
+        assert html =~ "New Connection"
+        assert html =~ @field
+        assert html =~ ~r/must be (greater|less) than|is invalid/
+      end
+    end
+
+    test "the upper bound itself is accepted", %{conn: conn} do
+      {_html, connection} = submit_new(conn, "2147483647")
+
+      assert connection.max_records_per_request == 2_147_483_647
+    end
+
+    test "the edit form of a sender connection shows the stored value and saves a new one", %{
+      conn: conn
+    } do
+      connection = create_connection(%{"max_records_per_request" => 300})
+
+      {:ok, view, _html} =
+        live(admin_conn(conn), "/en/admin/sync/connections?action=edit&id=#{connection.uuid}")
+
+      assert has_element?(
+               view,
+               ~s|input[name="connection[max_records_per_request]"][value="300"]|
+             )
+
+      view
+      |> form("form", connection: %{"max_records_per_request" => "75000"})
+      |> render_submit()
+
+      assert Connections.get_connection!(connection.uuid).max_records_per_request == 75_000
+    end
+
+    test "a bad value on edit keeps the stored one", %{conn: conn} do
+      connection = create_connection(%{"max_records_per_request" => 300})
+
+      {:ok, view, _html} =
+        live(admin_conn(conn), "/en/admin/sync/connections?action=edit&id=#{connection.uuid}")
+
+      html =
+        view
+        |> form("form", connection: %{"max_records_per_request" => "0"})
+        |> render_submit()
+
+      assert html =~ "must be greater than"
+      assert Connections.get_connection!(connection.uuid).max_records_per_request == 300
+    end
+
+    test "a receiver connection's form does not offer it: the limit is the sender's", %{
+      conn: conn
+    } do
+      connection = create_connection(%{"direction" => "receiver"})
+
+      {:ok, _view, html} =
+        live(admin_conn(conn), "/en/admin/sync/connections?action=edit&id=#{connection.uuid}")
+
+      assert html =~ "Edit Connection"
+      refute html =~ @field
     end
   end
 

@@ -30,7 +30,9 @@ defmodule PhoenixKitSync.Web.ApiController do
   alias PhoenixKit.Utils.IpAddress
   alias PhoenixKitSync
   alias PhoenixKitSync.Connections
+  alias PhoenixKitSync.DataExporter
   alias PhoenixKitSync.Errors
+  alias PhoenixKitSync.ExtensionTypes
   alias PhoenixKitSync.PullCursor
   alias PhoenixKitSync.PullFilter
   alias PhoenixKitSync.SchemaInspector
@@ -352,10 +354,12 @@ defmodule PhoenixKitSync.Web.ApiController do
   Returns the current status of a connection.
 
   Called by receiver to get the sender's current connection status.
-  This allows receivers to sync their status with the sender.
+  This allows receivers to sync their status with the sender. It only
+  reads: no status changes here, a pending connection included.
 
   Expected JSON body:
-  - `receiver_url` (required) - URL of the receiver site requesting status
+  - `receiver_url` (required) - URL of the receiver site requesting status;
+    logged, not matched (the token hash names the connection)
   - `auth_token_hash` (required) - The auth token hash to identify the connection
 
   ## Responses
@@ -377,21 +381,15 @@ defmodule PhoenixKitSync.Web.ApiController do
          {:ok, validated} <- validate_get_status_params(params),
          {:ok, connection} <-
            find_sender_connection(validated.receiver_url, validated.auth_token_hash) do
-      # If connection is pending, activate it since receiver is now querying
-      # This confirms the connection is working
-      {updated_connection, status} = maybe_activate_pending_connection(connection)
-
+      # A read: the answer changes nothing. A pending connection stays
+      # pending until an admin of this site approves it, whoever asks.
       Logger.info(
-        "Sync API: Found sender connection #{updated_connection.uuid} with status '#{status}'"
+        "Sync API: Found sender connection #{connection.uuid} with status '#{connection.status}'"
       )
 
       conn
       |> put_status(200)
-      |> json(%{
-        success: true,
-        status: status,
-        name: updated_connection.name
-      })
+      |> json(%{success: true, status: connection.status, name: connection.name})
     else
       {:error, :module_disabled} ->
         Logger.warning("Sync API: get_connection_status - module disabled")
@@ -528,7 +526,7 @@ defmodule PhoenixKitSync.Web.ApiController do
     When they are, `"truncated": true` is set as well (the key is left out
     otherwise; it is what a receiver without cursors reads), and
     `"next_after"` and `"cursor"` continue the pull. A key whose type has no
-    cursor gets `"truncated"` alone.
+    cursor gets `"truncated"` and `"unsupported_key_type"`, the type's name.
   - 400 Bad Request - Missing fields, an invalid filter or cursor, a key
     type that takes no filter, or a table without a primary key
     (`"error_code": "no_primary_key"`: without a key its rows have no order
@@ -621,6 +619,11 @@ defmodule PhoenixKitSync.Web.ApiController do
           cursor: sign_cursor(conn, connection, table_name, next_after)
         })
 
+      # Cut with nothing to continue from because of the key's type: the
+      # type is named, so the receiving admin reads why and what to do.
+      %{more?: true, key_without_cursor: [_ | _] = types} ->
+        Map.put(response, :unsupported_key_type, Enum.join(types, ", "))
+
       _no_cursor ->
         response
     end
@@ -629,9 +632,15 @@ defmodule PhoenixKitSync.Web.ApiController do
   # The cursor proves a request continues a download this site already
   # counted: it is signed with the endpoint's secret for one connection, one
   # table and one key, so a peer cannot mint one to read a table without
-  # spending a download.
+  # spending a download. It is free only for the exact position it was
+  # signed for (an earlier or later `after` under it is a new download) and
+  # only for ten minutes, which is the time a receiver has to import one
+  # page before asking for the next. Within that window the same page can
+  # be asked for again without a download being counted; its rows are
+  # counted in `records_downloaded` every time, and the record limit and
+  # every other restriction apply to it as to any request.
   @cursor_salt "phoenix_kit_sync pull cursor"
-  @cursor_max_age 3600
+  @cursor_max_age 600
 
   defp sign_cursor(conn, connection, table_name, next_after) do
     Phoenix.Token.sign(conn, @cursor_salt, cursor_claim(connection, table_name, next_after))
@@ -808,45 +817,6 @@ defmodule PhoenixKitSync.Web.ApiController do
 
   # --- Private Functions ---
 
-  defp maybe_activate_pending_connection(%{status: "pending"} = connection) do
-    Logger.info(
-      "[Sync.API] Auto-activating pending sender connection " <>
-        "| uuid=#{connection.uuid} " <>
-        "| name=#{inspect(connection.name)} " <>
-        "| reason=receiver_queried_status"
-    )
-
-    now = UtilsDate.utc_now()
-
-    case Connections.update_connection(connection, %{
-           status: "active",
-           approved_at: now,
-           metadata:
-             Map.merge(connection.metadata || %{}, %{
-               "auto_activated" => true,
-               "auto_activated_at" => DateTime.to_iso8601(now),
-               "auto_activated_reason" => "receiver queried connection status"
-             })
-         }) do
-      {:ok, updated} ->
-        # PubSub broadcast handled by Connections.update_connection
-        {updated, "active"}
-
-      {:error, reason} ->
-        Logger.error(
-          "[Sync.API] Failed to auto-activate connection " <>
-            "| uuid=#{connection.uuid} " <>
-            "| error=#{inspect(reason)}"
-        )
-
-        {connection, connection.status}
-    end
-  end
-
-  defp maybe_activate_pending_connection(connection) do
-    {connection, connection.status}
-  end
-
   defp check_module_enabled do
     if PhoenixKitSync.enabled?() do
       :ok
@@ -933,58 +903,11 @@ defmodule PhoenixKitSync.Web.ApiController do
     end
   end
 
+  # The duplicate check, the pending cap and the insert are one step
+  # (Connections.register_incoming/2): registrations arriving together
+  # cannot each pass a check the others are about to make false.
   defp create_incoming_connection(params, conn) do
-    # Check if connection already exists from this sender
-    existing = Connections.find_by_site_url(params.sender_url, "receiver")
     initial_status = initial_incoming_status()
-
-    cond do
-      existing ->
-        Logger.info(
-          "[Sync.API] Incoming connection already exists " <>
-            "| sender_url=#{params.sender_url} " <>
-            "| existing_uuid=#{existing.uuid} " <>
-            "| existing_status=#{existing.status}"
-        )
-
-        {:error, :connection_exists}
-
-      initial_status == "pending" and pending_incoming_full?() ->
-        {:error, :too_many_pending}
-
-      true ->
-        do_create_incoming_connection(params, conn, initial_status)
-    end
-  end
-
-  # The request is unauthenticated unless the mode asks for a password, so
-  # only two modes may activate what it creates: `auto_accept`, which says
-  # so, and `require_password`, which validate_password/1 has checked by
-  # now. Under `require_approval` the row waits for an admin of this site.
-  defp initial_incoming_status do
-    case PhoenixKitSync.get_incoming_mode() do
-      mode when mode in ["auto_accept", "require_password"] -> "active"
-      _require_approval -> "pending"
-    end
-  end
-
-  # Anyone can post a registration, and each one waiting for approval is a
-  # row an admin has to look at. Past this many, new ones are refused until
-  # some are approved or deleted.
-  @default_max_pending_incoming 50
-
-  defp pending_incoming_full? do
-    max =
-      Application.get_env(
-        :phoenix_kit_sync,
-        :max_pending_incoming,
-        @default_max_pending_incoming
-      )
-
-    Connections.count_connections(direction: "receiver", status: "pending") >= max
-  end
-
-  defp do_create_incoming_connection(params, conn, initial_status) do
     remote_ip = client_ip(conn)
     user_agent = get_user_agent(conn)
 
@@ -1012,8 +935,8 @@ defmodule PhoenixKitSync.Web.ApiController do
         "| remote_ip=#{remote_ip}"
     )
 
-    case Connections.create_connection(attrs) do
-      {:ok, connection, _token} ->
+    case Connections.register_incoming(attrs, max_pending: max_pending_incoming()) do
+      {:ok, connection} ->
         Logger.info(
           "[Sync.API] Incoming connection created " <>
             "| uuid=#{connection.uuid} " <>
@@ -1031,6 +954,16 @@ defmodule PhoenixKitSync.Web.ApiController do
            connection_uuid: connection.uuid
          }}
 
+      {:error, :connection_exists} ->
+        Logger.info(
+          "[Sync.API] Incoming connection already exists | sender_url=#{params.sender_url}"
+        )
+
+        {:error, :connection_exists}
+
+      {:error, :too_many_pending} ->
+        {:error, :too_many_pending}
+
       {:error, changeset} ->
         Logger.warning(
           "[Sync.API] Failed to create incoming connection " <>
@@ -1040,6 +973,26 @@ defmodule PhoenixKitSync.Web.ApiController do
 
         {:error, {:changeset_error, changeset}}
     end
+  end
+
+  # The request is unauthenticated unless the mode asks for a password, so
+  # only two modes may activate what it creates: `auto_accept`, which says
+  # so, and `require_password`, which validate_password/1 has checked by
+  # now. Under `require_approval` the row waits for an admin of this site.
+  defp initial_incoming_status do
+    case PhoenixKitSync.get_incoming_mode() do
+      mode when mode in ["auto_accept", "require_password"] -> "active"
+      _require_approval -> "pending"
+    end
+  end
+
+  # Anyone can post a registration, and each one waiting for approval is a
+  # row an admin has to look at. Past this many, new ones are refused until
+  # some are approved or deleted.
+  @default_max_pending_incoming 50
+
+  defp max_pending_incoming do
+    Application.get_env(:phoenix_kit_sync, :max_pending_incoming, @default_max_pending_incoming)
   end
 
   defp registered_message("active"), do: "Connection registered and activated"
@@ -1208,7 +1161,7 @@ defmodule PhoenixKitSync.Web.ApiController do
     limit = page_limit(connection)
 
     with :ok <- require_table(repo, table_name),
-         {:ok, key} <- table_key(table_name),
+         {:ok, key, arrays} <- table_key(table_name),
          {:ok, filter_where, filter_binds} <- filter_where(key, filter),
          {:ok, after_where, after_binds} <-
            after_where(key, after_values, length(filter_binds)),
@@ -1226,9 +1179,10 @@ defmodule PhoenixKitSync.Web.ApiController do
 
       {:ok,
        %{
-         data: rows_to_maps(kept, columns),
+         data: serialize_rows(kept, columns, arrays),
          more?: more?,
-         next_after: if(more?, do: next_after(key, kept, columns))
+         next_after: if(more?, do: next_after(key, kept, columns)),
+         key_without_cursor: PullCursor.unsupported_types(key)
        }}
     end
   end
@@ -1244,20 +1198,26 @@ defmodule PhoenixKitSync.Web.ApiController do
   # The primary key as `{column, type}` pairs. Rows are read in its order,
   # which is what makes a page repeatable and a cursor possible; a table
   # (or view) without one has no such order, so it is refused rather than
-  # paged in whatever order the heap gives.
+  # paged in whatever order the heap gives. The third element names the
+  # element type of each array column, which its values are serialized by.
   defp table_key(table_name) do
     case table_primary_key(table_name) do
       [] ->
         {:error, :no_primary_key}
 
       pk_cols ->
-        types =
+        columns =
           case SchemaInspector.get_schema(table_name) do
-            {:ok, %{columns: columns}} -> Map.new(columns, &{&1.name, &1.type})
-            _ -> %{}
+            {:ok, %{columns: columns}} -> columns
+            _ -> []
           end
 
-        {:ok, Enum.map(pk_cols, &{&1, Map.get(types, &1)})}
+        types = Map.new(columns, &{&1.name, &1.type})
+
+        arrays =
+          for %{type: "ARRAY"} = col <- columns, into: %{}, do: {col.name, col.element_type}
+
+        {:ok, Enum.map(pk_cols, &{&1, Map.get(types, &1)}), arrays}
     end
   end
 
@@ -1366,11 +1326,22 @@ defmodule PhoenixKitSync.Web.ApiController do
     end
   end
 
-  defp rows_to_maps(rows, columns) do
+  # `arrays` names the element type of each array column. An array goes as
+  # a JSON list whose elements are written by that type, the way
+  # DataExporter writes them for the WebSocket path: a uuid element is 16
+  # bytes that are no JSON string, and how they travel must not depend on
+  # whether they happen to be UTF-8.
+  defp serialize_rows(rows, columns, arrays) do
     Enum.map(rows, fn row ->
       columns
       |> Enum.zip(row)
-      |> Map.new(fn {col, val} -> {col, serialize_value(val)} end)
+      |> Map.new(fn
+        {col, list} when is_list(list) and is_map_key(arrays, col) ->
+          {col, DataExporter.serialize_array(arrays[col], list)}
+
+        {col, val} ->
+          {col, serialize_value(val)}
+      end)
     end)
   end
 
@@ -1388,6 +1359,12 @@ defmodule PhoenixKitSync.Web.ApiController do
       %{"__phoenix_kit_binary__" => Base.encode64(binary)}
     end
   end
+
+  # Any other struct is a Postgrex type of its own (an interval, an inet,
+  # a range), which Jason cannot encode: ExtensionTypes writes the ones
+  # that travel and marks the rest.
+  defp serialize_value(%_{} = struct), do: ExtensionTypes.serialize(struct)
+  defp serialize_value([%Postgrex.Lexeme{} = lexeme | _]), do: ExtensionTypes.serialize(lexeme)
 
   defp serialize_value(val), do: val
 
@@ -1506,13 +1483,13 @@ defmodule PhoenixKitSync.Web.ApiController do
   end
 
   defp fetch_filtered_records(repo, table_name, limit, offset, filter) do
-    with {:ok, where_and_order, params} <- records_clause(table_name, filter) do
+    with {:ok, where_and_order, params, arrays} <- records_clause(table_name, filter) do
       next = length(params) + 1
 
       data_query =
         "SELECT * FROM #{quote_ident(table_name)}#{where_and_order} LIMIT $#{next} OFFSET $#{next + 1}"
 
-      run_records_query(repo, data_query, params ++ [limit, offset])
+      run_records_query(repo, data_query, params ++ [limit, offset], arrays)
     end
   end
 
@@ -1520,19 +1497,19 @@ defmodule PhoenixKitSync.Web.ApiController do
   # the key: OFFSET over an unordered read skips and repeats rows, so a
   # table without a key is refused.
   defp records_clause(table_name, filter) do
-    with {:ok, key} <- table_key(table_name),
+    with {:ok, key, arrays} <- table_key(table_name),
          {:ok, where, binds} <- filter_where(key, filter) do
       order = Enum.map_join(key, ", ", fn {col, _type} -> quote_ident(col) end)
       where = if where, do: " WHERE " <> where, else: ""
 
-      {:ok, where <> " ORDER BY " <> order, binds}
+      {:ok, where <> " ORDER BY " <> order, binds, arrays}
     end
   end
 
-  defp run_records_query(repo, data_query, all_params) do
+  defp run_records_query(repo, data_query, all_params, arrays) do
     case SQL.query(repo, data_query, all_params) do
       {:ok, %{rows: rows, columns: columns}} ->
-        {:ok, serialize_rows(rows, columns)}
+        {:ok, serialize_rows(rows, columns, arrays)}
 
       {:error, reason} ->
         {:error, reason}
@@ -1549,15 +1526,6 @@ defmodule PhoenixKitSync.Web.ApiController do
       {:ok, pk_cols} -> pk_cols
       {:error, _} -> []
     end
-  end
-
-  defp serialize_rows(rows, columns) do
-    Enum.map(rows, fn row ->
-      columns
-      |> Enum.zip(row)
-      |> Enum.map(fn {col, val} -> {col, serialize_value(val)} end)
-      |> Map.new()
-    end)
   end
 
   # Identifiers are always quoted: unquoted, Postgres folds case, so a

@@ -64,6 +64,61 @@ defmodule PhoenixKitSync.Integration.PullTruncatedReceiverTest do
     assert transfer.records_created == 3
   end
 
+  describe "a sender that names the key type it has no cursor for" do
+    test "the result and the transfer name it", %{connection: connection} do
+      StubRemote.put_response_extra(@table, %{
+        "truncated" => true,
+        "unsupported_key_type" => "time with time zone"
+      })
+
+      assert {:ok, %{imported: 3, truncated: true, unsupported_key_type: "time with time zone"}} =
+               ConnectionNotifier.pull_table_data(connection, @table, conflict_strategy: "skip")
+
+      transfer = transfer_for(@table)
+      assert transfer.status == "failed"
+      assert transfer.error_message =~ "key is of type time with time zone"
+      # Updating the sender would not help; that advice is left out.
+      refute transfer.error_message =~ "Update the sync module"
+    end
+
+    # The name is the peer's text and is shown to the admin: anything but a
+    # short printable string is dropped, and the pull reads as plainly cut.
+    @bad_names [
+      {"a number", 5},
+      {"a map", %{"type" => "interval"}},
+      {"a list", ["interval"]},
+      {"an empty string", ""},
+      {"too long", String.duplicate("x", 201)},
+      {"control characters", "interval\u0000\u0007"}
+    ]
+
+    for {label, name} <- @bad_names do
+      test "#{label} for a name is not kept", %{connection: connection} do
+        StubRemote.put_response_extra(@table, %{
+          "truncated" => true,
+          "unsupported_key_type" => unquote(Macro.escape(name))
+        })
+
+        assert {:ok, %{truncated: true} = result} =
+                 ConnectionNotifier.pull_table_data(connection, @table, conflict_strategy: "skip")
+
+        refute Map.has_key?(result, :unsupported_key_type)
+        assert transfer_for(@table).error_message =~ "gave no way to continue"
+      end
+    end
+
+    test "a name on an answer that was not cut changes nothing", %{connection: connection} do
+      StubRemote.put_response_extra(@table, %{"unsupported_key_type" => "interval"})
+
+      assert {:ok, result} =
+               ConnectionNotifier.pull_table_data(connection, @table, conflict_strategy: "skip")
+
+      refute Map.has_key?(result, :truncated)
+      refute Map.has_key?(result, :unsupported_key_type)
+      assert transfer_for(@table).status == "completed"
+    end
+  end
+
   test "the remap pull marks a truncated answer the same way", %{connection: connection} do
     StubRemote.put_response_extra(@table, %{"truncated" => true})
 

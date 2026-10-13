@@ -73,6 +73,11 @@ defmodule PhoenixKitSync.ErrorsTest do
       {:unexpected_response, "Unexpected response from remote site"}
     ]
 
+    test "a pull cut because of its key type names the type" do
+      assert Errors.message({:truncated_key_type, "interval"}) ==
+               "Table only partly pulled: its key is of type interval, which the sender cannot continue from once it stops at its max_records_per_request limit. Have the source site's admin raise that limit for this connection"
+    end
+
     for {atom, expected} <- @atom_expectations do
       test "#{inspect(atom)} maps to #{inspect(expected)}" do
         assert Errors.message(unquote(atom)) == unquote(expected)

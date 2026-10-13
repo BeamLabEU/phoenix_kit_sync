@@ -108,6 +108,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
   defp handle_action(socket, _action, _id, params) do
     socket
+    |> assign(:sync_password, nil)
     |> assign(:view_mode, :list)
     |> assign(:selected_connection, nil)
     |> assign_form(nil)
@@ -195,6 +196,11 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     |> assign(:sync_local_checksums, %{})
     |> assign(:sync_loading, true)
     |> assign(:sync_error, nil)
+    # The sender's download password, when it asks for one: typed on this
+    # page, held here for as long as the page is open, sent with each
+    # request to the sender and written nowhere.
+    |> assign(:sync_password, nil)
+    |> assign(:sync_password_needed, false)
     |> assign(:selected_sync_tables, MapSet.new())
     |> assign(:suggested_sync_tables, MapSet.new())
     |> assign(:sync_in_progress, false)
@@ -447,6 +453,23 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     send(self(), {:fetch_sender_tables, connection})
     {:noreply, socket}
   end
+
+  # The field is named "password" so the endpoint's parameter filter keeps
+  # it out of the event log.
+  def handle_event("set_sync_password", %{"password" => password}, socket)
+      when is_binary(password) and password != "" do
+    socket =
+      socket
+      |> assign(:sync_password, password)
+      |> assign(:sync_password_needed, false)
+      |> assign(:sync_error, nil)
+      |> assign(:sync_loading, true)
+
+    send(self(), {:fetch_sender_tables, socket.assigns.selected_connection})
+    {:noreply, socket}
+  end
+
+  def handle_event("set_sync_password", _params, socket), do: {:noreply, socket}
 
   def handle_event("toggle_table", %{"table" => table_name}, socket) do
     selected = socket.assigns.selected_sync_tables
@@ -726,8 +749,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
     # Linked: result is only used to render the table picker; no point
     # continuing if the LV is gone.
+    password = socket.assigns.sync_password
+
     Task.start_link(fn ->
-      result = ConnectionNotifier.fetch_sender_tables(connection)
+      result = ConnectionNotifier.fetch_sender_tables(connection, password: password)
       send(liveview_pid, {:sender_tables_result, result})
     end)
 
@@ -754,6 +779,19 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           |> assign(:sync_loading, false)
           |> assign(:sync_error, gettext("Sender site is offline or unreachable"))
 
+        # No password yet: ask for it. One was sent: it was wrong, say so
+        # and ask again.
+        {:error, :invalid_password} ->
+          message =
+            if socket.assigns.sync_password,
+              do: Errors.message(:invalid_password),
+              else: gettext("This connection asks for its download password")
+
+          socket
+          |> assign(:sync_loading, false)
+          |> assign(:sync_error, message)
+          |> ask_sync_password()
+
         {:error, reason} ->
           socket
           |> assign(:sync_loading, false)
@@ -771,8 +809,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     liveview_pid = self()
 
     # Linked: schema fetch is render-only.
+    password = socket.assigns.sync_password
+
     Task.start_link(fn ->
-      result = ConnectionNotifier.fetch_table_schema(connection, table_name)
+      result = ConnectionNotifier.fetch_table_schema(connection, table_name, password: password)
       send(liveview_pid, {:table_schema_result, table_name, result})
     end)
 
@@ -797,6 +837,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             socket
             |> assign(:detail_table_schema, nil)
             |> assign(:loading_schema, false)
+            |> ask_sync_password(reason)
             |> put_flash(
               :error,
               gettext("Failed to load schema: %{reason}", reason: Errors.message(reason))
@@ -814,6 +855,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     liveview_pid = self()
 
     # Linked: record preview is render-only.
+    password = socket.assigns.sync_password
+
     Task.start_link(fn ->
       opts =
         case filter.mode do
@@ -827,6 +870,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             [id_range: {parse_int(filter.range_start), parse_int(filter.range_end)}, limit: 10]
         end
 
+      opts = Keyword.put(opts, :password, password)
       result = ConnectionNotifier.fetch_table_records(connection, table_name, opts)
       send(liveview_pid, {:preview_records_result, table_name, result})
     end)
@@ -848,6 +892,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             socket
             |> assign(:detail_preview, nil)
             |> assign(:loading_preview, false)
+            |> ask_sync_password(reason)
             |> put_flash(
               :error,
               gettext("Failed to load preview: %{reason}", reason: Errors.message(reason))
@@ -865,6 +910,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     liveview_pid = self()
     strategy = socket.assigns.conflict_strategy
     actor_uuid = Actor.uuid(socket)
+    password = socket.assigns.sync_password
 
     # Supervised: this actually mutates the local DB mid-stream; cancelling
     # mid-flight would leave partial imports. Let it run to completion and
@@ -884,7 +930,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                 [id_range: {parse_int(filter.range_start), parse_int(filter.range_end)}]
             end
 
-          opts = [conflict_strategy: strategy, actor_uuid: actor_uuid] ++ filter_opts
+          opts =
+            [conflict_strategy: strategy, actor_uuid: actor_uuid, password: password] ++
+              filter_opts
 
           ConnectionNotifier.pull_table_data(connection, table, opts)
         end)
@@ -960,6 +1008,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     strategy = socket.assigns.conflict_strategy
     actor_uuid = Actor.uuid(socket)
     uuid_remap = Map.get(socket.assigns.sync_progress, :uuid_remap, %{})
+    password = socket.assigns.sync_password
 
     progress =
       socket.assigns.sync_progress
@@ -977,7 +1026,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           table,
           uuid_remap,
           conflict_strategy: strategy,
-          actor_uuid: actor_uuid
+          actor_uuid: actor_uuid,
+          password: password
         )
       end
 
@@ -1170,7 +1220,16 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   # that came are in), records carried columns this table lacks, or both.
   defp import_result_message(import_result) do
     truncated =
-      if Map.get(import_result, :truncated) == true, do: sync_error_message(:truncated)
+      case import_result do
+        %{truncated: true, unsupported_key_type: type} when is_binary(type) ->
+          Errors.message({:truncated_key_type, type})
+
+        %{truncated: true} ->
+          sync_error_message(:truncated)
+
+        _whole ->
+          nil
+      end
 
     unknown_columns =
       case Map.get(import_result, :unknown_columns) do
@@ -1222,8 +1281,26 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     """
   end
 
+  # The sender refused the download password (none was sent, or a wrong
+  # one): the one held is dropped and the page asks for it.
+  defp ask_sync_password(socket, reason \\ :invalid_password)
+
+  defp ask_sync_password(socket, :invalid_password) do
+    socket
+    |> assign(:sync_password, nil)
+    |> assign(:sync_password_needed, true)
+  end
+
+  defp ask_sync_password(socket, _other_reason), do: socket
+
   # Process a single table's sync result: extract counts, merge with retries, update progress
   defp process_table_sync_result(socket, table, result) do
+    socket =
+      case result do
+        {:error, reason} -> ask_sync_password(socket, reason)
+        _other -> socket
+      end
+
     {records_fetched, records_skipped, records_errors, error_message} =
       extract_sync_counts(result)
 
@@ -1535,6 +1612,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               local_checksums={@sync_local_checksums}
               loading={@sync_loading}
               error={@sync_error}
+              password_needed={@sync_password_needed}
               selected_tables={@selected_sync_tables}
               suggested_tables={@suggested_sync_tables}
               sync_in_progress={@sync_in_progress}
@@ -1842,7 +1920,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   # ===========================================
 
   defp connection_form(assigns) do
-    assigns = assign_new(assigns, :connection, fn -> nil end)
+    assigns =
+      assigns
+      |> assign_new(:connection, fn -> nil end)
+      |> assign(:records_per_request, Connection.max_records_per_request_range())
 
     ~H"""
     <div class="card bg-base-100 shadow max-w-2xl mx-auto">
@@ -1906,6 +1987,24 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               {gettext("The URL of the remote site that will connect to pull data")}
             </p>
           </div>
+
+          <%!-- Sender-specific settings --%>
+          <%= if @action == :new or Ecto.Changeset.get_field(@changeset, :direction) == "sender" do %>
+            <div>
+              <.input
+                field={@form[:max_records_per_request]}
+                type="number"
+                label={gettext("Records per request")}
+                min={@records_per_request.first}
+                max={@records_per_request.last}
+              />
+              <p class="text-sm text-base-content/60 mt-1">
+                {gettext(
+                  "The most rows the remote site gets in one answer. A table whose key has no cursor can only be pulled whole when it fits in this limit"
+                )}
+              </p>
+            </div>
+          <% end %>
 
           <%!-- Receiver-specific settings --%>
           <%= if Ecto.Changeset.get_field(@changeset, :direction) == "receiver" do %>
@@ -2181,6 +2280,36 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               {gettext("Retry")}
             </button>
           </div>
+        <% end %>
+
+        <%!-- The sender's download password. The value is never rendered
+             back: the field is empty on every render. --%>
+        <%= if @password_needed do %>
+          <form
+            id="sync-password-form"
+            phx-submit="set_sync_password"
+            class="flex flex-wrap items-end gap-2 mb-4"
+          >
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">{gettext("Download password")}</span>
+              <input
+                type="password"
+                name="password"
+                value=""
+                autocomplete="off"
+                required
+                class="input input-bordered"
+              />
+            </label>
+            <button type="submit" class="btn btn-primary" phx-disable-with={gettext("Loading…")}>
+              {gettext("Continue")}
+            </button>
+            <p class="basis-full text-sm text-base-content/60">
+              {gettext(
+                "Set on the sending site for this connection. It is used for this page only and is not stored"
+              )}
+            </p>
+          </form>
         <% end %>
 
         <%!-- Loading State --%>

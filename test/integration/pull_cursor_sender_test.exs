@@ -175,6 +175,97 @@ defmodule PhoenixKitSync.Integration.PullCursorSenderTest do
 
   defp assert_same_rows(_table, _records, _keys), do: :ok
 
+  # Key types whose text reads back as exactly the value, the values that
+  # could go wrong included: a float that has no short decimal, NaN and the
+  # infinities, a real widened to a double on its way out, padded
+  # characters, bytes that are no text. Each row carries its rank in key
+  # order, so the pages laid end to end must count 1..n: a skipped row
+  # leaves a gap and a repeated one a double.
+  @exact_keys [
+    {"pc_real", "real",
+     ~w(0.1 1e-45 3.4028235e38 -2.5 NaN Infinity -Infinity 0.3333333 16777216 1e10 7)},
+    {"pc_double", "double precision",
+     ~w(0.1 5e-324 1.7976931348623157e308 -2.5 NaN Infinity -Infinity 0.3333333333333333 1e22 1e23 3)},
+    {"pc_char", "character(5)", ["a", "b", "ab", "a b", "B", "é", "10", "9", "", "zz"]},
+    {"pc_time", "time",
+     ~w(00:00:00 12:30:00.123456 23:59:59.999999 12:30:00 06:00:00.5 12:30:00.123457 01:02:03 18:00 00:00:00.000001 09:09:09)},
+    {"pc_bytea", "bytea", ~w(\\x00 \\xff \\x4142 \\x \\x00ff \\xff00 \\x41 \\x4141 \\x7f \\x80)},
+    {"pc_bool", "boolean", ~w(true false)}
+  ]
+
+  defp create_ranked!(table, type, values) do
+    repo().query!("CREATE TABLE #{table} (k #{type} PRIMARY KEY, n int)")
+
+    for value <- values do
+      repo().query!("INSERT INTO #{table} (k) VALUES ($1::text::#{type})", [value])
+    end
+
+    repo().query!(
+      "UPDATE #{table} t SET n = r.n FROM " <>
+        "(SELECT ctid, row_number() OVER (ORDER BY k) AS n FROM #{table}) r WHERE t.ctid = r.ctid"
+    )
+  end
+
+  for {table, type, values} <- @exact_keys do
+    test "#{type} key: the pages are every row once, in key order", %{hash: hash} do
+      create_ranked!(unquote(table), unquote(type), unquote(values))
+
+      pages = walk(hash, unquote(table))
+      ranks = pages |> Enum.flat_map(& &1["data"]) |> Enum.map(& &1["n"])
+
+      assert ranks == Enum.to_list(1..unquote(length(values)))
+      assert length(pages) == ceil(unquote(length(values)) / @limit)
+      refute Enum.any?(pages, &Map.has_key?(&1, "unsupported_key_type"))
+    end
+  end
+
+  test "a boolean in a composite key continues inside and across its values", %{hash: hash} do
+    repo().query!("CREATE TABLE pc_flags (a boolean, b int, n int, PRIMARY KEY (a, b))")
+
+    repo().query!(
+      "INSERT INTO pc_flags (a, b) SELECT f, g FROM unnest(ARRAY[true, false]) f, generate_series(4, 1, -1) g"
+    )
+
+    repo().query!(
+      "UPDATE pc_flags t SET n = r.n FROM " <>
+        "(SELECT ctid, row_number() OVER (ORDER BY a, b) AS n FROM pc_flags) r WHERE t.ctid = r.ctid"
+    )
+
+    ranks = hash |> walk("pc_flags") |> Enum.flat_map(& &1["data"]) |> Enum.map(& &1["n"])
+
+    assert ranks == Enum.to_list(1..8)
+  end
+
+  @bad_typed_cursors [
+    {"real", "abc"},
+    {"real", "1.5; DROP TABLE pc_bad"},
+    {"double precision", ""},
+    {"double precision", "nan()"},
+    {"double precision", "1.0e-400"},
+    {"double precision", "1e999"},
+    {"real", "1"},
+    {"boolean", "yes"},
+    {"boolean", "1"},
+    {"time", "25:00:00"},
+    {"time", "noon"},
+    {"bytea", "4142"},
+    {"bytea", "\\xzz"},
+    {"bytea", "\\x4"}
+  ]
+
+  for {{type, bad}, index} <- Enum.with_index(@bad_typed_cursors) do
+    test "#{type} key: after=#{inspect(bad)} (case #{index}) is a 400, not a failed query", %{
+      hash: hash
+    } do
+      repo().query!("CREATE TABLE pc_bad (k #{unquote(type)} PRIMARY KEY)")
+
+      assert %{"success" => false, "error_code" => "invalid_cursor"} =
+               hash
+               |> request("pc_bad", %{"after" => %{"k" => unquote(bad)}})
+               |> json_response(400)
+    end
+  end
+
   describe "compatibility" do
     setup do
       create!(Enum.find(@tables, &(elem(&1, 0) == "pc_int")))
@@ -200,19 +291,64 @@ defmodule PhoenixKitSync.Integration.PullCursorSenderTest do
       refute Map.has_key?(body, "cursor")
     end
 
-    test "a key type with no cursor answers its first page, marked truncated", %{hash: hash} do
-      repo().query!("CREATE TABLE pc_float (x double precision PRIMARY KEY)")
-      repo().query!("INSERT INTO pc_float SELECT g / 2.0 FROM generate_series(1, 10) g")
+    test "a key type with no cursor answers its first page, marked truncated, and names the type",
+         %{hash: hash} do
+      repo().query!("CREATE TABLE pc_timetz (x time with time zone PRIMARY KEY)")
 
-      body = pull(hash, "pc_float", %{"paged" => true})
+      repo().query!(
+        "INSERT INTO pc_timetz SELECT time with time zone '00:00+00' + (g || ' minutes')::interval " <>
+          "FROM generate_series(1, 10) g"
+      )
+
+      body = pull(hash, "pc_timetz", %{"paged" => true})
 
       assert length(body["data"]) == @limit
       assert body["truncated"] == true
       assert body["has_more"] == true
+      assert body["unsupported_key_type"] == "time with time zone"
       refute Map.has_key?(body, "next_after")
 
       assert %{"error_code" => "invalid_cursor"} =
-               hash |> request("pc_float", %{"after" => %{"x" => "1.5"}}) |> json_response(400)
+               hash
+               |> request("pc_timetz", %{"after" => %{"x" => "00:01:00"}})
+               |> json_response(400)
+    end
+
+    test "a composite key names only the types that have no cursor", %{hash: hash} do
+      repo().query!("CREATE TYPE pc_mood AS ENUM ('low', 'high')")
+
+      repo().query!(
+        "CREATE TABLE pc_spans (id int, mood pc_mood, at time with time zone, alt pc_mood, " <>
+          "PRIMARY KEY (id, mood, at, alt))"
+      )
+
+      repo().query!(
+        "INSERT INTO pc_spans SELECT g, 'low', '00:00+00', 'high' FROM generate_series(1, 10) g"
+      )
+
+      body = pull(hash, "pc_spans", %{"paged" => true})
+
+      assert body["truncated"] == true
+      assert body["unsupported_key_type"] == "USER-DEFINED, time with time zone"
+    end
+
+    test "a table that fits names no key type, whatever its key", %{hash: hash} do
+      repo().query!("CREATE TABLE pc_small (x time with time zone PRIMARY KEY)")
+      repo().query!("INSERT INTO pc_small VALUES ('01:00+00')")
+
+      body = pull(hash, "pc_small")
+
+      assert length(body["data"]) == 1
+      refute Map.has_key?(body, "truncated")
+      refute Map.has_key?(body, "unsupported_key_type")
+    end
+
+    test "a key with a cursor names no key type", %{hash: hash} do
+      body = pull(hash, "pc_int", %{"paged" => true})
+
+      assert body["truncated"] == true
+      assert is_map(body["next_after"])
+      refute Map.has_key?(body, "unsupported_key_type")
     end
 
     test "a filter and a cursor apply together", %{hash: hash} do
@@ -325,6 +461,78 @@ defmodule PhoenixKitSync.Integration.PullCursorSenderTest do
         assert pull(hash, table, extra)["success"]
         assert downloads(connection) == 2 + n, "#{inspect(extra)} was taken for a continuation"
       end
+    end
+
+    test "a page asked for again under its cursor costs no download, but its records count", %{
+      hash: hash,
+      connection: connection
+    } do
+      first = pull(hash, "pc_int")
+      replay = %{"after" => first["next_after"], "cursor" => first["cursor"]}
+
+      for n <- 1..3 do
+        assert Enum.map(pull(hash, "pc_int", replay)["data"], & &1["id"]) == [4, 5, 6]
+
+        counted = Connections.get_connection!(connection.uuid)
+        assert counted.downloads_used == 1
+        assert counted.records_downloaded == 3 + 3 * n
+      end
+    end
+
+    test "and the record limit stops it", %{hash: hash, connection: connection} do
+      {:ok, _} = Connections.update_connection(connection, %{max_records_total: 6})
+
+      first = pull(hash, "pc_int")
+      replay = %{"after" => first["next_after"], "cursor" => first["cursor"]}
+      assert length(pull(hash, "pc_int", replay)["data"]) == 3
+
+      assert %{"error_code" => "record_limit_reached"} =
+               hash |> request("pc_int", replay) |> json_response(403)
+    end
+
+    # The cursor is free for the time one page takes to import, not longer.
+    for {age, cost} <- [{0, 0}, {540, 0}, {660, 1}, {3_000, 1}] do
+      test "a cursor signed #{age} seconds ago costs #{cost} more downloads", %{
+        hash: hash,
+        connection: connection
+      } do
+        first = pull(hash, "pc_int")
+        assert downloads(connection) == 1
+
+        aged =
+          Phoenix.Token.sign(
+            PhoenixKitSync.Test.Endpoint,
+            "phoenix_kit_sync pull cursor",
+            %{c: connection.uuid, t: "pc_int", a: first["next_after"]},
+            signed_at: System.system_time(:second) - unquote(age)
+          )
+
+        body = pull(hash, "pc_int", %{"after" => first["next_after"], "cursor" => aged})
+
+        # Old or not, the page is answered.
+        assert Enum.map(body["data"], & &1["id"]) == [4, 5, 6]
+        assert downloads(connection) == 1 + unquote(cost)
+      end
+    end
+
+    test "a cursor is free for its own position only, earlier or later", %{
+      hash: hash,
+      connection: connection
+    } do
+      first = pull(hash, "pc_int")
+
+      second =
+        pull(hash, "pc_int", %{"after" => first["next_after"], "cursor" => first["cursor"]})
+
+      assert downloads(connection) == 1
+
+      # The later cursor with the earlier position (a rewind), and the
+      # earlier cursor with the later position (a skip ahead).
+      pull(hash, "pc_int", %{"after" => first["next_after"], "cursor" => second["cursor"]})
+      assert downloads(connection) == 2
+
+      pull(hash, "pc_int", %{"after" => second["next_after"], "cursor" => first["cursor"]})
+      assert downloads(connection) == 3
     end
 
     test "another connection's cursor is not this connection's", %{

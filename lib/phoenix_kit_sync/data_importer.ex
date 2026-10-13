@@ -28,6 +28,7 @@ defmodule PhoenixKitSync.DataImporter do
   """
 
   alias PhoenixKit.RepoHelper
+  alias PhoenixKitSync.ExtensionTypes
   alias PhoenixKitSync.SchemaInspector
 
   require Logger
@@ -370,6 +371,25 @@ defmodule PhoenixKitSync.DataImporter do
     |> Enum.map(fn col -> Map.get(col, :name) || Map.get(col, "name") end)
   end
 
+  @doc """
+  Reads the value of an array column, a list as it came off the wire, back
+  into what Postgrex binds, by the type of its elements
+  (`ColumnInfo.element_type`): the counterpart of
+  `PhoenixKitSync.DataExporter.serialize_array/2`, shared by both import
+  paths.
+
+  A list with an element that cannot be read is returned as it came, so
+  the insert refuses that record instead of this call raising.
+  """
+  @spec prepare_array(list(), String.t() | nil) :: list()
+  def prepare_array(list, element_type) when is_list(list) do
+    prepare_typed_value(list, {:array, element_type})
+  rescue
+    _unreadable -> list
+  catch
+    :throw, {:unreadable_value, _what} -> list
+  end
+
   defp column_types(schema) do
     schema
     |> Map.get(:columns, [])
@@ -441,6 +461,23 @@ defmodule PhoenixKitSync.DataImporter do
   # Postgrex encodes a json value itself: an object, an array or a scalar
   # goes as the decoded term, never as its JSON text.
   defp prepare_typed_value(value, type) when type in ["json", "jsonb"], do: value
+
+  # A value of a type sync does not carry arrives as a marker naming the
+  # type. It fails its record: there is no value to store. (In a json
+  # column, handled above, the same shape is just an object.)
+  defp prepare_typed_value(%{"__phoenix_kit_unsupported__" => type} = value, _column_type)
+       when map_size(value) == 1 and is_binary(type),
+       do: throw({:unreadable_value, "#{type} (a type sync does not carry)"})
+
+  # An interval, an inet or a macaddr travels as text and is bound as the
+  # struct Postgrex takes for it.
+  defp prepare_typed_value(value, type)
+       when is_binary(value) and type in ["interval", "inet", "cidr", "macaddr"] do
+    case ExtensionTypes.parse(type, value) do
+      {:ok, struct} -> struct
+      :error -> value
+    end
+  end
 
   # Bytes that happen to be UTF-8 travel as plain text; they are still
   # bytes, not a date or a time.

@@ -251,6 +251,99 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
     end
   end
 
+  describe "request:records — paging by key" do
+    setup do
+      PhoenixKit.RepoHelper.repo().query!("CREATE TABLE ch_keyed (id int PRIMARY KEY)")
+      PhoenixKit.RepoHelper.repo().query!("INSERT INTO ch_keyed SELECT generate_series(1, 7)")
+      :ok
+    end
+
+    test "a page names the position after it, and a request with it continues there", %{
+      socket: socket,
+      session: session
+    } do
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      push(channel, "request:records", %{"table" => "ch_keyed", "ref" => "k1", "limit" => 3})
+
+      assert_push(
+        "response:records",
+        %{ref: "k1", records: first, next_after: position, offset: 0},
+        @reply_timeout
+      )
+
+      assert Enum.map(first, & &1["id"]) == [1, 2, 3]
+      assert position == %{"id" => "3"}
+
+      # A row before the position goes: by offset the next page would
+      # start at 5.
+      PhoenixKit.RepoHelper.repo().query!("DELETE FROM ch_keyed WHERE id = 1")
+
+      push(channel, "request:records", %{
+        "table" => "ch_keyed",
+        "ref" => "k2",
+        "limit" => 3,
+        "offset" => 3,
+        "after" => position
+      })
+
+      assert_push("response:records", %{ref: "k2", records: second}, @reply_timeout)
+      assert Enum.map(second, & &1["id"]) == [4, 5, 6]
+    end
+
+    test "a request without a position is cut by its offset, as before", %{
+      socket: socket,
+      session: session
+    } do
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      push(channel, "request:records", %{
+        "table" => "ch_keyed",
+        "ref" => "k3",
+        "limit" => 3,
+        "offset" => 5
+      })
+
+      assert_push("response:records", %{ref: "k3", records: records, offset: 5}, @reply_timeout)
+      assert Enum.map(records, & &1["id"]) == [6, 7]
+    end
+
+    test "an empty page names no position", %{socket: socket, session: session} do
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      push(channel, "request:records", %{
+        "table" => "ch_keyed",
+        "ref" => "k4",
+        "after" => %{"id" => "7"}
+      })
+
+      assert_push("response:records", %{ref: "k4", records: []} = reply, @reply_timeout)
+      refute Map.has_key?(reply, :next_after)
+    end
+
+    test "a position that does not fit the key is an error reply", %{
+      socket: socket,
+      session: session
+    } do
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      for {ref, position} <- [{"b1", "3"}, {"b2", %{"nope" => "3"}}, {"b3", %{"id" => "x"}}] do
+        push(channel, "request:records", %{
+          "table" => "ch_keyed",
+          "ref" => ref,
+          "after" => position
+        })
+
+        assert_push("response:error", %{ref: ^ref, error: error}, @reply_timeout)
+        assert error =~ "invalid_cursor"
+      end
+    end
+  end
+
   describe "request:records — malformed payload (DoS hardening)" do
     # Pre-fix sync_channel.ex used Map.fetch! on the "table" and "ref"
     # keys; missing keys crashed the channel and triggered a reconnect

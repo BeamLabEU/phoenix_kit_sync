@@ -85,15 +85,11 @@ defmodule PhoenixKitSync.Web.Receiver do
     {:noreply, socket}
   end
 
-  @impl true
-  def terminate(_reason, socket) do
-    # Clean up WebSocket client on unmount
-    if socket.assigns.ws_client do
-      WebSocketClient.disconnect(socket.assigns.ws_client)
-    end
-
-    :ok
-  end
+  # No terminate/2: the WebSocket client is started linked to this process
+  # (WebSocketClient.start_link/1 in handle_info(:start_websocket)), and a
+  # LiveView never stops with :normal, so the client goes with it on a
+  # closed tab, a crash and a kill alike. terminate/2 would only run on a
+  # graceful stop, since this process does not trap exits.
 
   # ===========================================
   # EVENT HANDLERS
@@ -784,8 +780,12 @@ defmodule PhoenixKitSync.Web.Receiver do
       if records != [] do
         new_offset = offset + length(records)
 
+        # A sender that answers a position continues from that key, so rows
+        # written during the transfer do not shift its pages; one that does
+        # not reads the offset.
         WebSocketClient.request_records(socket.assigns.ws_client, table,
           offset: new_offset,
+          after: Map.get(result, :next_after),
           limit: @batch_size
         )
 

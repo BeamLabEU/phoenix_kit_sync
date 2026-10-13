@@ -36,6 +36,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   alias PhoenixKit.Utils.Date, as: UtilsDate
   alias PhoenixKitSync.ConnectionNotifier.Prepare
   alias PhoenixKitSync.Connections
+  alias PhoenixKitSync.ExtensionTypes
   alias PhoenixKitSync.PullFilter
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Transfers
@@ -61,18 +62,38 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   @typedoc """
   What a pull imported: record counts, `unknown_columns` when records
   carried columns the local table lacks, and `truncated: true` when the
-  sender stopped short and the pull could not continue.
+  sender stopped short and the pull could not continue, with
+  `unsupported_key_type` when the sender named the key type it has no
+  cursor for.
   """
   @type pull_result :: %{
           required(:imported) => non_neg_integer(),
           required(:skipped) => non_neg_integer(),
           required(:errors) => non_neg_integer(),
           optional(:unknown_columns) => [String.t()],
-          optional(:truncated) => true
+          optional(:truncated) => true,
+          optional(:unsupported_key_type) => String.t()
         }
 
   @typedoc "Sender key to local key, per table: `%{{table, sender_key} => local_key}`."
   @type uuid_remap :: %{optional({String.t(), String.t()}) => term()}
+
+  # A sender's reasons for refusing a request under a connection, by the
+  # error_code of its 403.
+  @connection_refusals %{
+    "connection_not_active" => :connection_not_active,
+    "connection_expired" => :connection_expired,
+    "download_limit_reached" => :download_limit_reached,
+    "record_limit_reached" => :record_limit_reached,
+    "ip_not_allowed" => :ip_not_allowed,
+    "outside_allowed_hours" => :outside_allowed_hours,
+    "invalid_password" => :invalid_password
+  }
+
+  @pull_refusals Map.merge(@connection_refusals, %{
+                   "invalid_cursor" => :invalid_cursor,
+                   "no_primary_key" => :source_without_primary_key
+                 })
 
   @doc """
   Notifies a remote site about a new sender connection.
@@ -512,7 +533,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   defp do_fetch_sender_tables(site_url, auth_token_hash, opts) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
     api_url = build_list_tables_url(site_url)
-    body = %{"auth_token_hash" => auth_token_hash}
+    body = put_password(%{"auth_token_hash" => auth_token_hash}, opts)
 
     Logger.debug("Sync: Fetching tables from sender", %{sender_url: site_url})
 
@@ -584,7 +605,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     sender stopped at its max_records_per_request limit and gave no cursor
     to continue from (a sender from before cursors, a key type without one,
     or one that did not honour its own cursor): the rows that came are
-    imported, but the transfer is recorded as failed
+    imported, but the transfer is recorded as failed. `:unsupported_key_type`
+    names the key type when the sender said that is why
   - `{:error, :offline}` - Sender is offline
   - `{:error, :invalid_table_name}` - The name is not a plain identifier;
     nothing is recorded or requested
@@ -800,12 +822,29 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end)
   end
 
+  # The sender connection's download password, when the caller has one. It
+  # goes in the request body the sender reads it from and nowhere else: not
+  # into a log line, a transfer row or activity metadata.
   defp put_password(body, opts) do
     case Keyword.get(opts, :password) do
-      password when is_binary(password) -> Map.put(body, "password", password)
-      _ -> body
+      password when is_binary(password) and password != "" ->
+        Map.put(body, "password", password)
+
+      _ ->
+        body
     end
   end
+
+  # Why the sender refused a table request under this connection (403 with
+  # an error_code): the atom for a code this module knows, else nil.
+  defp connection_refusal(%{status: 403, body: body}) when is_binary(body) do
+    case Jason.decode(body) do
+      {:ok, %{"error_code" => code}} when is_binary(code) -> @connection_refusals[code]
+      _ -> nil
+    end
+  end
+
+  defp connection_refusal(_response), do: nil
 
   defp create_pull_transfer(
          connection_uuid,
@@ -866,7 +905,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       # is reported as cut.
       progress.page > 0 and data != [] and List.first(data) == progress.prev_first ->
         Logger.warning("Sync: the sender repeated a page of #{pull.table_name}; pull stopped")
-        {:ok, finish_pull_transfer(pull.transfer, progress, true), progress.remap}
+        {:ok, finish_pull_transfer(pull.transfer, progress, {:truncated, nil}), progress.remap}
 
       true ->
         import_pull_page(pull, progress, response, data)
@@ -917,9 +956,19 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         })
 
       true ->
-        {:ok, finish_pull_transfer(pull.transfer, progress, true), progress.remap}
+        cut = {:truncated, unsupported_key_type(response)}
+        {:ok, finish_pull_transfer(pull.transfer, progress, cut), progress.remap}
     end
   end
+
+  # The key type a sender names when it cut the answer because that type
+  # has no cursor. It is the peer's text and ends up on the admin's page:
+  # only a short printable name is kept.
+  defp unsupported_key_type(%{"unsupported_key_type" => type}) when is_binary(type) do
+    if byte_size(type) in 1..200 and String.printable?(type), do: type
+  end
+
+  defp unsupported_key_type(_response), do: nil
 
   defp merge_import_results(total, page) do
     merged = %{
@@ -1006,18 +1055,6 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     "invalid_filter" => :invalid_filter
   }
 
-  @pull_refusals %{
-    "invalid_cursor" => :invalid_cursor,
-    "no_primary_key" => :source_without_primary_key,
-    "connection_not_active" => :connection_not_active,
-    "connection_expired" => :connection_expired,
-    "download_limit_reached" => :download_limit_reached,
-    "record_limit_reached" => :record_limit_reached,
-    "ip_not_allowed" => :ip_not_allowed,
-    "outside_allowed_hours" => :outside_allowed_hours,
-    "invalid_password" => :invalid_password
-  }
-
   defp refused_pull_page(status, resp_body, filtered?) do
     code =
       case Jason.decode(resp_body) do
@@ -1052,26 +1089,41 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   # holds for the tables after it, but the table is not whole: the transfer
   # fails with the reason and the counts, and the result carries
   # `truncated: true` for the caller to show.
-  defp finish_pull_transfer(transfer, progress, truncated) do
-    stats = pull_stats(progress)
+  defp finish_pull_transfer(transfer, progress, false) do
+    Transfers.complete_transfer(transfer, pull_stats(progress))
+    progress.result
+  end
 
-    if truncated do
-      Logger.warning("Sync: Pull stopped at the sender's max_records_per_request limit")
+  defp finish_pull_transfer(transfer, progress, {:truncated, nil}) do
+    Logger.warning("Sync: Pull stopped at the sender's max_records_per_request limit")
 
-      Transfers.fail_transfer(
-        transfer,
-        "The sender stopped at its max_records_per_request limit and gave no way to " <>
-          "continue; only the first #{progress.records} records were pulled. Update the " <>
-          "sync module on the source site, or have its admin raise that limit for this " <>
-          "connection",
-        stats
-      )
+    Transfers.fail_transfer(
+      transfer,
+      "The sender stopped at its max_records_per_request limit and gave no way to " <>
+        "continue; only the first #{progress.records} records were pulled. Update the " <>
+        "sync module on the source site, or have its admin raise that limit for this " <>
+        "connection",
+      pull_stats(progress)
+    )
 
-      Map.put(progress.result, :truncated, true)
-    else
-      Transfers.complete_transfer(transfer, stats)
-      progress.result
-    end
+    Map.put(progress.result, :truncated, true)
+  end
+
+  # The sender is current; it is the table's key it cannot continue from.
+  # Updating the source site would not help, so the reason names the type.
+  defp finish_pull_transfer(transfer, progress, {:truncated, key_type}) do
+    Logger.warning("Sync: Pull stopped - the sender has no cursor for a #{key_type} key")
+
+    Transfers.fail_transfer(
+      transfer,
+      "The sender stopped at its max_records_per_request limit and cannot continue past " <>
+        "it: the table's key is of type #{key_type}; only the first #{progress.records} " <>
+        "records were pulled. Have the source site's admin raise that limit for this " <>
+        "connection",
+      pull_stats(progress)
+    )
+
+    Map.merge(progress.result, %{truncated: true, unsupported_key_type: key_type})
   end
 
   # Checked before the request, so a table that cannot be imported here does
@@ -1090,7 +1142,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          %{
            pk_cols: pk_cols,
            columns: MapSet.new(columns, & &1.name),
-           column_types: Map.new(columns, &{&1.name, &1.type}),
+           column_types: Map.new(columns, &{&1.name, column_type(&1)}),
            not_null: for(col <- columns, col.nullable == false, into: MapSet.new(), do: col.name)
          }}
 
@@ -1190,7 +1242,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   defp do_fetch_table_schema(site_url, auth_token_hash, table_name, opts) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     api_url = build_schema_url(site_url)
-    body = %{"auth_token_hash" => auth_token_hash, "table_name" => table_name}
+
+    body =
+      put_password(%{"auth_token_hash" => auth_token_hash, "table_name" => table_name}, opts)
 
     case make_http_request(api_url, body, timeout) do
       {:ok, %{status: 200, body: resp_body}} ->
@@ -1245,7 +1299,11 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   defp do_fetch_table_records(site_url, auth_token_hash, table_name, filter_body, opts) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     api_url = build_records_url(site_url)
-    body = Map.merge(filter_body, build_records_request_body(auth_token_hash, table_name, opts))
+
+    body =
+      filter_body
+      |> Map.merge(build_records_request_body(auth_token_hash, table_name, opts))
+      |> put_password(opts)
 
     case make_http_request(api_url, body, timeout) do
       {:ok, %{status: 200, body: resp_body}} ->
@@ -1301,7 +1359,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp handle_api_http_result({:ok, %{status: 401}}), do: {:error, :unauthorized}
   defp handle_api_http_result({:ok, %{status: 404}}), do: {:error, :not_found}
-  defp handle_api_http_result({:ok, %{status: _status}}), do: {:error, :unexpected_response}
+
+  defp handle_api_http_result({:ok, response}),
+    do: {:error, connection_refusal(response) || :unexpected_response}
 
   defp handle_api_http_result({:error, %{reason: reason}})
        when reason in [:econnrefused, :timeout, :nxdomain] do
@@ -1324,7 +1384,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
-  defp handle_table_http_result({:ok, %{status: _status}}), do: {:error, :unexpected_response}
+  defp handle_table_http_result({:ok, response}),
+    do: {:error, connection_refusal(response) || :unexpected_response}
 
   defp handle_table_http_result({:error, %{reason: reason}})
        when reason in [:econnrefused, :timeout, :nxdomain] do
@@ -2071,6 +2132,11 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
+  # An array column is named by its element type, which its values are
+  # read by (Prepare.value/4).
+  defp column_type(%{type: "ARRAY", element_type: element_type}), do: {:array, element_type}
+  defp column_type(%{type: type}), do: type
+
   defp new_import_acc,
     do: %{imported: 0, skipped: 0, errors: 0, error_sample: nil, unknown_columns: MapSet.new()}
 
@@ -2124,8 +2190,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     # Only names of this table's own columns reach the SQL. check_record_keys
     # already refused non-identifiers; a valid name the local table lacks
     # (schema drift) fails this record without a round trip.
-    case Enum.reject(columns, &MapSet.member?(local_columns, &1)) do
-      [] ->
+    case {Enum.reject(columns, &MapSet.member?(local_columns, &1)),
+          unsupported_value(record, target.column_types)} do
+      {[], nil} ->
         do_insert_record(
           repo,
           table_name,
@@ -2136,7 +2203,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
           target
         )
 
-      unknown ->
+      {[], {column, type}} ->
+        {:error, "column #{column} holds a #{type}, a type sync does not carry"}
+
+      {unknown, _unsupported} ->
         {:error, {:unknown_columns, unknown}}
     end
   rescue
@@ -2145,6 +2215,18 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   end
 
   defp insert_record(_repo, _table_name, _record, _strategy, _numeric_cols, _target), do: :error
+
+  # The first value the sender marked as a type it cannot send
+  # (ExtensionTypes), as `{column, type}`. In a json column the same shape
+  # is just an object.
+  defp unsupported_value(record, column_types) do
+    Enum.find_value(record, fn {column, value} ->
+      type = ExtensionTypes.unsupported(value)
+
+      if type && Map.get(column_types, column) not in ["json", "jsonb"],
+        do: {column, type}
+    end)
+  end
 
   defp do_insert_record(
          repo,

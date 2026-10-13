@@ -32,6 +32,8 @@ defmodule PhoenixKitSync.WebSocketClient do
   use WebSockex
   require Logger
 
+  alias PhoenixKitSync.PullCursor
+
   @heartbeat_interval 30_000
   @join_timeout 10_000
 
@@ -118,6 +120,15 @@ defmodule PhoenixKitSync.WebSocketClient do
 
   @doc """
   Request records from a table with pagination.
+
+  ## Options
+
+  - `:offset` - Number of records to skip (default: 0)
+  - `:limit` - Maximum records to return (default: 100)
+  - `:after` - The `next_after` of the page before, when the sender
+    answered one: the sender then continues from that key and ignores the
+    offset. A sender that does not know it pages by the offset, so both are
+    sent.
   """
   @spec request_records(pid(), String.t(), keyword()) :: :ok
   def request_records(pid, table, opts \\ []) do
@@ -235,18 +246,15 @@ defmodule PhoenixKitSync.WebSocketClient do
       offset = Keyword.get(opts, :offset, 0)
       limit = Keyword.get(opts, :limit, 100)
 
-      msg =
-        encode_message(
-          "transfer:#{state.code}",
-          "request:records",
-          %{
-            table: table,
-            offset: offset,
-            limit: limit,
-            ref: ref
-          },
-          ref
-        )
+      payload = %{table: table, offset: offset, limit: limit, ref: ref}
+
+      payload =
+        case Keyword.get(opts, :after) do
+          %{} = position -> Map.put(payload, :after, position)
+          _none -> payload
+        end
+
+      msg = encode_message("transfer:#{state.code}", "request:records", payload, ref)
 
       state = track_request(state, ref, {:records, table})
       {:reply, {:text, msg}, state}
@@ -439,7 +447,13 @@ defmodule PhoenixKitSync.WebSocketClient do
 
     case request_type do
       {:records, table} ->
-        result = %{records: records, offset: offset, has_more: has_more}
+        result = %{
+          records: records,
+          offset: offset,
+          has_more: has_more,
+          next_after: next_after(payload)
+        }
+
         notify_caller(state, {:records, table, result})
 
       _ ->
@@ -539,4 +553,14 @@ defmodule PhoenixKitSync.WebSocketClient do
   end
 
   defp notify_caller(_, _), do: :ok
+
+  # The position the sender says the next page continues from, or nil from
+  # a sender that pages by offset. It is the peer's data: only the shape a
+  # request may carry is kept.
+  defp next_after(payload) do
+    case PullCursor.from_params(%{"after" => payload["next_after"]}) do
+      {:ok, position} -> position
+      {:error, :invalid_cursor} -> nil
+    end
+  end
 end

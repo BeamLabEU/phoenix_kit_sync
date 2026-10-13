@@ -858,20 +858,26 @@ defmodule PhoenixKitSync.Connections do
   @doc """
   Finds a connection by site URL and direction.
 
+  The URL is compared in its normal form (`Connection.normalize_site_url/1`),
+  so the spelling a row was stored with and the spelling asked for need not
+  be the same string. When several stored rows are spellings of one site,
+  the one stored exactly as asked wins, then the oldest.
+
   ## Examples
 
       conn = Connections.find_by_site_url("https://example.com", "sender")
   """
   @spec find_by_site_url(String.t(), String.t()) :: Connection.t() | nil
   def find_by_site_url(site_url, direction) when is_binary(site_url) and is_binary(direction) do
-    repo = RepoHelper.repo()
-    repo.get_by(Connection, site_url: site_url, direction: direction)
+    from(c in Connection, where: c.direction == ^direction)
+    |> same_site(site_url)
   end
 
   @doc """
   Finds a connection by site URL and auth token hash.
 
-  Used to identify a specific connection when the remote site requests deletion.
+  Used to identify a specific connection when the remote site requests
+  deletion. The URL is compared as `find_by_site_url/2` compares it.
 
   ## Examples
 
@@ -880,31 +886,95 @@ defmodule PhoenixKitSync.Connections do
   @spec find_by_site_url_and_hash(String.t(), String.t()) :: Connection.t() | nil
   def find_by_site_url_and_hash(site_url, auth_token_hash)
       when is_binary(site_url) and is_binary(auth_token_hash) do
-    repo = RepoHelper.repo()
-
-    from(c in Connection,
-      where: c.site_url == ^site_url and c.auth_token_hash == ^auth_token_hash
-    )
-    |> repo.one()
+    from(c in Connection, where: c.auth_token_hash == ^auth_token_hash)
+    |> same_site(site_url)
   end
 
   @doc """
   Finds a connection by site URL, auth token hash and direction.
 
   For requests only one side of a connection may make: a status the sender
-  reports names this site's `"receiver"` row, never a `"sender"` one.
+  reports names this site's `"receiver"` row, never a `"sender"` one. The
+  URL is compared as `find_by_site_url/2` compares it.
   """
   @spec find_by_site_url_and_hash(String.t(), String.t(), String.t()) :: Connection.t() | nil
   def find_by_site_url_and_hash(site_url, auth_token_hash, direction)
       when is_binary(site_url) and is_binary(auth_token_hash) and is_binary(direction) do
-    repo = RepoHelper.repo()
-
     from(c in Connection,
-      where:
-        c.site_url == ^site_url and c.auth_token_hash == ^auth_token_hash and
-          c.direction == ^direction
+      where: c.auth_token_hash == ^auth_token_hash and c.direction == ^direction
     )
-    |> repo.one()
+    |> same_site(site_url)
+  end
+
+  # Rows are stored as their URL was given, so the comparison cannot be an
+  # equality in SQL: the rows whose URL names the same host, in any case,
+  # are read and compared in their normal form here.
+  defp same_site(query, site_url) do
+    wanted = Connection.normalize_site_url(site_url)
+
+    host =
+      case URI.parse(wanted) do
+        %URI{host: host} when is_binary(host) and host != "" -> host
+        _no_host -> wanted
+      end
+
+    pattern = "%" <> String.replace(host, ["\\", "%", "_"], &("\\" <> &1)) <> "%"
+
+    query
+    |> where([c], fragment("lower(?) LIKE ?", c.site_url, ^pattern))
+    |> order_by([c], asc: c.inserted_at, asc: c.uuid)
+    |> RepoHelper.repo().all()
+    |> Enum.filter(&(Connection.normalize_site_url(&1.site_url) == wanted))
+    |> Enum.sort_by(&(&1.site_url != site_url))
+    |> List.first()
+  end
+
+  @registration_lock "phoenix_kit_sync:register_connection"
+
+  @doc """
+  Creates the receiver connection of an incoming registration, unless this
+  site already has one for that sender or holds `:max_pending` pending
+  ones.
+
+  The checks and the insert run under one advisory lock, so registrations
+  arriving together cannot each pass a check the others are about to make
+  false: two for one site make one row, and the pending ones stop at the
+  cap. The site is compared by its normal form
+  (`Connection.normalize_site_url/1`).
+
+  `attrs` are `create_connection/1`'s, string-keyed. Returns
+  `{:error, :connection_exists}`, `{:error, :too_many_pending}` or the
+  changeset.
+  """
+  @spec register_incoming(map(), keyword()) ::
+          {:ok, Connection.t()}
+          | {:error, :connection_exists | :too_many_pending | Ecto.Changeset.t()}
+  def register_incoming(%{"site_url" => site_url} = attrs, opts \\ []) when is_binary(site_url) do
+    repo = RepoHelper.repo()
+    max_pending = Keyword.get(opts, :max_pending)
+
+    repo.transaction(fn ->
+      repo.query!("SELECT pg_advisory_xact_lock(hashtext($1))", [@registration_lock])
+
+      case do_register_incoming(attrs, site_url, max_pending) do
+        {:ok, connection} -> connection
+        {:error, reason} -> repo.rollback(reason)
+      end
+    end)
+  end
+
+  defp do_register_incoming(attrs, site_url, max_pending) do
+    cond do
+      find_by_site_url(site_url, "receiver") ->
+        {:error, :connection_exists}
+
+      attrs["status"] == "pending" and is_integer(max_pending) and
+          count_connections(direction: "receiver", status: "pending") >= max_pending ->
+        {:error, :too_many_pending}
+
+      true ->
+        with {:ok, connection, _token} <- create_connection(attrs), do: {:ok, connection}
+    end
   end
 
   @doc """

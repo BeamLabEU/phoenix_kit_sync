@@ -71,7 +71,62 @@ defmodule PhoenixKitSync.Connection do
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Utils.Date, as: UtilsDate
   alias PhoenixKitSync.SchemaInspector
-  @type t :: %__MODULE__{}
+
+  @typedoc """
+  A connection row. `auth_token` and `download_password` are virtual: set
+  on the way in, stored only as their hashes. A `*_user` association is
+  `Ecto.Association.NotLoaded` until preloaded.
+  """
+  @type t :: %__MODULE__{
+          uuid: UUIDv7.t() | nil,
+          name: String.t() | nil,
+          direction: String.t() | nil,
+          site_url: String.t() | nil,
+          auth_token: String.t() | nil,
+          auth_token_hash: String.t() | nil,
+          status: String.t() | nil,
+          approval_mode: String.t() | nil,
+          allowed_tables: [String.t()] | nil,
+          excluded_tables: [String.t()] | nil,
+          auto_approve_tables: [String.t()] | nil,
+          expires_at: DateTime.t() | nil,
+          max_downloads: integer() | nil,
+          downloads_used: integer() | nil,
+          max_records_total: integer() | nil,
+          records_downloaded: integer() | nil,
+          max_records_per_request: integer() | nil,
+          rate_limit_requests_per_minute: integer() | nil,
+          download_password: String.t() | nil,
+          download_password_hash: String.t() | nil,
+          ip_whitelist: [String.t()] | nil,
+          allowed_hours_start: integer() | nil,
+          allowed_hours_end: integer() | nil,
+          default_conflict_strategy: String.t() | nil,
+          auto_sync_enabled: boolean() | nil,
+          auto_sync_tables: [String.t()] | nil,
+          auto_sync_interval_minutes: integer() | nil,
+          approved_at: DateTime.t() | nil,
+          suspended_at: DateTime.t() | nil,
+          suspended_reason: String.t() | nil,
+          revoked_at: DateTime.t() | nil,
+          revoked_reason: String.t() | nil,
+          last_connected_at: DateTime.t() | nil,
+          last_transfer_at: DateTime.t() | nil,
+          total_transfers: integer() | nil,
+          total_records_transferred: integer() | nil,
+          total_bytes_transferred: integer() | nil,
+          metadata: map() | nil,
+          approved_by_uuid: UUIDv7.t() | nil,
+          approved_by_user: User.t() | Ecto.Association.NotLoaded.t() | nil,
+          suspended_by_uuid: UUIDv7.t() | nil,
+          suspended_by_user: User.t() | Ecto.Association.NotLoaded.t() | nil,
+          revoked_by_uuid: UUIDv7.t() | nil,
+          revoked_by_user: User.t() | Ecto.Association.NotLoaded.t() | nil,
+          created_by_uuid: UUIDv7.t() | nil,
+          created_by_user: User.t() | Ecto.Association.NotLoaded.t() | nil,
+          inserted_at: DateTime.t() | nil,
+          updated_at: DateTime.t() | nil
+        }
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
 
@@ -79,6 +134,59 @@ defmodule PhoenixKitSync.Connection do
   @valid_statuses ~w(pending active suspended revoked expired)
   @valid_approval_modes ~w(auto_approve require_approval per_table)
   @valid_conflict_strategies ~w(skip overwrite merge append)
+
+  # The column is a 4-byte integer: a larger value would fail the write
+  # instead of the changeset.
+  @max_records_per_request_limit 2_147_483_647
+
+  @doc """
+  The bounds of `max_records_per_request`, the most rows one request is
+  answered with: the changesets validate against them and the connection
+  form offers them.
+  """
+  @spec max_records_per_request_range() :: Range.t()
+  def max_records_per_request_range, do: 1..@max_records_per_request_limit
+
+  @doc """
+  The form two spellings of one site's URL share, for comparing them:
+  scheme and host in lower case (the host without a trailing dot), the
+  scheme's default port left out, trailing slashes dropped. The path keeps
+  its case, and a fragment is ignored.
+
+  Connections store `site_url` as it was given; this is what registration
+  and the `Connections.find_by_site_url*` lookups compare, so
+  `https://Example.com:443/` and `https://example.com` are one site. Text
+  that is not a URL with a scheme and a host is returned trimmed.
+  """
+  @spec normalize_site_url(String.t()) :: String.t()
+  def normalize_site_url(url) when is_binary(url) do
+    trimmed = String.trim(url)
+
+    case URI.parse(trimmed) do
+      %URI{scheme: scheme, host: host} = uri
+      when is_binary(scheme) and is_binary(host) and host != "" ->
+        scheme = String.downcase(scheme)
+        port = if uri.port in [nil, URI.default_port(scheme)], do: "", else: ":#{uri.port}"
+        userinfo = if uri.userinfo, do: uri.userinfo <> "@", else: ""
+        query = if uri.query, do: "?" <> uri.query, else: ""
+
+        scheme <>
+          "://" <> userinfo <> normal_host(host) <> port <> normal_path(uri.path) <> query
+
+      _not_a_url ->
+        trimmed
+    end
+  end
+
+  defp normal_host(host) do
+    host = host |> String.downcase() |> String.trim_trailing(".")
+    # URI.parse/1 takes the brackets off an IPv6 literal.
+    if String.contains?(host, ":"), do: "[" <> host <> "]", else: host
+  end
+
+  defp normal_path(nil), do: ""
+
+  defp normal_path(path), do: String.trim_trailing(path, "/")
 
   schema "phoenix_kit_sync_connections" do
     field :name, :string
@@ -199,7 +307,10 @@ defmodule PhoenixKitSync.Connection do
     |> validate_inclusion(:status, @valid_statuses)
     |> validate_inclusion(:approval_mode, @valid_approval_modes)
     |> validate_inclusion(:default_conflict_strategy, @valid_conflict_strategies)
-    |> validate_number(:max_records_per_request, greater_than: 0)
+    |> validate_number(:max_records_per_request,
+      greater_than: 0,
+      less_than_or_equal_to: @max_records_per_request_limit
+    )
     |> validate_number(:rate_limit_requests_per_minute, greater_than: 0)
     |> validate_number(:allowed_hours_start,
       greater_than_or_equal_to: 0,
@@ -410,7 +521,10 @@ defmodule PhoenixKitSync.Connection do
     |> validate_inclusion(:status, @valid_statuses)
     |> validate_inclusion(:approval_mode, @valid_approval_modes)
     |> validate_inclusion(:default_conflict_strategy, @valid_conflict_strategies)
-    |> validate_number(:max_records_per_request, greater_than: 0)
+    |> validate_number(:max_records_per_request,
+      greater_than: 0,
+      less_than_or_equal_to: @max_records_per_request_limit
+    )
     |> validate_number(:rate_limit_requests_per_minute, greater_than: 0)
     |> validate_number(:allowed_hours_start,
       greater_than_or_equal_to: 0,

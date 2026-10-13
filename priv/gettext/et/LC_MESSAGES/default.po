@@ -11,7 +11,7 @@ msgstr ""
 "Language: et\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2497
+#: lib/phoenix_kit_sync/web/connections_live.ex:2626
 #, elixir-autogen, elixir-format
 msgid "%{count} diff"
 msgstr "%{count} erinevus"
@@ -21,7 +21,7 @@ msgstr "%{count} erinevus"
 msgid "%{count} requested"
 msgstr "%{count} küsitud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2533
+#: lib/phoenix_kit_sync/web/connections_live.ex:2662
 #, elixir-autogen, elixir-format
 msgid "%{count} table selected"
 msgid_plural "%{count} tables selected"
@@ -42,17 +42,17 @@ msgid_plural "%{count} transfers pending approval"
 msgstr[0] "%{count} edastus ootab kinnitamist"
 msgstr[1] "%{count} edastust ootab kinnitamist"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2355
+#: lib/phoenix_kit_sync/web/connections_live.ex:2484
 #, elixir-autogen, elixir-format
 msgid "%{selected} of %{total} selected"
 msgstr "Valitud %{selected} / %{total}"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2666
+#: lib/phoenix_kit_sync/web/connections_live.ex:2795
 #, elixir-autogen, elixir-format
 msgid "%{table} (%{count} records)"
 msgstr "%{table} (%{count} kirjet)"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2660
+#: lib/phoenix_kit_sync/web/connections_live.ex:2789
 #, elixir-autogen, elixir-format
 msgid "-- Select a table --"
 msgstr "-- Vali tabel --"
@@ -62,21 +62,21 @@ msgstr "-- Vali tabel --"
 msgid "A connection already exists"
 msgstr "Ühendus on juba olemas"
 
-#: lib/phoenix_kit_sync/web/sender.ex:236
-#: lib/phoenix_kit_sync/web/sender.ex:248
+#: lib/phoenix_kit_sync/web/sender.ex:231
+#: lib/phoenix_kit_sync/web/sender.ex:243
 #, elixir-autogen, elixir-format
 msgid "A receiver disconnected"
 msgstr "Vastuvõtja katkestas ühenduse"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1611
-#: lib/phoenix_kit_sync/web/connections_live.ex:1656
-#: lib/phoenix_kit_sync/web/connections_live.ex:2055
+#: lib/phoenix_kit_sync/web/connections_live.ex:1689
+#: lib/phoenix_kit_sync/web/connections_live.ex:1734
+#: lib/phoenix_kit_sync/web/connections_live.ex:2154
 #: lib/phoenix_kit_sync/web/history.ex:396
 #, elixir-autogen, elixir-format
 msgid "Actions"
 msgstr "Tegevused"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1698
+#: lib/phoenix_kit_sync/web/connections_live.ex:1776
 #, elixir-autogen, elixir-format
 msgid "Active"
 msgstr "Aktiivne"
@@ -87,7 +87,7 @@ msgstr "Aktiivne"
 msgid "All"
 msgstr "Kõik"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1574
+#: lib/phoenix_kit_sync/web/connections_live.ex:1652
 #, elixir-autogen, elixir-format
 msgid "All Connections"
 msgstr "Kõik ühendused"
@@ -97,12 +97,12 @@ msgstr "Kõik ühendused"
 msgid "All connections use token-based authentication."
 msgstr "Kõik ühendused kasutavad tokenipõhist autentimist."
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2790
+#: lib/phoenix_kit_sync/web/connections_live.ex:2919
 #, elixir-autogen, elixir-format
 msgid "All records"
 msgstr "Kõik kirjed"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1881
+#: lib/phoenix_kit_sync/web/connections_live.ex:1962
 #, elixir-autogen, elixir-format
 msgid "Allow remote site to pull data from here"
 msgstr "Luba kaugsaidil siit andmeid tõmmata"
@@ -122,7 +122,7 @@ msgstr "On juba kasutatud"
 msgid "Another site creates a connection to you"
 msgstr "Teine sait loob sinuga ühenduse"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1716
+#: lib/phoenix_kit_sync/web/connections_live.ex:1794
 #, elixir-autogen, elixir-format
 msgid "Append"
 msgstr "Lisa"
@@ -132,8 +132,8 @@ msgstr "Lisa"
 msgid "Append (new IDs)"
 msgstr "Lisa (uued ID-d)"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1801
-#: lib/phoenix_kit_sync/web/connections_live.ex:1804
+#: lib/phoenix_kit_sync/web/connections_live.ex:1879
+#: lib/phoenix_kit_sync/web/connections_live.ex:1882
 #: lib/phoenix_kit_sync/web/history.ex:703
 #, elixir-autogen, elixir-format
 msgid "Approve"
@@ -149,23 +149,23 @@ msgstr "Kinnita see ja kasuta seejärel nende saidilt andmete sünkroonimiseks"
 msgid "Approved"
 msgstr "Kinnitatud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1799
+#: lib/phoenix_kit_sync/web/connections_live.ex:1877
 #: lib/phoenix_kit_sync/web/history.ex:700
 #, elixir-autogen, elixir-format
 msgid "Approving…"
 msgstr "Kinnitamine…"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2114
+#: lib/phoenix_kit_sync/web/connections_live.ex:2213
 #, elixir-autogen, elixir-format
 msgid "Are you sure you want to delete this connection?"
 msgstr "Kas oled kindel, et soovid selle ühenduse kustutada?"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1781
+#: lib/phoenix_kit_sync/web/connections_live.ex:1859
 #, elixir-autogen, elixir-format
 msgid "Are you sure you want to delete this connection? You will need to set it up again."
 msgstr "Kas oled kindel, et soovid selle ühenduse kustutada? Pead selle uuesti seadistama."
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2102
+#: lib/phoenix_kit_sync/web/connections_live.ex:2201
 #, elixir-autogen, elixir-format
 msgid "Are you sure you want to revoke this connection?"
 msgstr "Kas oled kindel, et soovid selle ühenduse tagasi võtta?"
@@ -180,14 +180,14 @@ msgstr "Vastuvõtjana"
 msgid "As a Sender"
 msgstr "Saatjana"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2208
+#: lib/phoenix_kit_sync/web/connections_live.ex:2337
 #, elixir-autogen, elixir-format
 msgid "Auto-retried %{count} time to resolve dependencies"
 msgid_plural "Auto-retried %{count} times to resolve dependencies"
 msgstr[0] "Sõltuvuste lahendamiseks prooviti automaatselt uuesti %{count} kord"
 msgstr[1] "Sõltuvuste lahendamiseks prooviti automaatselt uuesti %{count} korda"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2123
+#: lib/phoenix_kit_sync/web/connections_live.ex:2222
 #, elixir-autogen, elixir-format
 msgid "Back to List"
 msgstr "Tagasi loendisse"
@@ -197,12 +197,12 @@ msgstr "Tagasi loendisse"
 msgid "Bytes"
 msgstr "Baidid"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2026
+#: lib/phoenix_kit_sync/web/connections_live.ex:2125
 #, elixir-autogen, elixir-format
 msgid "Bytes Transferred"
 msgstr "Edastatud baidid"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1952
+#: lib/phoenix_kit_sync/web/connections_live.ex:2051
 #, elixir-autogen, elixir-format
 msgid "Cancel"
 msgstr "Tühista"
@@ -217,7 +217,7 @@ msgstr "Katkestatud"
 msgid "Cannot start"
 msgstr "Ei saa alustada"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2402
+#: lib/phoenix_kit_sync/web/connections_live.ex:2531
 #, elixir-autogen, elixir-format
 msgid "Checksum"
 msgstr "Kontrollsumma"
@@ -232,18 +232,18 @@ msgstr "Vali importimisel konfliktistrateegia"
 msgid "Clear Filters"
 msgstr "Tühjenda filtrid"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2149
+#: lib/phoenix_kit_sync/web/connections_live.ex:2248
 #: lib/phoenix_kit_sync/web/history.ex:707
 #, elixir-autogen, elixir-format
 msgid "Close"
 msgstr "Sulge"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2716
+#: lib/phoenix_kit_sync/web/connections_live.ex:2845
 #, elixir-autogen, elixir-format
 msgid "Column"
 msgstr "Veerg"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1178
+#: lib/phoenix_kit_sync/web/connections_live.ex:1237
 #, elixir-autogen, elixir-format
 msgid "Columns not in the local table: %{columns}"
 msgstr "Veerud, mida kohalikus tabelis pole: %{columns}"
@@ -254,14 +254,14 @@ msgstr "Veerud, mida kohalikus tabelis pole: %{columns}"
 msgid "Completed"
 msgstr "Lõpetatud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2008
-#: lib/phoenix_kit_sync/web/connections_live.ex:2911
+#: lib/phoenix_kit_sync/web/connections_live.ex:2107
+#: lib/phoenix_kit_sync/web/connections_live.ex:3040
 #: lib/phoenix_kit_sync/web/history.ex:631
 #, elixir-autogen, elixir-format
 msgid "Conflict Strategy"
 msgstr "Konfliktistrateegia"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2366
+#: lib/phoenix_kit_sync/web/connections_live.ex:2495
 #, elixir-autogen, elixir-format
 msgid "Conflict:"
 msgstr "Konflikt:"
@@ -282,27 +282,27 @@ msgstr "Ühendamine…"
 msgid "Connection"
 msgstr "Ühendus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1083
+#: lib/phoenix_kit_sync/web/connections_live.ex:1133
 #, elixir-autogen, elixir-format
 msgid "Connection '%{name}' suspended — remote site reports it no longer exists. You can delete it or reactivate and re-verify."
 msgstr "Ühendus '%{name}' peatati — kaugsait teatab, et seda pole enam olemas. Võid selle kustutada või uuesti aktiveerida ja kontrollida."
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:314
+#: lib/phoenix_kit_sync/web/connections_live.ex:320
 #, elixir-autogen, elixir-format
 msgid "Connection approved"
 msgstr "Ühendus kinnitatud"
 
-#: lib/phoenix_kit_sync/web/receiver.ex:556
+#: lib/phoenix_kit_sync/web/receiver.ex:552
 #, elixir-autogen, elixir-format
 msgid "Connection closed"
 msgstr "Ühendus suletud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1442
+#: lib/phoenix_kit_sync/web/connections_live.ex:1519
 #, elixir-autogen, elixir-format
 msgid "Connection created successfully"
 msgstr "Ühendus loodud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:424
+#: lib/phoenix_kit_sync/web/connections_live.ex:430
 #, elixir-autogen, elixir-format
 msgid "Connection deleted"
 msgstr "Ühendus kustutatud"
@@ -322,28 +322,28 @@ msgstr "Ühendus on aegunud"
 msgid "Connection is not active"
 msgstr "Ühendus ei ole aktiivne"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:132
-#: lib/phoenix_kit_sync/web/connections_live.ex:164
+#: lib/phoenix_kit_sync/web/connections_live.ex:133
+#: lib/phoenix_kit_sync/web/connections_live.ex:165
 #, elixir-autogen, elixir-format
 msgid "Connection not found"
 msgstr "Ühendust ei leitud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:358
+#: lib/phoenix_kit_sync/web/connections_live.ex:364
 #, elixir-autogen, elixir-format
 msgid "Connection reactivated"
 msgstr "Ühendus taasaktiveeritud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:383
+#: lib/phoenix_kit_sync/web/connections_live.ex:389
 #, elixir-autogen, elixir-format
 msgid "Connection revoked"
 msgstr "Ühendus tagasi võetud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:423
+#: lib/phoenix_kit_sync/web/connections_live.ex:429
 #, elixir-autogen, elixir-format
 msgid "Connection severed"
 msgstr "Ühendus katkestatud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:336
+#: lib/phoenix_kit_sync/web/connections_live.ex:342
 #, elixir-autogen, elixir-format
 msgid "Connection suspended"
 msgstr "Ühendus peatatud"
@@ -368,15 +368,15 @@ msgstr "Ühendus aegus. Palun kontrolli URL-i ja koodi."
 msgid "Connection timed out. Please try again."
 msgstr "Ühendus aegus. Palun proovi uuesti."
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1471
+#: lib/phoenix_kit_sync/web/connections_live.ex:1548
 #, elixir-autogen, elixir-format
 msgid "Connection updated successfully"
 msgstr "Ühendus uuendatud"
 
 #: lib/phoenix_kit_sync.ex:266
-#: lib/phoenix_kit_sync/web/connections_live.ex:1497
-#: lib/phoenix_kit_sync/web/connections_live.ex:3003
-#: lib/phoenix_kit_sync/web/connections_live.ex:3044
+#: lib/phoenix_kit_sync/web/connections_live.ex:1574
+#: lib/phoenix_kit_sync/web/connections_live.ex:3132
+#: lib/phoenix_kit_sync/web/connections_live.ex:3173
 #, elixir-autogen, elixir-format
 msgid "Connections"
 msgstr "Ühendused"
@@ -396,7 +396,7 @@ msgstr "Kaugsaidiga ei õnnestunud ühendust luua"
 msgid "Could not find the sender's server. Please check the URL."
 msgstr "Saatja serverit ei leitud. Palun kontrolli URL-i."
 
-#: lib/phoenix_kit_sync/web/receiver.ex:667
+#: lib/phoenix_kit_sync/web/receiver.ex:663
 #, elixir-autogen, elixir-format
 msgid "Could not get schema for %{table}, table won't be auto-created"
 msgstr "Tabeli %{table} skeemi ei õnnestunud saada, tabelit ei looda automaatselt"
@@ -406,12 +406,12 @@ msgstr "Tabeli %{table} skeemi ei õnnestunud saada, tabelit ei looda automaatse
 msgid "Could not resolve the remote site's domain"
 msgstr "Kaugsaidi domeeni ei õnnestunud lahendada"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1955
+#: lib/phoenix_kit_sync/web/connections_live.ex:2054
 #, elixir-autogen, elixir-format
 msgid "Create Connection"
 msgstr "Loo ühendus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2771
+#: lib/phoenix_kit_sync/web/connections_live.ex:2900
 #, elixir-autogen, elixir-format
 msgid "Create Table"
 msgstr "Loo tabel"
@@ -432,7 +432,7 @@ msgstr "Loo ühendusi, et jagada oma andmeid teiste saitidega. Sissetulevad ühe
 msgid "Created"
 msgstr "Loodud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2769
+#: lib/phoenix_kit_sync/web/connections_live.ex:2898
 #, elixir-autogen, elixir-format
 msgid "Creating…"
 msgstr "Loomine…"
@@ -442,7 +442,7 @@ msgstr "Loomine…"
 msgid "DB Sync"
 msgstr "Andmebaasi sünkroonimine"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1507
+#: lib/phoenix_kit_sync/web/connections_live.ex:1584
 #, elixir-autogen, elixir-format
 msgid "DB Sync module is disabled."
 msgstr "Andmebaasi sünkroonimise moodul on välja lülitatud."
@@ -452,29 +452,29 @@ msgstr "Andmebaasi sünkroonimise moodul on välja lülitatud."
 msgid "Date"
 msgstr "Kuupäev"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2719
+#: lib/phoenix_kit_sync/web/connections_live.ex:2848
 #, elixir-autogen, elixir-format
 msgid "Default"
 msgstr "Vaikimisi"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1915
+#: lib/phoenix_kit_sync/web/connections_live.ex:2014
 #, elixir-autogen, elixir-format
 msgid "Default Conflict Strategy"
 msgstr "Vaikimisi konfliktistrateegia"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2116
+#: lib/phoenix_kit_sync/web/connections_live.ex:2215
 #, elixir-autogen, elixir-format
 msgid "Delete"
 msgstr "Kustuta"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1779
-#: lib/phoenix_kit_sync/web/connections_live.ex:1788
+#: lib/phoenix_kit_sync/web/connections_live.ex:1857
+#: lib/phoenix_kit_sync/web/connections_live.ex:1866
 #, elixir-autogen, elixir-format
 msgid "Delete connection"
 msgstr "Kustuta ühendus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1774
-#: lib/phoenix_kit_sync/web/connections_live.ex:2112
+#: lib/phoenix_kit_sync/web/connections_live.ex:1852
+#: lib/phoenix_kit_sync/web/connections_live.ex:2211
 #, elixir-autogen, elixir-format
 msgid "Deleting…"
 msgstr "Kustutamine…"
@@ -499,7 +499,7 @@ msgstr "Keeldu"
 msgid "Denying…"
 msgstr "Keeldumine…"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2345
+#: lib/phoenix_kit_sync/web/connections_live.ex:2474
 #, elixir-autogen, elixir-format
 msgid "Deselect All"
 msgstr "Tühista kõigi valik"
@@ -510,13 +510,13 @@ msgstr "Tühista kõigi valik"
 msgid "Details"
 msgstr "Üksikasjad"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2519
+#: lib/phoenix_kit_sync/web/connections_live.ex:2648
 #, elixir-autogen, elixir-format
 msgid "Different"
 msgstr "Erinev"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1875
-#: lib/phoenix_kit_sync/web/connections_live.ex:1994
+#: lib/phoenix_kit_sync/web/connections_live.ex:1956
+#: lib/phoenix_kit_sync/web/connections_live.ex:2093
 #: lib/phoenix_kit_sync/web/history.ex:332
 #: lib/phoenix_kit_sync/web/history.ex:390
 #: lib/phoenix_kit_sync/web/history.ex:566
@@ -524,7 +524,7 @@ msgstr "Erinev"
 msgid "Direction"
 msgstr "Suund"
 
-#: lib/phoenix_kit_sync/web/sender.ex:525
+#: lib/phoenix_kit_sync/web/sender.ex:520
 #, elixir-autogen, elixir-format
 msgid "Disconnect this receiver"
 msgstr "Katkesta selle vastuvõtja ühendus"
@@ -534,20 +534,20 @@ msgstr "Katkesta selle vastuvõtja ühendus"
 msgid "Disconnected"
 msgstr "Ühendus katkenud"
 
-#: lib/phoenix_kit_sync/web/receiver.ex:536
+#: lib/phoenix_kit_sync/web/receiver.ex:532
 #, elixir-autogen, elixir-format
 msgid "Disconnected from sender"
 msgstr "Ühendus saatjaga katkes"
 
 #: lib/phoenix_kit_sync/web/receiver.ex:1093
-#: lib/phoenix_kit_sync/web/sender.ex:475
-#: lib/phoenix_kit_sync/web/sender.ex:523
+#: lib/phoenix_kit_sync/web/sender.ex:470
+#: lib/phoenix_kit_sync/web/sender.ex:518
 #, elixir-autogen, elixir-format
 msgid "Disconnecting…"
 msgstr "Ühenduse katkestamine…"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2280
-#: lib/phoenix_kit_sync/web/connections_live.ex:2649
+#: lib/phoenix_kit_sync/web/connections_live.ex:2409
+#: lib/phoenix_kit_sync/web/connections_live.ex:2778
 #, elixir-autogen, elixir-format
 msgid "Done"
 msgstr "Valmis"
@@ -557,15 +557,15 @@ msgstr "Valmis"
 msgid "Download limit reached"
 msgstr "Allalaadimiste limiit on täis"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1764
-#: lib/phoenix_kit_sync/web/connections_live.ex:1767
-#: lib/phoenix_kit_sync/web/connections_live.ex:1984
-#: lib/phoenix_kit_sync/web/connections_live.ex:3025
+#: lib/phoenix_kit_sync/web/connections_live.ex:1842
+#: lib/phoenix_kit_sync/web/connections_live.ex:1845
+#: lib/phoenix_kit_sync/web/connections_live.ex:2083
+#: lib/phoenix_kit_sync/web/connections_live.ex:3154
 #, elixir-autogen, elixir-format
 msgid "Edit"
 msgstr "Muuda"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1854
+#: lib/phoenix_kit_sync/web/connections_live.ex:1935
 #, elixir-autogen, elixir-format
 msgid "Edit Connection"
 msgstr "Muuda ühendust"
@@ -575,12 +575,12 @@ msgstr "Muuda ühendust"
 msgid "Enable it on the Modules page"
 msgstr "Lülita see sisse moodulite lehel"
 
-#: lib/phoenix_kit_sync/web/sender.ex:478
+#: lib/phoenix_kit_sync/web/sender.ex:473
 #, elixir-autogen, elixir-format
 msgid "End All Sessions"
 msgstr "Lõpeta kõik seansid"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2819
+#: lib/phoenix_kit_sync/web/connections_live.ex:2948
 #, elixir-autogen, elixir-format
 msgid "Enter IDs (e.g., 1,2,3)"
 msgstr "Sisesta ID-d (nt 1,2,3)"
@@ -590,18 +590,18 @@ msgstr "Sisesta ID-d (nt 1,2,3)"
 msgid "Enter the remote site's URL"
 msgstr "Sisesta kaugsaidi URL"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1705
+#: lib/phoenix_kit_sync/web/connections_live.ex:1783
 #, elixir-autogen, elixir-format
 msgid "Error"
 msgstr "Viga"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2224
-#: lib/phoenix_kit_sync/web/connections_live.ex:2594
+#: lib/phoenix_kit_sync/web/connections_live.ex:2353
+#: lib/phoenix_kit_sync/web/connections_live.ex:2723
 #, elixir-autogen, elixir-format
 msgid "Errors"
 msgstr "Vead"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1701
+#: lib/phoenix_kit_sync/web/connections_live.ex:1779
 #: lib/phoenix_kit_sync/web/history.ex:730
 #, elixir-autogen, elixir-format
 msgid "Expired"
@@ -613,7 +613,7 @@ msgstr "Aegunud"
 msgid "Failed"
 msgstr "Ebaõnnestunud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:320
+#: lib/phoenix_kit_sync/web/connections_live.ex:326
 #, elixir-autogen, elixir-format
 msgid "Failed to approve connection"
 msgstr "Ühenduse kinnitamine ebaõnnestus"
@@ -623,13 +623,13 @@ msgstr "Ühenduse kinnitamine ebaõnnestus"
 msgid "Failed to approve transfer"
 msgstr "Edastuse kinnitamine ebaõnnestus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:679
-#: lib/phoenix_kit_sync/web/receiver.ex:414
+#: lib/phoenix_kit_sync/web/connections_live.ex:702
+#: lib/phoenix_kit_sync/web/receiver.ex:410
 #, elixir-autogen, elixir-format
 msgid "Failed to create table: %{reason}"
 msgstr "Tabeli loomine ebaõnnestus: %{reason}"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:435
+#: lib/phoenix_kit_sync/web/connections_live.ex:441
 #, elixir-autogen, elixir-format
 msgid "Failed to delete connection"
 msgstr "Ühenduse kustutamine ebaõnnestus"
@@ -644,28 +644,28 @@ msgstr "Edastusest keeldumine ebaõnnestus"
 msgid "Failed to fetch records from %{table}: %{error}"
 msgstr "Kirjete toomine tabelist %{table} ebaõnnestus: %{error}"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:762
+#: lib/phoenix_kit_sync/web/connections_live.ex:800
 #, elixir-autogen, elixir-format
 msgid "Failed to fetch tables: %{reason}"
 msgstr "Tabelite toomine ebaõnnestus: %{reason}"
 
-#: lib/phoenix_kit_sync/web/sender.ex:87
-#: lib/phoenix_kit_sync/web/sender.ex:112
+#: lib/phoenix_kit_sync/web/sender.ex:82
+#: lib/phoenix_kit_sync/web/sender.ex:107
 #, elixir-autogen, elixir-format
 msgid "Failed to generate code: %{reason}"
 msgstr "Koodi loomine ebaõnnestus: %{reason}"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:853
+#: lib/phoenix_kit_sync/web/connections_live.ex:898
 #, elixir-autogen, elixir-format
 msgid "Failed to load preview: %{reason}"
 msgstr "Eelvaate laadimine ebaõnnestus: %{reason}"
 
-#: lib/phoenix_kit_sync/web/receiver.ex:694
+#: lib/phoenix_kit_sync/web/receiver.ex:690
 #, elixir-autogen, elixir-format
 msgid "Failed to load schema for %{table}: %{error}"
 msgstr "Tabeli %{table} skeemi laadimine ebaõnnestus: %{error}"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:802
+#: lib/phoenix_kit_sync/web/connections_live.ex:843
 #, elixir-autogen, elixir-format
 msgid "Failed to load schema: %{reason}"
 msgstr "Skeemi laadimine ebaõnnestus: %{reason}"
@@ -675,22 +675,22 @@ msgstr "Skeemi laadimine ebaõnnestus: %{reason}"
 msgid "Failed to load tables: %{error}"
 msgstr "Tabelite laadimine ebaõnnestus: %{error}"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:364
+#: lib/phoenix_kit_sync/web/connections_live.ex:370
 #, elixir-autogen, elixir-format
 msgid "Failed to reactivate connection"
 msgstr "Ühenduse taasaktiveerimine ebaõnnestus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:407
+#: lib/phoenix_kit_sync/web/connections_live.ex:413
 #, elixir-autogen, elixir-format
 msgid "Failed to regenerate token"
 msgstr "Tokeni uuesti loomine ebaõnnestus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:389
+#: lib/phoenix_kit_sync/web/connections_live.ex:395
 #, elixir-autogen, elixir-format
 msgid "Failed to revoke connection"
 msgstr "Ühenduse tagasivõtmine ebaõnnestus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:342
+#: lib/phoenix_kit_sync/web/connections_live.ex:348
 #, elixir-autogen, elixir-format
 msgid "Failed to suspend connection"
 msgstr "Ühenduse peatamine ebaõnnestus"
@@ -700,27 +700,27 @@ msgstr "Ühenduse peatamine ebaõnnestus"
 msgid "Fetch failed"
 msgstr "Toomine ebaõnnestus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2190
+#: lib/phoenix_kit_sync/web/connections_live.ex:2319
 #, elixir-autogen, elixir-format
 msgid "Fetching available tables…"
 msgstr "Saadaolevate tabelite toomine…"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2779
+#: lib/phoenix_kit_sync/web/connections_live.ex:2908
 #, elixir-autogen, elixir-format
 msgid "Filter Records"
 msgstr "Filtreeri kirjeid"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2829
+#: lib/phoenix_kit_sync/web/connections_live.ex:2958
 #, elixir-autogen, elixir-format
 msgid "From"
 msgstr "Alates"
 
-#: lib/phoenix_kit_sync/web/sender.ex:321
+#: lib/phoenix_kit_sync/web/sender.ex:316
 #, elixir-autogen, elixir-format
 msgid "Generate Connection Code"
 msgstr "Loo ühenduskood"
 
-#: lib/phoenix_kit_sync/web/sender.ex:318
+#: lib/phoenix_kit_sync/web/sender.ex:313
 #, elixir-autogen, elixir-format
 msgid "Generating…"
 msgstr "Loomine…"
@@ -736,7 +736,7 @@ msgstr "Ajalugu"
 msgid "How Cross-Site Connections Work"
 msgstr "Kuidas saitidevahelised ühendused töötavad"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2810
+#: lib/phoenix_kit_sync/web/connections_live.ex:2939
 #, elixir-autogen, elixir-format
 msgid "ID Range"
 msgstr "ID-vahemik"
@@ -746,14 +746,14 @@ msgstr "ID-vahemik"
 msgid "IP address not in whitelist"
 msgstr "IP-aadress ei ole lubatud nimekirjas"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1912
-#: lib/phoenix_kit_sync/web/connections_live.ex:2005
+#: lib/phoenix_kit_sync/web/connections_live.ex:2011
+#: lib/phoenix_kit_sync/web/connections_live.ex:2104
 #, elixir-autogen, elixir-format
 msgid "Import Settings"
 msgstr "Impordi seaded"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2222
-#: lib/phoenix_kit_sync/web/connections_live.ex:2592
+#: lib/phoenix_kit_sync/web/connections_live.ex:2351
+#: lib/phoenix_kit_sync/web/connections_live.ex:2721
 #, elixir-autogen, elixir-format
 msgid "Imported"
 msgstr "Imporditud"
@@ -768,12 +768,12 @@ msgstr "Selle tabeli importimine ebaõnnestus; üksikasjad on serveri logis"
 msgid "In Progress"
 msgstr "Töös"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1577
+#: lib/phoenix_kit_sync/web/connections_live.ex:1655
 #, elixir-autogen, elixir-format
 msgid "Incoming Only"
 msgstr "Ainult sissetulevad"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1885
+#: lib/phoenix_kit_sync/web/connections_live.ex:1966
 #, elixir-autogen, elixir-format
 msgid "Incoming connections appear when a remote site connects"
 msgstr "Sissetulevad ühendused ilmuvad siis, kui kaugsait ühendub"
@@ -833,39 +833,40 @@ msgstr "Vigane olek"
 msgid "Invalid table name"
 msgstr "Vigane tabeli nimi"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2033
+#: lib/phoenix_kit_sync/web/connections_live.ex:2132
 #, elixir-autogen, elixir-format
 msgid "Last Connected"
 msgstr "Viimati ühendatud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2043
+#: lib/phoenix_kit_sync/web/connections_live.ex:2142
 #, elixir-autogen, elixir-format
 msgid "Last Transfer"
 msgstr "Viimane edastus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1702
+#: lib/phoenix_kit_sync/web/connections_live.ex:1780
 #, elixir-autogen, elixir-format
 msgid "Loading"
 msgstr "Laadimine"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2680
+#: lib/phoenix_kit_sync/web/connections_live.ex:2809
 #, elixir-autogen, elixir-format
 msgid "Loading table schema…"
 msgstr "Tabeli skeemi laadimine…"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1741
-#: lib/phoenix_kit_sync/web/connections_live.ex:2178
+#: lib/phoenix_kit_sync/web/connections_live.ex:1819
+#: lib/phoenix_kit_sync/web/connections_live.ex:2277
+#: lib/phoenix_kit_sync/web/connections_live.ex:2304
 #, elixir-autogen, elixir-format
 msgid "Loading…"
 msgstr "Laadimine…"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2326
-#: lib/phoenix_kit_sync/web/connections_live.ex:2400
+#: lib/phoenix_kit_sync/web/connections_live.ex:2455
+#: lib/phoenix_kit_sync/web/connections_live.ex:2529
 #, elixir-autogen, elixir-format
 msgid "Local"
 msgstr "Kohalik"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2697
+#: lib/phoenix_kit_sync/web/connections_live.ex:2826
 #, elixir-autogen, elixir-format
 msgid "Local:"
 msgstr "Kohalik:"
@@ -876,23 +877,23 @@ msgstr "Kohalik:"
 msgid "Manage Connections"
 msgstr "Halda ühendusi"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1499
+#: lib/phoenix_kit_sync/web/connections_live.ex:1576
 #, elixir-autogen, elixir-format
 msgid "Manage permanent connections for data sync"
 msgstr "Halda püsivaid ühendusi andmete sünkroonimiseks"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2489
-#: lib/phoenix_kit_sync/web/connections_live.ex:2524
+#: lib/phoenix_kit_sync/web/connections_live.ex:2618
+#: lib/phoenix_kit_sync/web/connections_live.ex:2653
 #, elixir-autogen, elixir-format
 msgid "Match"
 msgstr "Ühtib"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1715
+#: lib/phoenix_kit_sync/web/connections_live.ex:1793
 #, elixir-autogen, elixir-format
 msgid "Merge"
 msgstr "Liida"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1942
+#: lib/phoenix_kit_sync/web/connections_live.ex:2041
 #, elixir-autogen, elixir-format
 msgid "Merge - Combine with existing records"
 msgstr "Liida - kombineeri olemasolevate kirjetega"
@@ -917,74 +918,74 @@ msgstr "Kohustuslikud väljad puuduvad"
 msgid "Missing session code"
 msgstr "Seansikood puudub"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2499
+#: lib/phoenix_kit_sync/web/connections_live.ex:2628
 #, elixir-autogen, elixir-format
 msgid "Modified"
 msgstr "Muudetud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1608
+#: lib/phoenix_kit_sync/web/connections_live.ex:1686
 #, elixir-autogen, elixir-format
 msgid "Name"
 msgstr "Nimi"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1868
+#: lib/phoenix_kit_sync/web/connections_live.ex:1949
 #, elixir-autogen, elixir-format
 msgid "Name *"
 msgstr "Nimi *"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2038
-#: lib/phoenix_kit_sync/web/connections_live.ex:2048
+#: lib/phoenix_kit_sync/web/connections_live.ex:2137
+#: lib/phoenix_kit_sync/web/connections_live.ex:2147
 #, elixir-autogen, elixir-format
 msgid "Never"
 msgstr "Mitte kunagi"
 
-#: lib/phoenix_kit_sync/web/sender.ex:397
+#: lib/phoenix_kit_sync/web/sender.ex:392
 #, elixir-autogen, elixir-format
 msgid "New Code"
 msgstr "Uus kood"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1583
-#: lib/phoenix_kit_sync/web/connections_live.ex:1852
+#: lib/phoenix_kit_sync/web/connections_live.ex:1661
+#: lib/phoenix_kit_sync/web/connections_live.ex:1933
 #, elixir-autogen, elixir-format
 msgid "New Connection"
 msgstr "Uus ühendus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3009
+#: lib/phoenix_kit_sync/web/connections_live.ex:3138
 #, elixir-autogen, elixir-format
 msgid "New connection"
 msgstr "Uus ühendus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2701
+#: lib/phoenix_kit_sync/web/connections_live.ex:2830
 #, elixir-autogen, elixir-format
 msgid "New table"
 msgstr "Uus tabel"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2514
+#: lib/phoenix_kit_sync/web/connections_live.ex:2643
 #, elixir-autogen, elixir-format
 msgid "New tables"
 msgstr "Uued tabelid"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1647
+#: lib/phoenix_kit_sync/web/connections_live.ex:1725
 #, elixir-autogen, elixir-format
 msgid "No incoming connections configured"
 msgstr "Sissetulevaid ühendusi pole seadistatud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1601
+#: lib/phoenix_kit_sync/web/connections_live.ex:1679
 #, elixir-autogen, elixir-format
 msgid "No outgoing connections configured"
 msgstr "Väljuvaid ühendusi pole seadistatud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2903
+#: lib/phoenix_kit_sync/web/connections_live.ex:3032
 #, elixir-autogen, elixir-format
 msgid "No records match your filter criteria."
 msgstr "Ükski kirje ei vasta filtri tingimustele."
 
-#: lib/phoenix_kit_sync/web/receiver.ex:420
+#: lib/phoenix_kit_sync/web/receiver.ex:416
 #, elixir-autogen, elixir-format
 msgid "No table selected or schema not loaded"
 msgstr "Tabelit pole valitud või skeemi pole laaditud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2315
+#: lib/phoenix_kit_sync/web/connections_live.ex:2444
 #, elixir-autogen, elixir-format
 msgid "No tables available for sync"
 msgstr "Sünkroonimiseks pole ühtegi tabelit saadaval"
@@ -994,13 +995,13 @@ msgstr "Sünkroonimiseks pole ühtegi tabelit saadaval"
 msgid "No transfers found"
 msgstr "Edastusi ei leitud"
 
-#: lib/phoenix_kit_sync/web/receiver.ex:190
+#: lib/phoenix_kit_sync/web/receiver.ex:186
 #, elixir-autogen, elixir-format
 msgid "Not connected to sender"
 msgstr "Saatjaga pole ühendust"
 
 #: lib/phoenix_kit_sync/errors.ex:154
-#: lib/phoenix_kit_sync/web/connections_live.ex:1704
+#: lib/phoenix_kit_sync/web/connections_live.ex:1782
 #, elixir-autogen, elixir-format
 msgid "Not found"
 msgstr "Ei leitud"
@@ -1025,12 +1026,12 @@ msgstr "Ei tõmmatud: tabelil pole lähtesaidil primaarvõtit, seega pole selle 
 msgid "Not pulled: this table does not exist on this site. Create it from the Precise Transfer tab first"
 msgstr "Ei tõmmatud: seda tabelit sellel saidil ei ole. Loo see esmalt täpse edastuse vahekaardil"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2718
+#: lib/phoenix_kit_sync/web/connections_live.ex:2847
 #, elixir-autogen, elixir-format
 msgid "Nullable"
 msgstr "Lubab NULL-i"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1703
+#: lib/phoenix_kit_sync/web/connections_live.ex:1781
 #, elixir-autogen, elixir-format
 msgid "Offline"
 msgstr "Võrgust väljas"
@@ -1040,7 +1041,7 @@ msgstr "Võrgust väljas"
 msgid "Once it accepts, it can pull data from your tables"
 msgstr "Kui see nõustub, saab see sinu tabelitest andmeid tõmmata"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1575
+#: lib/phoenix_kit_sync/web/connections_live.ex:1653
 #, elixir-autogen, elixir-format
 msgid "Outgoing Only"
 msgstr "Ainult väljuvad"
@@ -1055,12 +1056,12 @@ msgstr "Väljaspool lubatud ühendusaega"
 msgid "Overview"
 msgstr "Ülevaade"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1714
+#: lib/phoenix_kit_sync/web/connections_live.ex:1792
 #, elixir-autogen, elixir-format
 msgid "Overwrite"
 msgstr "Kirjuta üle"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1934
+#: lib/phoenix_kit_sync/web/connections_live.ex:2033
 #, elixir-autogen, elixir-format
 msgid "Overwrite - Replace existing records"
 msgstr "Kirjuta üle - asenda olemasolevad kirjed"
@@ -1070,7 +1071,7 @@ msgstr "Kirjuta üle - asenda olemasolevad kirjed"
 msgid "Overwrite existing"
 msgstr "Kirjuta olemasolevad üle"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2728
+#: lib/phoenix_kit_sync/web/connections_live.ex:2857
 #, elixir-autogen, elixir-format
 msgid "PK"
 msgstr "PK"
@@ -1085,7 +1086,7 @@ msgstr "Lehekülg %{page} / %{total}"
 msgid "Password required"
 msgstr "Parool on nõutav"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1697
+#: lib/phoenix_kit_sync/web/connections_live.ex:1775
 #: lib/phoenix_kit_sync/web/history.ex:722
 #, elixir-autogen, elixir-format
 msgid "Pending"
@@ -1096,52 +1097,52 @@ msgstr "Ootel"
 msgid "Pending Approval"
 msgstr "Ootab kinnitamist"
 
-#: lib/phoenix_kit_sync/web/receiver.ex:460
+#: lib/phoenix_kit_sync/web/receiver.ex:456
 #, elixir-autogen, elixir-format
 msgid "Please select a table first"
 msgstr "Palun vali esmalt tabel"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:556
-#: lib/phoenix_kit_sync/web/receiver.ex:246
+#: lib/phoenix_kit_sync/web/connections_live.ex:579
+#: lib/phoenix_kit_sync/web/receiver.ex:242
 #, elixir-autogen, elixir-format
 msgid "Please select at least one table"
 msgstr "Palun vali vähemalt üks tabel"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2306
+#: lib/phoenix_kit_sync/web/connections_live.ex:2435
 #, elixir-autogen, elixir-format
 msgid "Preparing…"
 msgstr "Ettevalmistamine…"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2856
+#: lib/phoenix_kit_sync/web/connections_live.ex:2985
 #, elixir-autogen, elixir-format
 msgid "Preview"
 msgstr "Eelvaade"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2864
+#: lib/phoenix_kit_sync/web/connections_live.ex:2993
 #, elixir-autogen, elixir-format
 msgid "Preview (%{count} matching record)"
 msgid_plural "Preview (%{count} matching records)"
 msgstr[0] "Eelvaade (%{count} sobiv kirje)"
 msgstr[1] "Eelvaade (%{count} sobivat kirjet)"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2304
+#: lib/phoenix_kit_sync/web/connections_live.ex:2433
 #, elixir-autogen, elixir-format
 msgid "Processing:"
 msgstr "Töötlemine:"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1869
+#: lib/phoenix_kit_sync/web/connections_live.ex:1950
 #, elixir-autogen, elixir-format
 msgid "Production Server"
 msgstr "Tootmisserver"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2546
+#: lib/phoenix_kit_sync/web/connections_live.ex:2675
 #, elixir-autogen, elixir-format
 msgid "Pull %{count} Table"
 msgid_plural "Pull %{count} Tables"
 msgstr[0] "Tõmba %{count} tabel"
 msgstr[1] "Tõmba %{count} tabelit"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2145
+#: lib/phoenix_kit_sync/web/connections_live.ex:2244
 #, elixir-autogen, elixir-format
 msgid "Pull data from"
 msgstr "Tõmba andmed saidilt"
@@ -1151,15 +1152,15 @@ msgstr "Tõmba andmed saidilt"
 msgid "Pulling this table failed; see the server log for details"
 msgstr "Selle tabeli tõmbamine ebaõnnestus; üksikasjad on serveri logis"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1829
-#: lib/phoenix_kit_sync/web/connections_live.ex:1832
-#: lib/phoenix_kit_sync/web/connections_live.ex:2080
+#: lib/phoenix_kit_sync/web/connections_live.ex:1907
+#: lib/phoenix_kit_sync/web/connections_live.ex:1910
+#: lib/phoenix_kit_sync/web/connections_live.ex:2179
 #, elixir-autogen, elixir-format
 msgid "Reactivate"
 msgstr "Taasaktiveeri"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1827
-#: lib/phoenix_kit_sync/web/connections_live.ex:2077
+#: lib/phoenix_kit_sync/web/connections_live.ex:1905
+#: lib/phoenix_kit_sync/web/connections_live.ex:2176
 #, elixir-autogen, elixir-format
 msgid "Reactivating…"
 msgstr "Taasaktiveerimine…"
@@ -1179,17 +1180,17 @@ msgstr "Võta andmed vastu"
 msgid "Received"
 msgstr "Vastu võetud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1710
+#: lib/phoenix_kit_sync/web/connections_live.ex:1788
 #, elixir-autogen, elixir-format
 msgid "Receiver"
 msgstr "Vastuvõtja"
 
-#: lib/phoenix_kit_sync/web/sender.ex:159
+#: lib/phoenix_kit_sync/web/sender.ex:154
 #, elixir-autogen, elixir-format
 msgid "Receiver disconnected"
 msgstr "Vastuvõtja ühendus katkes"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2321
+#: lib/phoenix_kit_sync/web/connections_live.ex:2450
 #, elixir-autogen, elixir-format
 msgid "Record counts:"
 msgstr "Kirjete arv:"
@@ -1204,18 +1205,18 @@ msgstr "Kirjete limiit on täis"
 msgid "Records"
 msgstr "Kirjed"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2022
+#: lib/phoenix_kit_sync/web/connections_live.ex:2121
 #, elixir-autogen, elixir-format
 msgid "Records Transferred"
 msgstr "Edastatud kirjed"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2093
+#: lib/phoenix_kit_sync/web/connections_live.ex:2192
 #, elixir-autogen, elixir-format
 msgid "Regenerate Token"
 msgstr "Loo token uuesti"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2090
-#: lib/phoenix_kit_sync/web/sender.ex:394
+#: lib/phoenix_kit_sync/web/connections_live.ex:2189
+#: lib/phoenix_kit_sync/web/sender.ex:389
 #, elixir-autogen, elixir-format
 msgid "Regenerating…"
 msgstr "Uuesti loomine…"
@@ -1240,12 +1241,12 @@ msgstr "Küsitud"
 msgid "Requester IP"
 msgstr "Päringu esitaja IP"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2181
+#: lib/phoenix_kit_sync/web/connections_live.ex:2280
 #, elixir-autogen, elixir-format
 msgid "Retry"
 msgstr "Proovi uuesti"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2290
+#: lib/phoenix_kit_sync/web/connections_live.ex:2419
 #, elixir-autogen, elixir-format
 msgid "Retry pass %{pass} — %{current}/%{total}"
 msgstr "Korduskatse %{pass} — %{current}/%{total}"
@@ -1256,32 +1257,32 @@ msgstr "Korduskatse %{pass} — %{current}/%{total}"
 msgid "Review"
 msgstr "Vaata üle"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2104
+#: lib/phoenix_kit_sync/web/connections_live.ex:2203
 #, elixir-autogen, elixir-format
 msgid "Revoke"
 msgstr "Võta tagasi"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1700
+#: lib/phoenix_kit_sync/web/connections_live.ex:1778
 #, elixir-autogen, elixir-format
 msgid "Revoked"
 msgstr "Tagasi võetud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:374
+#: lib/phoenix_kit_sync/web/connections_live.ex:380
 #, elixir-autogen, elixir-format
 msgid "Revoked by admin"
 msgstr "Administraatori poolt tagasi võetud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2100
+#: lib/phoenix_kit_sync/web/connections_live.ex:2199
 #, elixir-autogen, elixir-format
 msgid "Revoking…"
 msgstr "Tagasivõtmine…"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1955
+#: lib/phoenix_kit_sync/web/connections_live.ex:2054
 #, elixir-autogen, elixir-format
 msgid "Save Changes"
 msgstr "Salvesta muudatused"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1954
+#: lib/phoenix_kit_sync/web/connections_live.ex:2053
 #, elixir-autogen, elixir-format
 msgid "Saving…"
 msgstr "Salvestamine…"
@@ -1291,27 +1292,27 @@ msgstr "Salvestamine…"
 msgid "Security:"
 msgstr "Turvalisus:"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2338
+#: lib/phoenix_kit_sync/web/connections_live.ex:2467
 #, elixir-autogen, elixir-format
 msgid "Select All"
 msgstr "Vali kõik"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2352
+#: lib/phoenix_kit_sync/web/connections_live.ex:2481
 #, elixir-autogen, elixir-format
 msgid "Select Different"
 msgstr "Vali erinevad"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2656
+#: lib/phoenix_kit_sync/web/connections_live.ex:2785
 #, elixir-autogen, elixir-format
 msgid "Select Table"
 msgstr "Vali tabel"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2947
+#: lib/phoenix_kit_sync/web/connections_live.ex:3076
 #, elixir-autogen, elixir-format
 msgid "Select a table above to view details and transfer options"
 msgstr "Üksikasjade ja edastusvalikute nägemiseks vali ülal tabel"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2557
+#: lib/phoenix_kit_sync/web/connections_live.ex:2686
 #, elixir-autogen, elixir-format
 msgid "Selected"
 msgstr "Valitud"
@@ -1321,29 +1322,29 @@ msgstr "Valitud"
 msgid "Send Data"
 msgstr "Saada andmed"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1709
-#: lib/phoenix_kit_sync/web/connections_live.ex:2323
-#: lib/phoenix_kit_sync/web/connections_live.ex:2399
+#: lib/phoenix_kit_sync/web/connections_live.ex:1787
+#: lib/phoenix_kit_sync/web/connections_live.ex:2452
+#: lib/phoenix_kit_sync/web/connections_live.ex:2528
 #, elixir-autogen, elixir-format
 msgid "Sender"
 msgstr "Saatja"
 
-#: lib/phoenix_kit_sync/web/receiver.ex:594
+#: lib/phoenix_kit_sync/web/receiver.ex:590
 #, elixir-autogen, elixir-format
 msgid "Sender closed the connection"
 msgstr "Saatja sulges ühenduse"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1190
+#: lib/phoenix_kit_sync/web/connections_live.ex:1249
 #, elixir-autogen, elixir-format
 msgid "Sender is offline"
 msgstr "Saatja on võrgust väljas"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:755
+#: lib/phoenix_kit_sync/web/connections_live.ex:780
 #, elixir-autogen, elixir-format
 msgid "Sender site is offline or unreachable"
 msgstr "Saatja sait on võrgust väljas või kättesaamatu"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2693
+#: lib/phoenix_kit_sync/web/connections_live.ex:2822
 #, elixir-autogen, elixir-format
 msgid "Sender:"
 msgstr "Saatja:"
@@ -1358,50 +1359,50 @@ msgstr "Saadetud"
 msgid "Session"
 msgstr "Seanss"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1778
-#: lib/phoenix_kit_sync/web/connections_live.ex:1786
+#: lib/phoenix_kit_sync/web/connections_live.ex:1856
+#: lib/phoenix_kit_sync/web/connections_live.ex:1864
 #, elixir-autogen, elixir-format
 msgid "Sever connection"
 msgstr "Katkesta ühendus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2895
+#: lib/phoenix_kit_sync/web/connections_live.ex:3024
 #, elixir-autogen, elixir-format
 msgid "Showing first 10 of %{total} records"
 msgstr "Kuvatakse esimesed 10 kirjet %{total}-st"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1609
-#: lib/phoenix_kit_sync/web/connections_live.ex:1654
-#: lib/phoenix_kit_sync/web/connections_live.ex:1998
+#: lib/phoenix_kit_sync/web/connections_live.ex:1687
+#: lib/phoenix_kit_sync/web/connections_live.ex:1732
+#: lib/phoenix_kit_sync/web/connections_live.ex:2097
 #, elixir-autogen, elixir-format
 msgid "Site URL"
 msgstr "Saidi URL"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1901
+#: lib/phoenix_kit_sync/web/connections_live.ex:1982
 #, elixir-autogen, elixir-format
 msgid "Site URL *"
 msgstr "Saidi URL *"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1596
+#: lib/phoenix_kit_sync/web/connections_live.ex:1674
 #, elixir-autogen, elixir-format
 msgid "Sites that can pull data from this site"
 msgstr "Saidid, mis saavad sellelt saidilt andmeid tõmmata"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1642
+#: lib/phoenix_kit_sync/web/connections_live.ex:1720
 #, elixir-autogen, elixir-format
 msgid "Sites this site can pull data from"
 msgstr "Saidid, kust see sait saab andmeid tõmmata"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2401
+#: lib/phoenix_kit_sync/web/connections_live.ex:2530
 #, elixir-autogen, elixir-format
 msgid "Size"
 msgstr "Suurus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1713
+#: lib/phoenix_kit_sync/web/connections_live.ex:1791
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr "Jäta vahele"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1926
+#: lib/phoenix_kit_sync/web/connections_live.ex:2025
 #, elixir-autogen, elixir-format
 msgid "Skip - Don't overwrite existing records"
 msgstr "Jäta vahele - ära kirjuta olemasolevaid kirjeid üle"
@@ -1411,14 +1412,14 @@ msgstr "Jäta vahele - ära kirjuta olemasolevaid kirjeid üle"
 msgid "Skip existing"
 msgstr "Jäta olemasolevad vahele"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2223
-#: lib/phoenix_kit_sync/web/connections_live.ex:2593
+#: lib/phoenix_kit_sync/web/connections_live.ex:2352
+#: lib/phoenix_kit_sync/web/connections_live.ex:2722
 #: lib/phoenix_kit_sync/web/history.ex:603
 #, elixir-autogen, elixir-format
 msgid "Skipped"
 msgstr "Vahele jäetud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2800
+#: lib/phoenix_kit_sync/web/connections_live.ex:2929
 #, elixir-autogen, elixir-format
 msgid "Specific IDs"
 msgstr "Kindlad ID-d"
@@ -1438,14 +1439,14 @@ msgstr "Alustatud"
 msgid "Starting…"
 msgstr "Käivitamine…"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2014
+#: lib/phoenix_kit_sync/web/connections_live.ex:2113
 #, elixir-autogen, elixir-format
 msgid "Statistics"
 msgstr "Statistika"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1610
-#: lib/phoenix_kit_sync/web/connections_live.ex:1655
-#: lib/phoenix_kit_sync/web/connections_live.ex:2403
+#: lib/phoenix_kit_sync/web/connections_live.ex:1688
+#: lib/phoenix_kit_sync/web/connections_live.ex:1733
+#: lib/phoenix_kit_sync/web/connections_live.ex:2532
 #: lib/phoenix_kit_sync/web/history.ex:350
 #: lib/phoenix_kit_sync/web/history.ex:393
 #, elixir-autogen, elixir-format
@@ -1457,25 +1458,25 @@ msgstr "Olek"
 msgid "Stopped at this connection's max_records_per_request limit; the rest of the table was not sent"
 msgstr "Peatuti selle ühenduse max_records_per_request limiidi juures; ülejäänud tabelit ei saadetud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2564
+#: lib/phoenix_kit_sync/web/connections_live.ex:2693
 #, elixir-autogen, elixir-format
 msgid "Suggested"
 msgstr "Soovitatud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1816
-#: lib/phoenix_kit_sync/web/connections_live.ex:1819
-#: lib/phoenix_kit_sync/web/connections_live.ex:2068
+#: lib/phoenix_kit_sync/web/connections_live.ex:1894
+#: lib/phoenix_kit_sync/web/connections_live.ex:1897
+#: lib/phoenix_kit_sync/web/connections_live.ex:2167
 #, elixir-autogen, elixir-format
 msgid "Suspend"
 msgstr "Peata"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1699
+#: lib/phoenix_kit_sync/web/connections_live.ex:1777
 #, elixir-autogen, elixir-format
 msgid "Suspended"
 msgstr "Peatatud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1814
-#: lib/phoenix_kit_sync/web/connections_live.ex:2065
+#: lib/phoenix_kit_sync/web/connections_live.ex:1892
+#: lib/phoenix_kit_sync/web/connections_live.ex:2164
 #, elixir-autogen, elixir-format
 msgid "Suspending…"
 msgstr "Peatamine…"
@@ -1490,24 +1491,24 @@ msgstr "Peatamine…"
 msgid "Sync"
 msgstr "Sünkroonimine"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2203
+#: lib/phoenix_kit_sync/web/connections_live.ex:2332
 #, elixir-autogen, elixir-format
 msgid "Sync Complete!"
 msgstr "Sünkroonimine lõpetatud!"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2200
+#: lib/phoenix_kit_sync/web/connections_live.ex:2329
 #, elixir-autogen, elixir-format
 msgid "Sync Completed with Errors"
 msgstr "Sünkroonimine lõppes vigadega"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2142
+#: lib/phoenix_kit_sync/web/connections_live.ex:2241
 #, elixir-autogen, elixir-format
 msgid "Sync Data"
 msgstr "Sünkrooni andmed"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1743
-#: lib/phoenix_kit_sync/web/connections_live.ex:1746
-#: lib/phoenix_kit_sync/web/connections_live.ex:3036
+#: lib/phoenix_kit_sync/web/connections_live.ex:1821
+#: lib/phoenix_kit_sync/web/connections_live.ex:1824
+#: lib/phoenix_kit_sync/web/connections_live.ex:3165
 #, elixir-autogen, elixir-format
 msgid "Sync data"
 msgstr "Sünkrooni andmed"
@@ -1517,7 +1518,7 @@ msgstr "Sünkrooni andmed"
 msgid "Sync data between sites"
 msgstr "Sünkrooni andmeid saitide vahel"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1199
+#: lib/phoenix_kit_sync/web/connections_live.ex:1258
 #, elixir-autogen, elixir-format
 msgid "Sync failed: %{reason}"
 msgstr "Sünkroonimine ebaõnnestus: %{reason}"
@@ -1527,36 +1528,36 @@ msgstr "Sünkroonimine ebaõnnestus: %{reason}"
 msgid "Sync module is disabled"
 msgstr "Sünkroonimismoodul on välja lülitatud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2296
+#: lib/phoenix_kit_sync/web/connections_live.ex:2425
 #, elixir-autogen, elixir-format
 msgid "Syncing %{current}/%{total}"
 msgstr "Sünkroonimine %{current}/%{total}"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2221
-#: lib/phoenix_kit_sync/web/connections_live.ex:2398
-#: lib/phoenix_kit_sync/web/connections_live.ex:2591
+#: lib/phoenix_kit_sync/web/connections_live.ex:2350
+#: lib/phoenix_kit_sync/web/connections_live.ex:2527
+#: lib/phoenix_kit_sync/web/connections_live.ex:2720
 #: lib/phoenix_kit_sync/web/history.ex:391
 #: lib/phoenix_kit_sync/web/history.ex:572
 #, elixir-autogen, elixir-format
 msgid "Table"
 msgstr "Tabel"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:669
+#: lib/phoenix_kit_sync/web/connections_live.ex:692
 #, elixir-autogen, elixir-format
 msgid "Table %{table} created successfully"
 msgstr "Tabel %{table} loodud"
 
-#: lib/phoenix_kit_sync/web/receiver.ex:402
+#: lib/phoenix_kit_sync/web/receiver.ex:398
 #, elixir-autogen, elixir-format
 msgid "Table '%{table}' created successfully"
 msgstr "Tabel '%{table}' loodud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2711
+#: lib/phoenix_kit_sync/web/connections_live.ex:2840
 #, elixir-autogen, elixir-format
 msgid "Table Schema"
 msgstr "Tabeli skeem"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2754
+#: lib/phoenix_kit_sync/web/connections_live.ex:2883
 #, elixir-autogen, elixir-format
 msgid "Table doesn't exist locally"
 msgstr "Tabelit pole kohalikult olemas"
@@ -1566,7 +1567,7 @@ msgstr "Tabelit pole kohalikult olemas"
 msgid "Table not found"
 msgstr "Tabelit ei leitud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1192
+#: lib/phoenix_kit_sync/web/connections_live.ex:1251
 #, elixir-autogen, elixir-format
 msgid "Table not found on sender"
 msgstr "Tabelit ei leitud saatja juurest"
@@ -1582,7 +1583,7 @@ msgstr "Tabel tõmmati ainult osaliselt: saatja peatus oma max_records_per_reque
 msgid "The DB Sync module is disabled."
 msgstr "Andmebaasi sünkroonimise moodul on välja lülitatud."
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1906
+#: lib/phoenix_kit_sync/web/connections_live.ex:1987
 #, elixir-autogen, elixir-format
 msgid "The URL of the remote site that will connect to pull data"
 msgstr "Kaugsaidi URL, mis ühendub andmete tõmbamiseks"
@@ -1637,7 +1638,7 @@ msgstr "Saatja skeemis pole ühtegi veergu"
 msgid "The source table has no single-column primary key (a view has none), so it takes no ID filter"
 msgstr "Lähtetabelil pole ühe veeruga primaarvõtit (vaatel pole seda üldse), seega ei saa ID-filtrit kasutada"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:175
+#: lib/phoenix_kit_sync/web/connections_live.ex:176
 #, elixir-autogen, elixir-format
 msgid "This connection is not active, so it cannot sync"
 msgstr "See ühendus ei ole aktiivne, seega ei saa sellega sünkroonida"
@@ -1652,17 +1653,17 @@ msgstr "Sellel ühendusel pole õigust sellele tabelile ligi pääseda"
 msgid "This table is never synced"
 msgstr "Seda tabelit ei sünkroonita kunagi"
 
-#: lib/phoenix_kit_sync/errors.ex:228
+#: lib/phoenix_kit_sync/errors.ex:237
 #, elixir-autogen, elixir-format
 msgid "This table's key type does not take an ID filter (it takes integer, uuid or text keys)"
 msgstr "Selle tabeli võtmetüüp ei luba ID-filtrit (lubatud on täisarvu-, uuid- või tekstivõtmed)"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2837
+#: lib/phoenix_kit_sync/web/connections_live.ex:2966
 #, elixir-autogen, elixir-format
 msgid "To"
 msgstr "Kuni"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:401
+#: lib/phoenix_kit_sync/web/connections_live.ex:407
 #, elixir-autogen, elixir-format
 msgid "Token regenerated"
 msgstr "Token loodud uuesti"
@@ -1672,28 +1673,28 @@ msgstr "Token loodud uuesti"
 msgid "Too many connection requests are awaiting approval; try again later"
 msgstr "Liiga palju ühendustaotlusi ootab kinnitamist; proovi hiljem uuesti"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2264
-#: lib/phoenix_kit_sync/web/connections_live.ex:2633
+#: lib/phoenix_kit_sync/web/connections_live.ex:2393
+#: lib/phoenix_kit_sync/web/connections_live.ex:2762
 #, elixir-autogen, elixir-format
 msgid "Total"
 msgstr "Kokku"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2018
+#: lib/phoenix_kit_sync/web/connections_live.ex:2117
 #, elixir-autogen, elixir-format
 msgid "Total Transfers"
 msgstr "Edastusi kokku"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2939
+#: lib/phoenix_kit_sync/web/connections_live.ex:3068
 #, elixir-autogen, elixir-format
 msgid "Transfer %{table}"
 msgstr "Edasta %{table}"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2583
+#: lib/phoenix_kit_sync/web/connections_live.ex:2712
 #, elixir-autogen, elixir-format
 msgid "Transfer Complete!"
 msgstr "Edastus lõpetatud!"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2580
+#: lib/phoenix_kit_sync/web/connections_live.ex:2709
 #, elixir-autogen, elixir-format
 msgid "Transfer Completed with Errors"
 msgstr "Edastus lõppes vigadega"
@@ -1729,33 +1730,33 @@ msgstr "Edastus peatati: saatja vastas korduvalt tabeli sama leheküljega"
 msgid "Transferred"
 msgstr "Edastatud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2934
+#: lib/phoenix_kit_sync/web/connections_live.ex:3063
 #: lib/phoenix_kit_sync/web/receiver.ex:1673
 #, elixir-autogen, elixir-format
 msgid "Transferring…"
 msgstr "Edastamine…"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2717
+#: lib/phoenix_kit_sync/web/connections_live.ex:2846
 #, elixir-autogen, elixir-format
 msgid "Type"
 msgstr "Tüüp"
 
-#: lib/phoenix_kit_sync/errors.ex:222
+#: lib/phoenix_kit_sync/errors.ex:231
 #, elixir-autogen, elixir-format
 msgid "Unauthorized"
 msgstr "Volitamata"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1191
+#: lib/phoenix_kit_sync/web/connections_live.ex:1250
 #, elixir-autogen, elixir-format
 msgid "Unauthorized - check connection token"
 msgstr "Volitamata - kontrolli ühenduse tokenit"
 
-#: lib/phoenix_kit_sync/errors.ex:223
+#: lib/phoenix_kit_sync/errors.ex:232
 #, elixir-autogen, elixir-format
 msgid "Unavailable"
 msgstr "Pole saadaval"
 
-#: lib/phoenix_kit_sync/errors.ex:224
+#: lib/phoenix_kit_sync/errors.ex:233
 #, elixir-autogen, elixir-format
 msgid "Unexpected response from remote site"
 msgstr "Ootamatu vastus kaugsaidilt"
@@ -1765,7 +1766,7 @@ msgstr "Ootamatu vastus kaugsaidilt"
 msgid "Unknown"
 msgstr "Teadmata"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1165
+#: lib/phoenix_kit_sync/web/connections_live.ex:1215
 #, elixir-autogen, elixir-format
 msgid "Unknown error"
 msgstr "Tundmatu viga"
@@ -1775,7 +1776,7 @@ msgstr "Tundmatu viga"
 msgid "Updated"
 msgstr "Uuendatud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2440
+#: lib/phoenix_kit_sync/web/connections_live.ex:2569
 #, elixir-autogen, elixir-format
 msgid "Used by selected tables — consider including"
 msgstr "Kasutusel valitud tabelites — kaalu lisamist"
@@ -1800,8 +1801,8 @@ msgstr "Vaata kõiki andmeedastusi ja jälgi sünkroonimistegevust. Jälgi edast
 msgid "View and manage data transfers"
 msgstr "Vaata ja halda andmeedastusi"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1754
-#: lib/phoenix_kit_sync/web/connections_live.ex:1757
+#: lib/phoenix_kit_sync/web/connections_live.ex:1832
+#: lib/phoenix_kit_sync/web/connections_live.ex:1835
 #, elixir-autogen, elixir-format
 msgid "View details"
 msgstr "Vaata üksikasju"
@@ -1816,28 +1817,28 @@ msgstr "iseendaga ei saa ühendust luua"
 msgid "default"
 msgstr "vaikimisi"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2329
+#: lib/phoenix_kit_sync/web/connections_live.ex:2458
 #, elixir-autogen, elixir-format
 msgid "differs"
 msgstr "erineb"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2757
+#: lib/phoenix_kit_sync/web/connections_live.ex:2886
 #, elixir-autogen, elixir-format
 msgid "doesn't exist in your local database. Create it first to transfer data."
 msgstr "ei ole sinu kohalikus andmebaasis olemas. Andmete edastamiseks loo see esmalt."
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2695
-#: lib/phoenix_kit_sync/web/connections_live.ex:2699
+#: lib/phoenix_kit_sync/web/connections_live.ex:2824
+#: lib/phoenix_kit_sync/web/connections_live.ex:2828
 #, elixir-autogen, elixir-format
 msgid "records"
 msgstr "kirjet"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2323
+#: lib/phoenix_kit_sync/web/connections_live.ex:2452
 #, elixir-autogen, elixir-format
 msgid "remote data"
 msgstr "kaugandmed"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2831
+#: lib/phoenix_kit_sync/web/connections_live.ex:2960
 #, elixir-autogen, elixir-format
 msgid "to"
 msgstr "kuni"
@@ -1847,67 +1848,102 @@ msgstr "kuni"
 msgid "transferred"
 msgstr "edastatud"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2326
+#: lib/phoenix_kit_sync/web/connections_live.ex:2455
 #, elixir-autogen, elixir-format
 msgid "your database"
 msgstr "sinu andmebaas"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2565
+#: lib/phoenix_kit_sync/web/connections_live.ex:2694
 #, elixir-autogen, elixir-format
 msgid "— tables that reference selected tables. Consider including them for data to function correctly."
 msgstr "— tabelid, mis viitavad valitud tabelitele. Kaalu nende lisamist, et andmed toimiksid korrektselt."
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2558
+#: lib/phoenix_kit_sync/web/connections_live.ex:2687
 #, elixir-autogen, elixir-format
 msgid "— tables that will be synced. Dependencies (via foreign keys) are auto-selected."
 msgstr "— tabelid, mida sünkroonitakse. Sõltuvused (välisvõtmete kaudu) valitakse automaatselt."
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2975
+#: lib/phoenix_kit_sync/web/connections_live.ex:3104
 #, elixir-autogen, elixir-format
 msgid "%{count}d ago"
 msgstr "%{count} p tagasi"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2974
+#: lib/phoenix_kit_sync/web/connections_live.ex:3103
 #, elixir-autogen, elixir-format
 msgid "%{count}h ago"
 msgstr "%{count} t tagasi"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2973
+#: lib/phoenix_kit_sync/web/connections_live.ex:3102
 #, elixir-autogen, elixir-format
 msgid "%{count}m ago"
 msgstr "%{count} min tagasi"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2161
+#: lib/phoenix_kit_sync/web/connections_live.ex:2260
 #, elixir-autogen, elixir-format
 msgid "Bulk Transfer"
 msgstr "Hulgiedastus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1638
+#: lib/phoenix_kit_sync/web/connections_live.ex:1716
 #, elixir-autogen, elixir-format
 msgid "Incoming"
 msgstr "Sissetulevad"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2485
+#: lib/phoenix_kit_sync/web/connections_live.ex:2614
 #, elixir-autogen, elixir-format
 msgid "New"
 msgstr "Uus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1592
+#: lib/phoenix_kit_sync/web/connections_live.ex:1670
 #, elixir-autogen, elixir-format
 msgid "Outgoing"
 msgstr "Väljuvad"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2164
+#: lib/phoenix_kit_sync/web/connections_live.ex:2263
 #, elixir-autogen, elixir-format
 msgid "Precise Transfer"
 msgstr "Täpne edastus"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2972
+#: lib/phoenix_kit_sync/web/connections_live.ex:3101
 #, elixir-autogen, elixir-format
 msgid "just now"
 msgstr "just praegu"
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3180
+#: lib/phoenix_kit_sync/web/connections_live.ex:3309
 #, elixir-autogen, elixir-format
 msgid "large"
 msgstr "suur"
+
+#: lib/phoenix_kit_sync/web/connections_live.ex:1997
+#, elixir-autogen, elixir-format
+msgid "Records per request"
+msgstr "Kirjeid päringu kohta"
+
+#: lib/phoenix_kit_sync/errors.ex:226
+#, elixir-autogen, elixir-format
+msgid "Table only partly pulled: its key is of type %{type}, which the sender cannot continue from once it stops at its max_records_per_request limit. Have the source site's admin raise that limit for this connection"
+msgstr "Tabel tõmmati ainult osaliselt: selle võti on tüüpi %{type}, millelt saatja ei saa pärast oma max_records_per_request limiidi juures peatumist jätkata. Palu lähtesaidi administraatoril selle ühenduse limiiti tõsta"
+
+#: lib/phoenix_kit_sync/web/connections_live.ex:2002
+#, elixir-autogen, elixir-format
+msgid "The most rows the remote site gets in one answer. A table whose key has no cursor can only be pulled whole when it fits in this limit"
+msgstr "Suurim ridade arv, mille kaugsait ühe vastusega saab. Tabelit, mille võtmel pole kursorit, saab tervikuna tõmmata ainult siis, kui see mahub sellesse limiiti"
+
+#: lib/phoenix_kit_sync/web/connections_live.ex:2305
+#, elixir-autogen, elixir-format
+msgid "Continue"
+msgstr "Jätka"
+
+#: lib/phoenix_kit_sync/web/connections_live.ex:2294
+#, elixir-autogen, elixir-format
+msgid "Download password"
+msgstr "Allalaadimise parool"
+
+#: lib/phoenix_kit_sync/web/connections_live.ex:2308
+#, elixir-autogen, elixir-format
+msgid "Set on the sending site for this connection. It is used for this page only and is not stored"
+msgstr "Määratud saatval saidil selle ühenduse jaoks. Seda kasutatakse ainult sellel lehel ja seda ei salvestata"
+
+#: lib/phoenix_kit_sync/web/connections_live.ex:788
+#, elixir-autogen, elixir-format
+msgid "This connection asks for its download password"
+msgstr "See ühendus küsib oma allalaadimise parooli"

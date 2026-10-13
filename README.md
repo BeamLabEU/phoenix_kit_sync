@@ -79,16 +79,17 @@ socket is open takes effect on its next message.
 | **Excluded Tables** | Yes | Blacklist of tables to hide from receiver |
 | **Max Downloads** | Yes | Total pulls. A table read page by page with the sender's cursor is one pull |
 | **Max Records Total** | Yes | Total records that can be downloaded; a page is cut where the allowance ends |
-| **Max Records Per Request** | Yes | Records per page (default: 10,000). A larger table is sent in pages |
-| **Download Password** | Yes | The request must carry it (`password` in the REST body, `?password=` on the socket) |
+| **Max Records Per Request** | Yes | Records per page (default: 10,000), set as "Records per request" in the connection form. A larger table is sent in pages |
+| **Download Password** | Yes | The request must carry it (`password` in the REST body, `?password=` on the socket). The receiving site's sync page asks its admin for it when the sender refuses a request without one, keeps it for as long as that page is open, and stores it nowhere |
 | **IP Whitelist** | Yes | Only the listed client addresses (see "Client address" below) |
 | **Allowed Hours** | Yes | Time-of-day window, in UTC (e.g., only 2am-5am) |
 | **Expiration Date** | Yes | Requests after `expires_at` are refused |
 | **Approval Mode** | **No** | `auto_approve` / `require_approval` / `per_table` and **Auto-Approve Tables** are stored, and `Connections.requires_approval?/2` answers for them, but no pull is held for approval: every mode behaves as `auto_approve` |
 | **Rate Limit** | **No** | `rate_limit_requests_per_minute` is stored but not applied |
 
-The download password, the limits and the approval and rate-limit fields are
-not in the connection form; set them with `Connections.update_connection/2`.
+The connection form has the name, the URL and "Records per request". The
+download password, the other limits and the approval and rate-limit fields
+are not in it; set them with `Connections.update_connection/2`.
 
 ### Connection Statuses
 
@@ -100,7 +101,8 @@ not in the connection form; set them with `Connections.update_connection/2`.
 | **Revoked** | Permanently disabled |
 | **Expired** | Set by `Connections.expire_connections/0`, which nothing in this module schedules; call it from a job of your own if you want the status to follow. A connection past its expiry date or limits is refused either way |
 
-A status changes only on the site that owns the connection, with one
+A status changes only on the site that owns the connection (asking for it
+with `get-connection-status` is a read and changes nothing), with one
 exception: the sender reports its suspensions and revocations
 (`update-status`), and the receiving site mirrors them onto its **receiver**
 connection. The remote site can suspend or revoke an active receiver
@@ -123,7 +125,13 @@ The registration request is unauthenticated unless the mode asks for a
 password. At most 50 registrations wait for approval at a time
 (`config :phoenix_kit_sync, max_pending_incoming: 50`); further ones are
 answered 429 until some are approved or deleted. A pending connection's site
-is never contacted.
+is never contacted. A sender site has one connection here however its URL is
+spelled: `https://Example.com`, `https://example.com/` and
+`https://example.com:443` are the same site (scheme and host compared in
+lower case, the default port and trailing slashes left out), and a second
+registration under any of them is answered 409. The duplicate check, the cap
+and the insert are one step, so registrations arriving together cannot get
+past either.
 
 ## Workflow
 
@@ -133,7 +141,10 @@ is never contacted.
 2. Click "New Connection"
 3. Enter a name and the remote site's URL
 4. Configure access controls (approval mode, tables, limits)
-5. Save — the connection is created and token generated
+5. Save — the connection is created `pending` and its token generated.
+   Approve it (the Approve button on its row) when the remote site may
+   start pulling: until then it grants nothing, and nothing the remote site
+   does activates it
 6. **The remote site is notified automatically!**
    - If successful, the connection appears in their list
    - Based on their settings, it may be auto-approved or pending
@@ -173,10 +184,25 @@ When you create a sender connection:
 - **Large tables come in pages.** The sender answers at most its
   connection's `max_records_per_request` rows and says where the rest
   starts; the pull follows until the table ends, for integer, uuid, text,
-  numeric, date and timestamp keys and composites of them. A sender from
-  before cursors (or a key of another type, such as a float) answers its
-  first page only: those rows are imported and the table is reported as
-  only partly pulled.
+  `character`, numeric, float, boolean, `bytea`, date, time and timestamp
+  keys and composites of them. A sender from before cursors, or a key of
+  another type (`time with time zone`, `interval`, an enum, citext),
+  answers its first page only: those rows are imported and the table is
+  reported as only partly pulled, naming the key type when that is the
+  reason. Such a table is pulled whole once the sender's "Records per
+  request" is at least its row count.
+- **Array columns** travel as lists whose elements are written and read by
+  the array's element type, on the bulk pull as on the WebSocket path: a
+  `uuid[]`, `numeric[]`, `date[]`, `timestamptz[]` or `bytea[]` column
+  comes back as it was, NULL elements and further dimensions included. A
+  JSON `null` element of a `jsonb[]` comes back as NULL, and a
+  multi-dimensional `jsonb[]` as one dimension.
+- **Column types beyond the basic ones.** `interval`, `inet`, `cidr` and
+  `macaddr` values (and arrays of them) come back as they were. Ranges,
+  the geometric types (`point`, `box`, `circle`, ...) and `tsvector` are
+  not carried: a record holding one is counted as an error on the
+  receiving site, with the type named, and the rest of the table is
+  imported.
 - **Some tables are never synced**, whatever a connection allows: this
   module's own tables, `phoenix_kit_settings`, and the tables that hold
   session tokens, OAuth tokens, invitations and provider keys. See
@@ -330,7 +356,9 @@ Cross-site communication endpoints (under the configured URL prefix):
   `"error_code": "status_change_not_allowed"` for a change the remote site
   may not make (see "Connection Statuses"); 404 when no receiver connection
   matches
-- `POST /sync/api/get-connection-status` — Query connection status
+- `POST /sync/api/get-connection-status` — Query a sender connection's
+  status by its token hash. A read: it changes nothing, a pending
+  connection included
 - `POST /sync/api/list-tables` — List available tables.
   `"include_checksums": false` leaves the per-table content checksum out
 - `POST /sync/api/pull-data` — Pull table data. Optional record filter:
@@ -358,10 +386,15 @@ Cross-site communication endpoints (under the configured URL prefix):
   key. With the cursor, signed by the sender for that connection, table and
   position, the page belongs to the pull that produced it; `"after"` alone
   (or with any other cursor) also works but counts as a new download. A
+  cursor is good for its own position only and for ten minutes; within
+  them the same page can be asked for again without a download being
+  counted, and its rows are added to `records_downloaded` each time. A
   receiver that pages sends `"paged": true`, so the sender records each page
   as a completed send rather than a cut one. A table without a primary key
   has no order to page in and is refused
   (`"error_code": "no_primary_key"`); a bad `after` is `invalid_cursor`.
+  An answer cut on a key whose type has no cursor carries
+  `"unsupported_key_type"` (the type's name) instead of `"next_after"`.
 - `POST /sync/api/table-schema` — Get table schema. Each column carries its
   `element_type` (for an array) beside the `information_schema` names
 - `POST /sync/api/table-records` — Get table records
@@ -424,7 +457,7 @@ config :phoenix_kit_sync,
 - **Token Security**: Tokens are SHA-256 hashed in the database and only shown once on creation; comparisons use `Plug.Crypto.secure_compare/2` to defeat timing attacks. The hash is the credential of the REST API, so the connections table is never synced
 - **One authorization for every entry point**: `Connections.authorize_request/3` decides for the REST actions, the WebSocket upgrade and each message on an open socket, against the connection as stored at that moment. Only a `sender` connection authorizes anything
 - **Per-connection table authorization**: Even with a valid token, every API endpoint that returns or accepts table data (`list_tables`, `pull_data`, `table_schema`, `table_records`) filters through the connection's `excluded_tables` blocklist and `allowed_tables` allowlist
-- **Tables that are never synced**: `schema_migrations`, `oban_*`, `pg_*`, `phoenix_kit_sync_connections`, `phoenix_kit_sync_transfers`, `phoenix_kit_settings`, `phoenix_kit_users_tokens`, `phoenix_kit_user_oauth_providers`, `phoenix_kit_organization_invitations`, `phoenix_kit_ai_accounts`, `phoenix_kit_ai_endpoints`, `phoenix_kit_buckets`, `phoenix_kit_payment_provider_configs`; any table whose name contains `token`, `secret`, `credential`, `password`, `api_key`, `oauth` or `session`; and the host's own `excluded_tables`. They are refused on export and import, over REST and WebSocket, for token connections and code sessions alike, even when a connection lists them as allowed. `phoenix_kit_users` (with its password hashes) **is** syncable: restrict it with a connection's allowed or excluded tables where that matters
+- **Tables that are never synced**: `schema_migrations`, `oban_*`, `pg_*`, `phoenix_kit_sync_connections`, `phoenix_kit_sync_transfers`, `phoenix_kit_settings`, `phoenix_kit_users_tokens`, `phoenix_kit_user_oauth_providers`, `phoenix_kit_organization_invitations`, `phoenix_kit_ai_accounts`, `phoenix_kit_ai_endpoints`, `phoenix_kit_buckets`, `phoenix_kit_payment_provider_configs`; any table whose name contains `token`, `secret`, `credential`, `password`, `api_key`, `oauth` or `session`; and the host's own `excluded_tables`. They are refused on export and import, over REST and WebSocket, for token connections and code sessions alike, even when a connection lists them as allowed. `phoenix_kit_users` **is** synced, password hashes (`hashed_password`) included, to any connection whose tables allow it: create connections only to sites you fully trust, and restrict the table with a connection's allowed or excluded tables where that matters
 - **Parameterised SQL with identifier validation**: Every dynamic table / column name interpolated into raw SQL passes through `SchemaInspector.valid_identifier?/1` first; values always go through `$N` parameterised binds
 - **Incoming registrations**: created pending unless the mode is `auto_accept` or the incoming password matched; refused outright when `incoming_mode = "require_password"` but no password is configured (no silent bypass)
 - **Client address**: the IP whitelist compares against the address core's `PhoenixKit.Utils.IpAddress.client_address/1` reports: `conn.remote_ip`, and a forwarded header only when that address is a proxy on the same box or network (the last `X-Forwarded-For` hop, which the proxy appended). A client-supplied `X-Forwarded-For` is never believed. Behind a proxy on another network, set `remote_ip` with your proxy plug, or the whitelist sees the proxy
@@ -446,5 +479,5 @@ config :phoenix_kit_sync,
 
 1. Check transfer history for error messages
 2. Verify table is in allowed tables (if configured)
-3. "Only partly pulled": the sender has no cursors (update its sync module) or the table's key type has none
+3. "Only partly pulled": the sender has no cursors (update its sync module), or the table's key type has none; the message then names the type, and the fix is a higher "Records per request" on the sender's connection
 4. Review server logs for detailed errors

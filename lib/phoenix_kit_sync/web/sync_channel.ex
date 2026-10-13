@@ -23,14 +23,16 @@ defmodule PhoenixKitSync.Web.SyncChannel do
   - `request:tables` - Request list of available tables
   - `request:schema` - Request table schema
   - `request:count` - Request record count for table
-  - `request:records` - Request paginated records
+  - `request:records` - Request paginated records, by `offset` or by
+    `after` (the `next_after` of the reply before)
 
   ### To Receiver (responses)
   - `response:capabilities` - Server capabilities
   - `response:tables` - List of available tables
   - `response:schema` - Table schema details
   - `response:count` - Record count
-  - `response:records` - Paginated records
+  - `response:records` - Paginated records, with `next_after` when the
+    table's key has a cursor
   - `response:error` - Error response
   """
 
@@ -40,6 +42,7 @@ defmodule PhoenixKitSync.Web.SyncChannel do
   alias PhoenixKitSync
   alias PhoenixKitSync.DataExporter
   alias PhoenixKitSync.Params
+  alias PhoenixKitSync.PullCursor
   alias PhoenixKitSync.SchemaInspector
 
   @impl true
@@ -154,21 +157,7 @@ defmodule PhoenixKitSync.Web.SyncChannel do
           "Sync.Channel: Records requested for #{table} (offset: #{offset}, limit: #{limit})"
         )
 
-        case DataExporter.fetch_records(table, offset: offset, limit: limit) do
-          {:ok, records} ->
-            push(socket, "response:records", %{
-              records: records,
-              offset: offset,
-              has_more: length(records) == limit,
-              ref: ref
-            })
-
-          {:error, reason} ->
-            push(socket, "response:error", %{
-              error: "Failed to fetch records: #{inspect(reason)}",
-              ref: ref
-            })
-        end
+        push_records(socket, table, ref, payload, offset, limit)
 
         {:noreply, socket}
 
@@ -212,6 +201,26 @@ defmodule PhoenixKitSync.Web.SyncChannel do
   # ===========================================
   # PRIVATE FUNCTIONS
   # ===========================================
+
+  # A receiver that pages by key sends the position the page before
+  # answered ("after"); one that does not sends an offset alone.
+  defp push_records(socket, table, ref, payload, offset, limit) do
+    with {:ok, position} <- PullCursor.from_params(payload),
+         {:ok, %{records: records, next_after: next_after}} <-
+           DataExporter.fetch_page(table, offset: offset, limit: limit, after: position) do
+      reply = %{records: records, offset: offset, has_more: length(records) == limit, ref: ref}
+
+      # Only added, never nil: a receiver from before it pages by offset.
+      reply = if next_after, do: Map.put(reply, :next_after, next_after), else: reply
+      push(socket, "response:records", reply)
+    else
+      {:error, reason} ->
+        push(socket, "response:error", %{
+          error: "Failed to fetch records: #{inspect(reason)}",
+          ref: ref
+        })
+    end
+  end
 
   defp send_to_sender(%{owner_pid: pid}, message) when is_pid(pid) do
     if Process.alive?(pid) do

@@ -65,7 +65,48 @@ defmodule PhoenixKitSync.Transfer do
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Utils.Date, as: UtilsDate
   alias PhoenixKitSync.Connection
-  @type t :: %__MODULE__{}
+
+  @typedoc """
+  A transfer row. An association is `Ecto.Association.NotLoaded` until
+  preloaded. There is no `updated_at`: the lifecycle is in the status and
+  its `*_at` fields.
+  """
+  @type t :: %__MODULE__{
+          uuid: UUIDv7.t() | nil,
+          direction: String.t() | nil,
+          session_code: String.t() | nil,
+          remote_site_url: String.t() | nil,
+          table_name: String.t() | nil,
+          records_requested: integer() | nil,
+          records_transferred: integer() | nil,
+          records_created: integer() | nil,
+          records_updated: integer() | nil,
+          records_skipped: integer() | nil,
+          records_failed: integer() | nil,
+          bytes_transferred: integer() | nil,
+          conflict_strategy: String.t() | nil,
+          status: String.t() | nil,
+          requires_approval: boolean() | nil,
+          approved_at: DateTime.t() | nil,
+          denied_at: DateTime.t() | nil,
+          denial_reason: String.t() | nil,
+          approval_expires_at: DateTime.t() | nil,
+          requester_ip: String.t() | nil,
+          requester_user_agent: String.t() | nil,
+          error_message: String.t() | nil,
+          started_at: DateTime.t() | nil,
+          completed_at: DateTime.t() | nil,
+          metadata: map() | nil,
+          connection_uuid: UUIDv7.t() | nil,
+          connection: Connection.t() | Ecto.Association.NotLoaded.t() | nil,
+          approved_by_uuid: UUIDv7.t() | nil,
+          approved_by_user: User.t() | Ecto.Association.NotLoaded.t() | nil,
+          denied_by_uuid: UUIDv7.t() | nil,
+          denied_by_user: User.t() | Ecto.Association.NotLoaded.t() | nil,
+          initiated_by_uuid: UUIDv7.t() | nil,
+          initiated_by_user: User.t() | Ecto.Association.NotLoaded.t() | nil,
+          inserted_at: DateTime.t() | nil
+        }
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
 

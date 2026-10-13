@@ -38,11 +38,9 @@ defmodule PhoenixKitSync.Web.ReceiverPagingTest do
 
   # Sends a batch and waits until the LiveView has handled it, so the
   # mailbox checks below need no timeout.
-  defp batch(view, table, records, has_more, echo \\ 0) do
-    send(
-      view.pid,
-      {:sync_client, {:records, table, %{records: records, has_more: has_more, offset: echo}}}
-    )
+  defp batch(view, table, records, has_more, echo \\ 0, extra \\ %{}) do
+    result = Map.merge(%{records: records, has_more: has_more, offset: echo}, extra)
+    send(view.pid, {:sync_client, {:records, table, result}})
 
     _ = :sys.get_state(view.pid)
   end
@@ -64,6 +62,44 @@ defmodule PhoenixKitSync.Web.ReceiverPagingTest do
 
     assert_received {:"$websockex_cast", {:request_records, "rx_table", opts}}
     assert opts[:offset] == 3
+  end
+
+  test "a sender's position goes back with the next request, beside the offset", %{conn: conn} do
+    view = mount_transfer(conn)
+
+    batch(view, "rx_table", rows(3), true, 0, %{next_after: %{"id" => "3"}})
+
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", opts}}
+    assert opts[:after] == %{"id" => "3"}
+    assert opts[:offset] == 3
+  end
+
+  test "a sender that answers no position is followed by offset alone", %{conn: conn} do
+    view = mount_transfer(conn)
+
+    # A reply from before positions has no such key at all; a current
+    # sender with a key that has no cursor answers nil.
+    batch(view, "rx_table", rows(3), true)
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", first}}
+    assert first[:after] == nil
+    assert first[:offset] == 3
+
+    batch(view, "rx_table", rows(3, 4), true, 0, %{next_after: nil})
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", second}}
+    assert second[:after] == nil
+    assert second[:offset] == 6
+  end
+
+  test "the position of one page is not carried past a page without one", %{conn: conn} do
+    view = mount_transfer(conn)
+
+    batch(view, "rx_table", rows(3), true, 0, %{next_after: %{"id" => "3"}})
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", _first}}
+
+    batch(view, "rx_table", rows(3, 4), true)
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", second}}
+    assert second[:after] == nil
+    assert second[:offset] == 6
   end
 
   test "an empty batch ends the table", %{conn: conn} do

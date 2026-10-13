@@ -146,6 +146,33 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.PullSyncTest do
              Enum.find(assigns.sync_progress.table_results, &(&1.table == @parents))
   end
 
+  test "a table cut because of its key type says which type, on that table's row", %{
+    conn: conn,
+    connection: connection
+  } do
+    StubRemote.put_data(@parents, [%{"code" => "p1", "name" => "a"}])
+    StubRemote.put_data(@tree, [%{"code" => "t1", "parent_code" => nil}])
+
+    StubRemote.put_response_extra(@parents, %{
+      "truncated" => true,
+      "unsupported_key_type" => "time with time zone"
+    })
+
+    StubRemote.put_response_extra(@tree, %{"truncated" => true})
+
+    view = open_sync_page(conn, connection)
+    run_sync(view)
+
+    assert has_element?(
+             view,
+             ~s([data-table-error="#{@parents}"]),
+             Errors.message({:truncated_key_type, "time with time zone"})
+           )
+
+    # A sender that names no type keeps the message it always had.
+    assert has_element?(view, ~s([data-table-error="#{@tree}"]), Errors.message(:truncated))
+  end
+
   test "an import that raises still reports back and closes its transfer", %{
     conn: conn,
     connection: connection

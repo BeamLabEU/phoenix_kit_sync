@@ -556,6 +556,76 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       assert body["success"] == true
       assert body["status"] == connection.status
     end
+
+    # The query is a read. Whatever state the sender connection is in, the
+    # answer names it and the row is as it was: a pending connection is not
+    # activated by its peer asking.
+    for status <- ~w(pending active suspended revoked expired) do
+      test "a #{status} connection is reported and left exactly as it was", %{conn: conn} do
+        {:ok, connection, token} =
+          Connections.create_connection(%{
+            "name" => "Queried #{System.unique_integer([:positive])}",
+            "direction" => "sender",
+            "site_url" => "https://queried-#{System.unique_integer([:positive])}.example.com",
+            "status" => unquote(status)
+          })
+
+        before = Connections.get_connection!(connection.uuid)
+        assert before.status == unquote(status)
+
+        body =
+          conn
+          |> post("/sync/api/get-connection-status", %{
+            "receiver_url" => connection.site_url,
+            "auth_token_hash" => token_hash(token)
+          })
+          |> json_response(200)
+
+        assert body["status"] == unquote(status)
+        assert Connections.get_connection!(connection.uuid) == before
+
+        refute_activity_logged("sync.connection.updated", resource_uuid: connection.uuid)
+        refute_activity_logged("sync.connection.approved", resource_uuid: connection.uuid)
+      end
+    end
+
+    test "a pending connection still authorizes nothing after its peer asked", %{conn: conn} do
+      {:ok, connection, token} =
+        Connections.create_connection(%{
+          "name" => "Waiting",
+          "direction" => "sender",
+          "site_url" => "https://waiting-#{System.unique_integer([:positive])}.example.com"
+        })
+
+      hash = token_hash(token)
+
+      post(conn, "/sync/api/get-connection-status", %{
+        "receiver_url" => connection.site_url,
+        "auth_token_hash" => hash
+      })
+
+      assert %{"error_code" => "connection_not_active"} =
+               build_conn()
+               |> post("/sync/api/list-tables", %{"auth_token_hash" => hash})
+               |> json_response(403)
+    end
+
+    test "a receiver connection is not found by it", %{conn: conn} do
+      {:ok, _connection, token} =
+        Connections.create_connection(%{
+          "name" => "Incoming",
+          "direction" => "receiver",
+          "site_url" => "https://incoming-#{System.unique_integer([:positive])}.example.com"
+        })
+
+      assert %{"success" => false} =
+               conn
+               |> post("/sync/api/get-connection-status", %{
+                 "receiver_url" => "https://x.example.com",
+                 "auth_token_hash" => token_hash(token)
+               })
+               |> json_response(404)
+    end
   end
 
   describe "POST /sync/api/delete-connection" do

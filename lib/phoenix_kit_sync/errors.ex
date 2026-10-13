@@ -219,6 +219,15 @@ defmodule PhoenixKitSync.Errors do
         "Table only partly pulled: the sender stopped at its max_records_per_request limit and gave no way to continue. Update sync on the source site, or have its admin raise that limit"
       )
 
+  # The sender is current and named the key type it has no cursor for:
+  # updating it would not help, raising the limit does.
+  def message({:truncated_key_type, type}) when is_binary(type),
+    do:
+      gettext(
+        "Table only partly pulled: its key is of type %{type}, which the sender cannot continue from once it stops at its max_records_per_request limit. Have the source site's admin raise that limit for this connection",
+        type: type
+      )
+
   def message(:unauthorized), do: gettext("Unauthorized")
   def message(:unavailable), do: gettext("Unavailable")
   def message(:unexpected_response), do: gettext("Unexpected response from remote site")

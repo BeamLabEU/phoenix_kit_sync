@@ -27,7 +27,15 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   introspection) — none touch HTTP, the socket, or the websocket client.
   """
 
+  alias PhoenixKitSync.DataImporter
+  alias PhoenixKitSync.ExtensionTypes
   alias PhoenixKitSync.SchemaInspector
+
+  @typedoc """
+  A column's type as the importer names it: the `information_schema`
+  `data_type`, or `{:array, element_type}` for an array column.
+  """
+  @type column_type :: String.t() | {:array, String.t() | nil}
 
   # "double precision" is one type name of two words.
   @numeric_types %{
@@ -52,10 +60,23 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   `numeric_column_types/1` returns.
 
   A column `column_types` does not name is read by shape, as `value/3` does.
+
+  An array column is named `{:array, element_type}` and takes a list, whose
+  elements are read by the element type
+  (`PhoenixKitSync.DataImporter.prepare_array/2`). A list for any other
+  column (a json value) is passed as it came.
   """
   @spec value(any(), String.t(), %{String.t() => :decimal | :float}, %{
-          String.t() => String.t() | nil
+          String.t() => column_type() | nil
         }) :: any()
+  def value(list, column, _numeric_cols, column_types)
+      when is_list(list) and is_binary(column) and is_map(column_types) do
+    case Map.get(column_types, column) do
+      {:array, element_type} -> DataImporter.prepare_array(list, element_type)
+      _not_an_array -> list
+    end
+  end
+
   def value(value, column, numeric_cols, column_types)
       when is_binary(value) and is_binary(column) and is_map(column_types) do
     case Map.get(column_types, column) do
@@ -71,9 +92,12 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   column of SQL type `type`. Read by that type like `value/4`; by shape
   when `type` is nil.
   """
-  @spec key_value(any(), String.t() | nil) :: any()
+  @spec key_value(any(), column_type() | nil) :: any()
   def key_value(value, type) when is_binary(value) and is_binary(type),
     do: typed_string(value, type, @numeric_types[type])
+
+  def key_value(list, {:array, element_type}) when is_list(list),
+    do: DataImporter.prepare_array(list, element_type)
 
   def key_value(value, _type), do: value(value)
 
@@ -84,10 +108,20 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
         type == "date" -> parse_date_string(value)
         type in @time_types -> parse_time_string(value)
         numeric_kind -> parse_numeric_string(value, numeric_kind)
+        type in ["interval", "inet", "cidr", "macaddr"] -> parse_extension(type, value)
         true -> nil
       end
 
     parsed || value
+  end
+
+  # An interval, an inet or a macaddr travels as text and is bound as the
+  # struct Postgrex takes for it.
+  defp parse_extension(type, value) do
+    case ExtensionTypes.parse(type, value) do
+      {:ok, struct} -> struct
+      :error -> nil
+    end
   end
 
   # ===========================================
