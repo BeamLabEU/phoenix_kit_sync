@@ -29,7 +29,7 @@ defmodule PhoenixKitSync.ErrorsTest do
       {:invalid_code, "Invalid session code"},
       {:invalid_column_name, "The sender sent a column name that is not a valid identifier"},
       {:invalid_column_type,
-       "The sender's schema has a column type that is not a plain type name"},
+       "The sender's schema has a column type that is not a plain type name, or an array column without its element type. If the source site runs an older sync, update it and try again"},
       {:invalid_filter,
        "Invalid record filter: enter at least one ID (up to 1000), or a range with at least one bound. An integer key takes only whole-number IDs, and a range needs an integer key"},
       {:invalid_identifier, "Invalid identifier"},
@@ -70,7 +70,9 @@ defmodule PhoenixKitSync.ErrorsTest do
       {:unavailable, "Unavailable"},
       {:unsupported_key_type,
        "This table's key type does not take an ID filter (it takes integer, uuid or text keys)"},
-      {:unexpected_response, "Unexpected response from remote site"}
+      {:unexpected_response, "Unexpected response from remote site"},
+      {:unsupported_column_type,
+       "The table has a column type that cannot be created automatically"}
     ]
 
     test "a pull cut because of its key type names the type" do
