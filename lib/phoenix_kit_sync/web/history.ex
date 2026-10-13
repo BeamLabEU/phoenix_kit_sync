@@ -83,8 +83,8 @@ defmodule PhoenixKitSync.Web.History do
   @impl true
   def handle_params(params, _url, socket) do
     page = Params.page(params["page"], @max_page)
-    direction_filter = params["direction"]
-    status_filter = params["status"]
+    direction_filter = valid_filter(params["direction"], ~w(send receive))
+    status_filter = valid_filter(params["status"], @statuses)
 
     socket =
       socket
@@ -102,6 +102,8 @@ defmodule PhoenixKitSync.Web.History do
     end
   end
 
+  defp valid_filter(value, allowed), do: if(value in allowed, do: value)
+
   defp history_path(socket, page) do
     query =
       [
@@ -112,7 +114,7 @@ defmodule PhoenixKitSync.Web.History do
       |> Enum.reject(fn {_key, value} -> is_nil(value) or value == "" end)
       |> URI.encode_query()
 
-    Routes.path("/admin/sync/history") <> "?" <> query
+    Routes.path("/admin/sync/history", locale: socket.assigns.current_locale) <> "?" <> query
   end
 
   defp load_transfers(socket) do
@@ -156,7 +158,7 @@ defmodule PhoenixKitSync.Web.History do
     query_params =
       if status != "", do: Map.put(query_params, "status", status), else: query_params
 
-    base_path = Routes.path("/admin/sync/history")
+    base_path = Routes.path("/admin/sync/history", locale: socket.assigns.current_locale)
 
     path =
       if map_size(query_params) > 0 do
@@ -169,7 +171,7 @@ defmodule PhoenixKitSync.Web.History do
   end
 
   def handle_event("clear_filters", _params, socket) do
-    path = Routes.path("/admin/sync/history")
+    path = Routes.path("/admin/sync/history", locale: socket.assigns.current_locale)
     {:noreply, push_patch(socket, to: path)}
   end
 

@@ -77,6 +77,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   def handle_params(params, _url, socket) do
     action = params["action"]
     id = params["id"]
+
+    socket =
+      if action == "sync",
+        do: socket,
+        else: socket |> assign(:sync_in_progress, false) |> assign(:sync_progress, nil)
+
     socket = handle_action(socket, action, id, params)
     {:noreply, socket}
   end
@@ -255,27 +261,27 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   @impl true
   def handle_event("filter", %{"direction" => direction}, socket) do
     params = if direction != "", do: %{direction: direction}, else: %{}
-    path = path_with_params("/admin/sync/connections", params)
+    path = path_with_params(socket, "/admin/sync/connections", params)
     {:noreply, push_patch(socket, to: path)}
   end
 
   def handle_event("new_connection", _params, socket) do
-    path = path_with_params("/admin/sync/connections", %{action: "new"})
+    path = path_with_params(socket, "/admin/sync/connections", %{action: "new"})
     {:noreply, push_patch(socket, to: path)}
   end
 
   def handle_event("show_connection", %{"uuid" => uuid}, socket) do
-    path = path_with_params("/admin/sync/connections", %{action: "show", id: uuid})
+    path = path_with_params(socket, "/admin/sync/connections", %{action: "show", id: uuid})
     {:noreply, push_patch(socket, to: path)}
   end
 
   def handle_event("edit_connection", %{"uuid" => uuid}, socket) do
-    path = path_with_params("/admin/sync/connections", %{action: "edit", id: uuid})
+    path = path_with_params(socket, "/admin/sync/connections", %{action: "edit", id: uuid})
     {:noreply, push_patch(socket, to: path)}
   end
 
   def handle_event("cancel", _params, socket) do
-    path = Routes.path("/admin/sync/connections")
+    path = Routes.path("/admin/sync/connections", locale: socket.assigns.current_locale)
     {:noreply, push_patch(socket, to: path)}
   end
 
@@ -396,34 +402,25 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     end
   end
 
-  def handle_event("regenerate_token", %{"uuid" => uuid}, socket) do
-    connection = Connections.get_connection!(uuid)
-    actor_uuid = Actor.uuid(socket)
-
-    case Connections.regenerate_token(connection, actor_uuid: actor_uuid) do
-      {:ok, _connection, _new_token} ->
-        socket =
-          socket
-          |> put_flash(:info, gettext("Token regenerated"))
-          |> load_connections()
-
-        {:noreply, socket}
-
-      {:error, _changeset} ->
-        {:noreply, put_flash(socket, :error, gettext("Failed to regenerate token"))}
-    end
+  # Older tabs may still send the event. Rotation cannot update the peer
+  # with the current protocol; discarding its new token severs the link.
+  def handle_event("regenerate_token", _params, socket) do
+    {:noreply,
+     put_flash(
+       socket,
+       :error,
+       gettext("To replace a connection token, delete the connection and create it again")
+     )}
   end
 
   def handle_event("delete_connection", %{"uuid" => uuid}, socket) do
     connection = Connections.get_connection!(uuid)
     actor_uuid = Actor.uuid(socket)
 
-    notify_remote_async(fn ->
-      ConnectionNotifier.notify_delete(connection)
-    end)
-
     case Connections.delete_connection(connection, actor_uuid: actor_uuid) do
       {:ok, _connection} ->
+        notify_remote_async(fn -> ConnectionNotifier.notify_delete(connection) end)
+
         message =
           if connection.direction == "receiver",
             do: gettext("Connection severed"),
@@ -434,7 +431,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           |> put_flash(:info, message)
           |> load_connections()
 
-        path = Routes.path("/admin/sync/connections")
+        path = Routes.path("/admin/sync/connections", locale: socket.assigns.current_locale)
         {:noreply, push_patch(socket, to: path)}
 
       {:error, _changeset} ->
@@ -443,7 +440,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   end
 
   def handle_event("start_sync", %{"uuid" => uuid}, socket) do
-    path = path_with_params("/admin/sync/connections", %{action: "sync", id: uuid})
+    path = path_with_params(socket, "/admin/sync/connections", %{action: "sync", id: uuid})
     {:noreply, push_patch(socket, to: path)}
   end
 
@@ -582,6 +579,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         socket
         |> assign(:sync_in_progress, true)
         |> assign(:sync_progress, %{
+          run_ref: make_ref(),
           total: length(selected_tables),
           current: 0,
           tables_done: 0,
@@ -597,7 +595,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         })
 
       # Start the sync process
-      send(self(), {:do_pull_table, selected_tables, 0})
+      send(self(), {:do_pull_table, socket.assigns.sync_progress.run_ref, selected_tables, 0})
 
       {:noreply, socket}
     end
@@ -719,6 +717,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         socket
         |> assign(:sync_in_progress, true)
         |> assign(:sync_progress, %{
+          run_ref: make_ref(),
           total: 1,
           current: 1,
           tables_done: 0,
@@ -731,7 +730,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         })
 
       # Start the transfer
-      send(self(), {:start_detail_sync, connection, table, filter})
+      send(
+        self(),
+        {:start_detail_sync, socket.assigns.sync_progress.run_ref, connection, table, filter}
+      )
 
       {:noreply, socket}
     else
@@ -905,9 +907,36 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     end
   end
 
+  # Imports finish even when this page closes. Queued work and replies
+  # belong to their original run, never a newly opened connection's sync.
+  def handle_info({:start_detail_sync, run_ref, connection, table, filter}, socket) do
+    if current_run?(socket, run_ref),
+      do: handle_info({:start_detail_sync, connection, table, filter}, socket),
+      else: {:noreply, socket}
+  end
+
+  def handle_info({:do_pull_table, run_ref, tables, index}, socket) do
+    if current_run?(socket, run_ref),
+      do: handle_info({:do_pull_table, tables, index}, socket),
+      else: {:noreply, socket}
+  end
+
+  def handle_info({:sync_table_complete, run_ref, table, result, rest, index, remap}, socket) do
+    if current_run?(socket, run_ref),
+      do: handle_info({:sync_table_complete, table, result, rest, index, remap}, socket),
+      else: {:noreply, socket}
+  end
+
+  def handle_info({:sync_table_complete, run_ref, table, result}, socket) do
+    if current_run?(socket, run_ref),
+      do: handle_info({:sync_table_complete, table, result}, socket),
+      else: {:noreply, socket}
+  end
+
   @impl true
   def handle_info({:start_detail_sync, connection, table, filter}, socket) do
     liveview_pid = self()
+    run_ref = socket.assigns.sync_progress.run_ref
     strategy = socket.assigns.conflict_strategy
     actor_uuid = Actor.uuid(socket)
     password = socket.assigns.sync_password
@@ -937,7 +966,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           ConnectionNotifier.pull_table_data(connection, table, opts)
         end)
 
-      send(liveview_pid, {:sync_table_complete, table, result})
+      send(liveview_pid, {:sync_table_complete, run_ref, table, result})
     end)
 
     {:noreply, socket}
@@ -975,7 +1004,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           |> Map.put(:status, :retrying)
 
         socket = assign(socket, :sync_progress, progress)
-        send(self(), {:do_pull_table, failed_tables, 0})
+        send(self(), {:do_pull_table, progress.run_ref, failed_tables, 0})
         {:noreply, socket}
       else
         # No progress on last retry — stop
@@ -1004,6 +1033,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   @impl true
   def handle_info({:do_pull_table, [table | rest], index}, socket) do
     liveview_pid = self()
+    run_ref = socket.assigns.sync_progress.run_ref
     connection = socket.assigns.selected_connection
     strategy = socket.assigns.conflict_strategy
     actor_uuid = Actor.uuid(socket)
@@ -1035,13 +1065,15 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         {:ok, import_result, updated_remap} ->
           send(
             liveview_pid,
-            {:sync_table_complete, table, {:ok, import_result}, rest, index + 1, updated_remap}
+            {:sync_table_complete, run_ref, table, {:ok, import_result}, rest, index + 1,
+             updated_remap}
           )
 
         {:error, reason, unchanged_remap} ->
           send(
             liveview_pid,
-            {:sync_table_complete, table, {:error, reason}, rest, index + 1, unchanged_remap}
+            {:sync_table_complete, run_ref, table, {:error, reason}, rest, index + 1,
+             unchanged_remap}
           )
       end
     end)
@@ -1054,14 +1086,14 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     progress = Map.put(socket.assigns.sync_progress, :uuid_remap, updated_remap)
     socket = assign(socket, :sync_progress, progress)
     socket = process_table_sync_result(socket, table, result)
-    send(self(), {:do_pull_table, rest, index})
+    send(self(), {:do_pull_table, socket.assigns.sync_progress.run_ref, rest, index})
     {:noreply, socket}
   end
 
   @impl true
   def handle_info({:sync_table_complete, table, result, rest, index}, socket) do
     socket = process_table_sync_result(socket, table, result)
-    send(self(), {:do_pull_table, rest, index})
+    send(self(), {:do_pull_table, socket.assigns.sync_progress.run_ref, rest, index})
     {:noreply, socket}
   end
 
@@ -1293,7 +1325,14 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
   defp ask_sync_password(socket, _other_reason), do: socket
 
-  # Process a single table's sync result: extract counts, merge with retries, update progress
+  defp current_run?(socket, run_ref) do
+    case socket.assigns[:sync_progress] do
+      %{run_ref: ^run_ref} -> true
+      _ -> false
+    end
+  end
+
+  # Extract counts, merge retries, and update this run's progress.
   defp process_table_sync_result(socket, table, result) do
     socket =
       case result do
@@ -1518,7 +1557,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           |> put_flash(:info, gettext("Connection created successfully"))
           |> load_connections()
 
-        path = Routes.path("/admin/sync/connections")
+        path = Routes.path("/admin/sync/connections", locale: socket.assigns.current_locale)
         {:noreply, push_patch(socket, to: path)}
 
       {:error, changeset} ->
@@ -1547,7 +1586,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           |> put_flash(:info, gettext("Connection updated successfully"))
           |> load_connections()
 
-        path = Routes.path("/admin/sync/connections")
+        path = Routes.path("/admin/sync/connections", locale: socket.assigns.current_locale)
         {:noreply, push_patch(socket, to: path)}
 
       {:error, changeset} ->
@@ -2181,15 +2220,6 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           <% end %>
 
           <%= if @connection.status not in ["revoked"] do %>
-            <button
-              type="button"
-              phx-click="regenerate_token"
-              phx-value-uuid={@connection.uuid}
-              phx-disable-with={gettext("Regenerating…")}
-              class="btn btn-outline btn-sm"
-            >
-              <.icon name="hero-key" class="w-4 h-4" /> {gettext("Regenerate Token")}
-            </button>
 
             <button
               type="button"
@@ -3135,7 +3165,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   defp assign_trail(socket, :new) do
     socket
     |> assign(:page_title, gettext("New connection"))
-    |> assign(:page_crumbs, [connections_crumb()])
+    |> assign(:page_crumbs, [connections_crumb(socket)])
   end
 
   defp assign_trail(socket, :show) do
@@ -3143,7 +3173,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
     socket
     |> assign(:page_title, connection.name)
-    |> assign(:page_crumbs, [connections_crumb()])
+    |> assign(:page_crumbs, [connections_crumb(socket)])
   end
 
   defp assign_trail(socket, :edit) do
@@ -3152,8 +3182,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     socket
     |> assign(:page_title, gettext("Edit"))
     |> assign(:page_crumbs, [
-      connections_crumb(),
-      %{label: connection.name, patch: connection_patch("show", connection.uuid)}
+      connections_crumb(socket),
+      %{label: connection.name, patch: connection_patch(socket, "show", connection.uuid)}
     ])
   end
 
@@ -3163,26 +3193,29 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     socket
     |> assign(:page_title, gettext("Sync data"))
     |> assign(:page_crumbs, [
-      connections_crumb(),
-      %{label: connection.name, patch: connection_patch("show", connection.uuid)}
+      connections_crumb(socket),
+      %{label: connection.name, patch: connection_patch(socket, "show", connection.uuid)}
     ])
   end
 
-  defp connections_crumb do
-    %{label: gettext("Connections"), patch: path_with_params("/admin/sync/connections", %{})}
+  defp connections_crumb(socket) do
+    %{
+      label: gettext("Connections"),
+      patch: path_with_params(socket, "/admin/sync/connections", %{})
+    }
   end
 
-  defp connection_patch(action, uuid) do
-    path_with_params("/admin/sync/connections", %{action: action, id: uuid})
+  defp connection_patch(socket, action, uuid) do
+    path_with_params(socket, "/admin/sync/connections", %{action: action, id: uuid})
   end
 
-  defp path_with_params(base_path, params) when map_size(params) == 0 do
-    Routes.path(base_path)
+  defp path_with_params(socket, base_path, params) when map_size(params) == 0 do
+    Routes.path(base_path, locale: socket.assigns.current_locale)
   end
 
-  defp path_with_params(base_path, params) do
+  defp path_with_params(socket, base_path, params) do
     query_string = URI.encode_query(params)
-    "#{Routes.path(base_path)}?#{query_string}"
+    "#{Routes.path(base_path, locale: socket.assigns.current_locale)}?#{query_string}"
   end
 
   defp format_number(num) when is_integer(num) do

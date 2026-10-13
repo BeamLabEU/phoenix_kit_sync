@@ -108,8 +108,17 @@ defmodule PhoenixKitSync.Integration.TransferLimitsTest do
   # pull-data
   # ===========================================
 
+  for action <- ["pull-data", "table-records"] do
+    test "an empty #{action} answer returns its reservation" do
+      {connection, token} = create(%{"max_downloads" => 1})
+      assert json_response(rest(unquote(action), token), 200)["success"]
+      assert %{downloads_used: 0, records_downloaded: 0} = counted(connection)
+    end
+  end
+
   describe "pull-data" do
     test "a pull that fails gives its download back" do
+      rows(1)
       {connection, token} = create(%{"max_downloads" => 1})
 
       assert json_response(rest("pull-data", token, %{"table_name" => "no_such_table"}), 404)
@@ -358,7 +367,7 @@ defmodule PhoenixKitSync.Integration.TransferLimitsTest do
       {"response:error", refused, state} =
         request(state, connection, %{"limit" => 2, "after" => %{"uuid" => first_row}})
 
-      assert refused["error"] =~ "download_limit_reached"
+      assert refused["error"] == PhoenixKitSync.Errors.message(:download_limit_reached)
 
       # An offset it was not given either.
       {"response:error", _refused, _state} =
@@ -380,7 +389,7 @@ defmodule PhoenixKitSync.Integration.TransferLimitsTest do
           "after" => first["next_after"]
         })
 
-      assert refused["error"] =~ "download_limit_reached"
+      assert refused["error"] == PhoenixKitSync.Errors.message(:download_limit_reached)
     end
 
     test "the pages of one read stop at max_records_total" do
@@ -399,7 +408,7 @@ defmodule PhoenixKitSync.Integration.TransferLimitsTest do
       {"response:error", refused, _state} =
         request(state, connection, %{"limit" => 2, "offset" => 3, "after" => second["next_after"]})
 
-      assert refused["error"] =~ "record_limit_reached"
+      assert refused["error"] == PhoenixKitSync.Errors.message(:record_limit_reached)
       assert counted(connection).records_downloaded == 3
     end
   end

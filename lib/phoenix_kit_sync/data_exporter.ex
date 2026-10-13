@@ -391,6 +391,9 @@ defmodule PhoenixKitSync.DataExporter do
 
   defp serialize_value(value) when is_number(value), do: value
   defp serialize_value(value) when is_boolean(value), do: value
+  defp serialize_value(:NaN), do: "NaN"
+  defp serialize_value(:inf), do: "Infinity"
+  defp serialize_value(:"-inf"), do: "-Infinity"
   defp serialize_value([%Postgrex.Lexeme{} = lexeme | _]), do: ExtensionTypes.serialize(lexeme)
   defp serialize_value(value) when is_list(value), do: Enum.map(value, &serialize_value/1)
 
@@ -410,8 +413,8 @@ defmodule PhoenixKitSync.DataExporter do
   # Plain maps (after struct matchers)
   defp serialize_value(value) when is_map(value), do: serialize_map(value)
 
-  # Fallback for other types
-  defp serialize_value(value), do: inspect(value)
+  defp serialize_value(value) when is_tuple(value), do: ExtensionTypes.unsupported_marker("tuple")
+  defp serialize_value(_value), do: ExtensionTypes.unsupported_marker("bitstring")
 
   defp serialize_map(map) do
     Map.new(map, fn {k, v} -> {to_string(k), serialize_value(v)} end)

@@ -161,7 +161,7 @@ defmodule PhoenixKitSync.DataImporter do
     insert_record(repo, table, record_without_pk)
   rescue
     e ->
-      Logger.warning("DataImporter: Error importing record - #{inspect(e)}")
+      Logger.warning("DataImporter: Error importing record (#{inspect(e.__struct__)})")
       {:error, Exception.message(e)}
   end
 
@@ -184,7 +184,7 @@ defmodule PhoenixKitSync.DataImporter do
     end
   rescue
     e ->
-      Logger.warning("DataImporter: Error importing record - #{inspect(e)}")
+      Logger.warning("DataImporter: Error importing record (#{inspect(e.__struct__)})")
       {:error, Exception.message(e)}
   end
 
@@ -195,9 +195,9 @@ defmodule PhoenixKitSync.DataImporter do
   # composite PK. Returns an empty map for :append (no conflict check
   # needed) and for any case that can't safely batch; the caller falls back
   # to the per-record `find_existing/4` path.
-  defp prefetch_existing(_repo, _table, _records, _primary_keys, :append), do: %{}
-  defp prefetch_existing(_repo, _table, _records, [], _strategy), do: %{}
-  defp prefetch_existing(_repo, _table, _records, [_, _ | _], _strategy), do: %{}
+  defp prefetch_existing(_repo, _table, _records, _primary_keys, :append), do: :unavailable
+  defp prefetch_existing(_repo, _table, _records, [], _strategy), do: :unavailable
+  defp prefetch_existing(_repo, _table, _records, [_, _ | _], _strategy), do: :unavailable
 
   defp prefetch_existing(repo, table, records, [pk], _strategy) do
     pk_values = extract_pk_values(records, pk)
@@ -205,10 +205,24 @@ defmodule PhoenixKitSync.DataImporter do
     with :ok <- validate_identifiers([table, pk]),
          false <- pk_values == [] do
       sql = ~s[SELECT * FROM "#{table}" WHERE "#{pk}" = ANY($1)]
-      run_prefetch_query(repo, sql, pk_values, pk)
+
+      case run_prefetch_query(repo, sql, pk_values, pk) do
+        :unavailable -> :unavailable
+        existing -> Map.merge(existing, repeated_keys(records, pk))
+      end
     else
-      _ -> %{}
+      _ -> :unavailable
     end
+  end
+
+  # Repeated keys must see earlier writes in this batch, including merges.
+  # A snapshot taken before the first insert cannot answer those lookups.
+  defp repeated_keys(records, pk) do
+    records
+    |> Enum.map(&Map.get(&1, pk))
+    |> Enum.frequencies()
+    |> Enum.filter(fn {value, count} -> not is_nil(value) and count > 1 end)
+    |> Map.new(fn {value, _count} -> {value, :unavailable} end)
   end
 
   defp extract_pk_values(records, pk) do
@@ -219,10 +233,12 @@ defmodule PhoenixKitSync.DataImporter do
   end
 
   defp run_prefetch_query(repo, sql, pk_values, pk) do
-    case repo.query(sql, [pk_values]) do
+    case repo.query(sql, [pk_values], log: false) do
       {:ok, %{rows: rows, columns: columns}} -> index_rows_by_pk(rows, columns, pk)
-      _ -> %{}
+      _ -> :unavailable
     end
+  rescue
+    _ -> :unavailable
   end
 
   defp index_rows_by_pk(rows, columns, pk) do
@@ -237,11 +253,18 @@ defmodule PhoenixKitSync.DataImporter do
   # should fall back to find_existing/4 (composite PK or missing PK value).
   defp lookup_existing(_record, [], _existing_by_pk), do: :miss
   defp lookup_existing(_record, [_, _ | _], _existing_by_pk), do: :miss
+  defp lookup_existing(_record, _primary_keys, :unavailable), do: :miss
 
   defp lookup_existing(record, [pk], existing_by_pk) do
     case Map.get(record, pk) do
-      nil -> :miss
-      pk_value -> {:hit, Map.get(existing_by_pk, pk_value)}
+      nil ->
+        :miss
+
+      pk_value ->
+        case Map.get(existing_by_pk, pk_value) do
+          :unavailable -> :miss
+          existing -> {:hit, existing}
+        end
     end
   end
 
@@ -266,7 +289,7 @@ defmodule PhoenixKitSync.DataImporter do
 
       sql = ~s[SELECT * FROM "#{table}" WHERE #{Enum.join(conditions, " AND ")} LIMIT 1]
 
-      case repo.query(sql, binds) do
+      case repo.query(sql, binds, log: false) do
         {:ok, %{rows: [row], columns: columns}} ->
           Enum.zip(columns, row) |> Map.new()
 
@@ -288,7 +311,7 @@ defmodule PhoenixKitSync.DataImporter do
 
       sql = ~s[INSERT INTO "#{table}" (#{quoted_cols}) VALUES (#{placeholders})]
 
-      case repo.query(sql, binds) do
+      case repo.query(sql, binds, log: false) do
         {:ok, _} -> {:ok, :created}
         {:error, error} -> {:error, format_error(error)}
       end
@@ -348,7 +371,7 @@ defmodule PhoenixKitSync.DataImporter do
 
       sql = ~s[UPDATE "#{table}" SET #{set_clause} WHERE #{where_clause}]
 
-      case repo.query(sql, set_values ++ where_binds) do
+      case repo.query(sql, set_values ++ where_binds, log: false) do
         {:ok, _} -> {:ok, :updated}
         {:error, error} -> {:error, format_error(error)}
       end
@@ -495,6 +518,12 @@ defmodule PhoenixKitSync.DataImporter do
       :error -> value
     end
   end
+
+  defp prepare_typed_value("NaN", type) when type in ["real", "double precision"], do: :NaN
+  defp prepare_typed_value("Infinity", type) when type in ["real", "double precision"], do: :inf
+
+  defp prepare_typed_value("-Infinity", type) when type in ["real", "double precision"],
+    do: :"-inf"
 
   defp prepare_typed_value(value, type)
        when is_binary(value) and type in ["numeric", "decimal"] do
@@ -659,7 +688,7 @@ defmodule PhoenixKitSync.DataImporter do
 
   # All dynamic SQL identifiers (table + column names) are validated against
   # SchemaInspector.valid_identifier?/1 before being interpolated with quotes.
-  # Values are always passed as parameterized binds via repo.query(sql, binds)
+  # Values are always passed as parameterized binds via repo.query(sql, binds, log: false)
   # — never interpolated into the SQL string — so the query body never carries
   # attacker-controlled data.
   defp validate_identifiers(names) do

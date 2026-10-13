@@ -47,6 +47,39 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
     end
   end
 
+  test "a joined channel stops serving when its session is removed", %{
+    socket: socket,
+    session: session
+  } do
+    {:ok, _reply, channel} = subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+    PhoenixKitSync.delete_session(session.code)
+    push(channel, "request:tables", %{"ref" => "expired-session"})
+
+    assert_push(
+      "response:error",
+      %{error: "Invalid session code", ref: "expired-session"},
+      @reply_timeout
+    )
+  end
+
+  for event <- ["request:schema", "request:count"], table <- [42, %{}, ["rows"], nil] do
+    test "#{event} with #{inspect(table)} is refused without crashing", %{
+      socket: socket,
+      session: session
+    } do
+      {:ok, _reply, channel} = subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      ref =
+        push(channel, unquote(event), %{
+          "table" => unquote(Macro.escape(table)),
+          "ref" => "bad-table"
+        })
+
+      assert_reply(ref, :error, %{message: _}, @reply_timeout)
+      assert Process.alive?(channel.channel_pid)
+    end
+  end
+
   test "a session cannot request token-table schema, counts, or records", %{
     socket: socket,
     session: session
@@ -59,7 +92,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
       push(channel, "request:#{event}", %{"table" => "phoenix_kit_users_tokens", "ref" => ref})
 
       assert_push("response:error", %{error: message, ref: ^ref}, @reply_timeout)
-      assert message =~ "table_excluded"
+      assert message == PhoenixKitSync.Errors.message(:table_excluded)
     end
   end
 
@@ -339,7 +372,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         })
 
         assert_push("response:error", %{ref: ^ref, error: error}, @reply_timeout)
-        assert error =~ "invalid_cursor"
+        assert error == PhoenixKitSync.Errors.message(:invalid_cursor)
       end
     end
   end
@@ -385,7 +418,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
 
       push(channel, "request:records", %{"table" => "ch_keyless", "ref" => "k3", "limit" => 3})
       assert_push("response:error", %{ref: "k3", error: error}, @reply_timeout)
-      assert error =~ "no_primary_key"
+      assert error == PhoenixKitSync.Errors.message(:no_primary_key)
     end
   end
 

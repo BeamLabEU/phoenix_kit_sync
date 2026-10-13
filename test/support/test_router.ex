@@ -4,9 +4,8 @@ defmodule PhoenixKitSync.Test.Router do
   produced by `PhoenixKitSync`'s admin_tabs so `live/2` calls in tests
   work with exactly the same URLs the LiveViews push themselves to.
 
-  `PhoenixKit.Utils.Routes.path/1` defaults to no URL prefix when the
-  `phoenix_kit_settings` table is empty; admin paths always get the
-  default locale ("en") prefix.
+  Both prefixless and locale-prefixed admin paths share one live session,
+  matching core's router on single-language and multilingual sites.
   """
 
   use Phoenix.Router
@@ -25,24 +24,25 @@ defmodule PhoenixKitSync.Test.Router do
     plug(:accepts, ["json"])
   end
 
-  scope "/en/admin", PhoenixKitSync.Web do
-    pipe_through(:browser)
+  live_session :sync_test,
+    layout: {PhoenixKitSync.Test.Layouts, :app},
+    on_mount: {PhoenixKitSync.Test.Hooks, :assign_scope} do
+    for admin_scope <- ["/admin", "/:locale/admin"] do
+      scope admin_scope, PhoenixKitSync.Web do
+        pipe_through(:browser)
 
-    live_session :sync_test,
-      layout: {PhoenixKitSync.Test.Layouts, :app},
-      on_mount: {PhoenixKitSync.Test.Hooks, :assign_scope} do
-      live("/sync", Index, :index, as: :sync_index)
-      live("/sync/connections", ConnectionsLive, :index, as: :sync_connections)
-      live("/sync/connections/:action", ConnectionsLive, :index, as: :sync_connections_action)
+        live("/sync", Index, :index, as: :sync_index)
+        live("/sync/connections", ConnectionsLive, :index, as: :sync_connections)
+        live("/sync/connections/:action", ConnectionsLive, :index, as: :sync_connections_action)
 
-      live("/sync/connections/:action/:id", ConnectionsLive, :index,
-        as: :sync_connections_action_id
-      )
+        live("/sync/connections/:action/:id", ConnectionsLive, :index,
+          as: :sync_connections_action_id
+        )
 
-      live("/sync/history", History, :index, as: :sync_history)
-
-      live("/sync/send", Sender, :index, as: :sync_send)
-      live("/sync/receive", Receiver, :index, as: :sync_receive)
+        live("/sync/history", History, :index, as: :sync_history)
+        live("/sync/send", Sender, :index, as: :sync_send)
+        live("/sync/receive", Receiver, :index, as: :sync_receive)
+      end
     end
   end
 

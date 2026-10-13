@@ -72,6 +72,22 @@ defmodule PhoenixKitSync.Web.SyncWebsockCallbacksTest do
     end
   end
 
+  test "a joined socket refuses rows after its session is deleted" do
+    {:ok, session} = PhoenixKitSync.create_session(:send)
+    {:ok, state} = SyncWebsock.init(auth_type: :session, code: session.code, session: session)
+    PhoenixKitSync.delete_session(session.code)
+
+    frame =
+      encode(nil, "gone", "transfer:#{session.code}", "request:records", %{
+        "table" => PhoenixKitSync.SyncableTable.name(),
+        "ref" => "gone"
+      })
+
+    assert %{event: "response:error", payload: %{"error" => "Invalid session code"}} =
+             SyncWebsock.handle_in({frame, [opcode: :text]}, %{state | joined: true})
+             |> decode_reply()
+  end
+
   describe "init/1 — connection-based auth" do
     test "initialises state with db_connection" do
       conn = create_active_sender()

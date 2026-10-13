@@ -288,8 +288,9 @@ defmodule PhoenixKitSync.Integration.RemoteAuthorizationTest do
         {:ok, _} = Connections.update_connection(connection, attrs)
 
         for event <- ~w(request:tables request:schema request:count request:records) do
-          assert %{"error" => "Access denied: " <> ^code} =
-                   socket_request(state, connection, event),
+          assert %{"error" => error} = socket_request(state, connection, event)
+
+          assert error == PhoenixKitSync.Errors.message(String.to_existing_atom(code)),
                  "#{event} answered on a socket whose connection is now #{name}"
         end
       end
@@ -300,7 +301,7 @@ defmodule PhoenixKitSync.Integration.RemoteAuthorizationTest do
       {:ok, state} = SyncWebsock.init(auth_type: :connection, connection: connection)
       {:ok, _} = Connections.delete_connection(connection)
 
-      assert %{"error" => "Access denied: connection_not_active"} =
+      assert %{"error" => "Connection is not active"} =
                socket_request(%{state | joined: true}, connection, "request:records")
     end
 
@@ -637,7 +638,8 @@ defmodule PhoenixKitSync.Integration.RemoteAuthorizationTest do
     end
 
     test "a code-based session cannot read them either" do
-      {:ok, state} = SyncWebsock.init(auth_type: :session, code: "ABCD2345", session: %{})
+      {:ok, session} = PhoenixKitSync.create_session(:send)
+      {:ok, state} = SyncWebsock.init(auth_type: :session, code: session.code, session: session)
       state = %{state | joined: true}
 
       list = session_request(state, "request:tables", %{"ref" => "r"})
@@ -738,7 +740,8 @@ defmodule PhoenixKitSync.Integration.RemoteAuthorizationTest do
 
   describe "frames that are not channel frames" do
     test "the server socket ignores them and stays up" do
-      {:ok, state} = SyncWebsock.init(auth_type: :session, code: "ABCD2345", session: %{})
+      {:ok, session} = PhoenixKitSync.create_session(:send)
+      {:ok, state} = SyncWebsock.init(auth_type: :session, code: session.code, session: session)
 
       for frame <- [
             "{}",
@@ -756,10 +759,11 @@ defmodule PhoenixKitSync.Integration.RemoteAuthorizationTest do
     end
 
     test "a join whose payload is not an object still joins without crashing" do
-      {:ok, state} = SyncWebsock.init(auth_type: :session, code: "ABCD2345", session: %{})
+      {:ok, session} = PhoenixKitSync.create_session(:send)
+      {:ok, state} = SyncWebsock.init(auth_type: :session, code: session.code, session: session)
 
       for payload <- ["5", "[1]", ~s("x"), ~s({"receiver_info":7})] do
-        frame = ~s([null,"1","transfer:ABCD2345","phx_join",#{payload}])
+        frame = ~s([null,"1","transfer:#{session.code}","phx_join",#{payload}])
 
         assert {:push, {:text, _reply}, %{joined: true}} =
                  SyncWebsock.handle_in({frame, [opcode: :text]}, state)
@@ -767,7 +771,8 @@ defmodule PhoenixKitSync.Integration.RemoteAuthorizationTest do
     end
 
     test "a table name that is not a string gets no answer and no crash" do
-      {:ok, state} = SyncWebsock.init(auth_type: :session, code: "ABCD2345", session: %{})
+      {:ok, session} = PhoenixKitSync.create_session(:send)
+      {:ok, state} = SyncWebsock.init(auth_type: :session, code: session.code, session: session)
       state = %{state | joined: true}
 
       for event <- ~w(request:schema request:count request:records) do

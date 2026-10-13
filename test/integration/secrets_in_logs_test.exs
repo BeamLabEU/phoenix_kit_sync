@@ -197,7 +197,10 @@ defmodule PhoenixKitSync.Integration.SecretsInLogsTest do
 
   describe "messages on the sockets" do
     test "the serving socket logs no topic of a message it does not know" do
-      {:ok, state} = SyncWebsock.init(auth_type: :session, code: "SECRET77", session: %{})
+      session = %{code: "SECRET77", direction: :send, owner_pid: self()}
+      :ok = SessionStore.create(session)
+      on_exit(fn -> SessionStore.delete("SECRET77") end)
+      {:ok, state} = SyncWebsock.init(auth_type: :session, code: "SECRET77", session: session)
       frame = Jason.encode!([nil, "1", "transfer:SECRET77", "request:unknown", %{"a" => 1}])
 
       log =
@@ -229,9 +232,67 @@ defmodule PhoenixKitSync.Integration.SecretsInLogsTest do
           assert {:ok, _state} = WebSocketClient.handle_frame({:text, frame}, state)
         end)
 
-      assert log =~ "some:event"
+      assert log =~ "unknown event"
       refute log =~ "SECRET77"
     end
+  end
+
+  test "SQL debug logging cannot expose a connection's credential hash" do
+    token = "review-credential-#{System.unique_integer([:positive])}"
+    hash = :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
+
+    log =
+      capture_all(fn ->
+        assert {:ok, connection, ^token} =
+                 PhoenixKitSync.Connections.create_connection(%{
+                   "name" => "Debug logging",
+                   "site_url" => "https://logging-review.example.com",
+                   "direction" => "sender",
+                   "auth_token" => token,
+                   "status" => "active"
+                 })
+
+        assert PhoenixKitSync.Connections.find_by_hash_and_direction(hash, "sender").uuid ==
+                 connection.uuid
+
+        assert PhoenixKitSync.Connections.find_by_site_url_and_hash(
+                 connection.site_url,
+                 hash,
+                 "sender"
+               ).uuid == connection.uuid
+
+        assert {:ok, _} =
+                 PhoenixKitSync.Connections.update_connection(connection, %{
+                   download_password: token
+                 })
+      end)
+
+    refute log =~ token
+    refute log =~ hash
+    refute log =~ String.slice(hash, 0, 8)
+  end
+
+  test "a driver error and SQL debug logging cannot expose record values" do
+    PhoenixKit.RepoHelper.repo().query!(
+      "CREATE TABLE review_log_rows (id bigint PRIMARY KEY, value date)"
+    )
+
+    private_value = "private-password-value-#{System.unique_integer([:positive])}"
+
+    log =
+      capture_all(fn ->
+        assert :ok =
+                 ImportWorker.perform(%Oban.Job{
+                   args: %{
+                     "table" => "review_log_rows",
+                     "records" => [%{"id" => 1, "value" => private_value}],
+                     "strategy" => "skip"
+                   }
+                 })
+      end)
+
+    assert log =~ "failed"
+    refute log =~ private_value
   end
 
   describe "ImportWorker and the session code it was given" do

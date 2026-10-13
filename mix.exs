@@ -101,6 +101,9 @@ defmodule PhoenixKitSync.MixProject do
       {:phoenix_live_view, "~> 1.1"},
       {:phoenix, "~> 1.8.1"},
       {:ecto_sql, "~> 3.10"},
+      # Hex consumers do not inherit mix.lock. Carry the patched Decimal
+      # floor into the published requirements (CVE-2026-97853).
+      {:decimal, ">= 3.1.2 and < 4.0.0"},
       {:websockex, "~> 0.5.1"},
       {:websock_adapter, "~> 0.5"},
       {:oban, "~> 2.20"},

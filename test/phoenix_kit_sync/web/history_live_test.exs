@@ -1,6 +1,7 @@
 defmodule PhoenixKitSync.Web.HistoryLiveTest do
   use PhoenixKitSync.LiveCase
 
+  alias PhoenixKit.Utils.Routes
   alias PhoenixKitSync.Connections
   alias PhoenixKitSync.Transfer
   alias PhoenixKitSync.Transfers
@@ -71,7 +72,11 @@ defmodule PhoenixKitSync.Web.HistoryLiveTest do
         |> form("#history-filters", %{"direction" => "send", "status" => ""})
         |> render_change()
 
-      assert_patch(view, "/en/admin/sync/history?direction=send")
+      assert_patch(
+        view,
+        Routes.path("/admin/sync/history", locale: "en") <> "?direction=send"
+      )
+
       assert html =~ "sent_done"
       assert html =~ "sent_failed"
       refute html =~ "received_done"
@@ -254,7 +259,13 @@ defmodule PhoenixKitSync.Web.HistoryLiveTest do
       {:ok, view, _html} = live(conn, "/en/admin/sync/history")
 
       render_patch(view, "/en/admin/sync/history?page=999&direction=send&status=pending")
-      assert_patch(view, "/en/admin/sync/history?page=2&direction=send&status=pending")
+
+      assert_patch(
+        view,
+        Routes.path("/admin/sync/history", locale: "en") <>
+          "?page=2&direction=send&status=pending"
+      )
+
       assert render(view) =~ "Page 2 of 2"
 
       # A page that exists is left where it is.

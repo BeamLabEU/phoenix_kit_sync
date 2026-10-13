@@ -59,7 +59,7 @@ defmodule PhoenixKitSync.Integration.PullTruncatedReceiverTest do
 
     transfer = transfer_for(@table)
     assert transfer.status == "failed"
-    assert transfer.error_message =~ "max_records_per_request"
+    assert transfer.error_message == "truncated"
     assert transfer.records_transferred == 3
     assert transfer.records_created == 3
   end
@@ -76,7 +76,7 @@ defmodule PhoenixKitSync.Integration.PullTruncatedReceiverTest do
 
       transfer = transfer_for(@table)
       assert transfer.status == "failed"
-      assert transfer.error_message =~ "key is of type time with time zone"
+      assert transfer.error_message == "truncated_key_type:time with time zone"
       # Updating the sender would not help; that advice is left out.
       refute transfer.error_message =~ "Update the sync module"
     end
@@ -103,7 +103,7 @@ defmodule PhoenixKitSync.Integration.PullTruncatedReceiverTest do
                  ConnectionNotifier.pull_table_data(connection, @table, conflict_strategy: "skip")
 
         refute Map.has_key?(result, :unsupported_key_type)
-        assert transfer_for(@table).error_message =~ "gave no way to continue"
+        assert transfer_for(@table).error_message == "truncated"
       end
     end
 

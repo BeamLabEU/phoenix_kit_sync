@@ -110,31 +110,10 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
   end
 
   defp log_import_errors(errors, table) do
-    for {record, error} <- errors do
-      # The record itself is not logged: a synced table can hold credentials
-      # (`phoenix_kit_users` carries `hashed_password`), and a database
-      # error can quote the failing row, so the text is cut short.
-      pk_info = extract_record_pk(record)
-      reason = inspect(error, limit: 5, printable_limit: 120)
-
-      Logger.warning("Sync.ImportWorker: Error importing record#{pk_info} in #{table}: #{reason}")
-    end
-  end
-
-  defp extract_record_pk(record) when not is_map(record), do: ""
-
-  defp extract_record_pk(record) do
-    pk =
-      Map.get(record, "uuid") || Map.get(record, :uuid) ||
-        Map.get(record, "id") || Map.get(record, :id)
-
-    # The key is the sender's: a uuid column arrives as 16 raw bytes, which
-    # are not text, and anything else may be any JSON value.
-    case pk do
-      nil -> ""
-      <<_::128>> = bytes -> " (uuid: #{Ecto.UUID.load!(bytes)})"
-      value when is_binary(value) -> " (uuid: #{inspect(value)})"
-      value -> " (uuid: #{inspect(value, limit: 5)})"
+    # Driver errors can quote a complete failing row, including credentials.
+    # Truncating that text still leaks its prefix, so log only the count.
+    if errors != [] do
+      Logger.warning("Sync.ImportWorker: #{length(errors)} record(s) failed in #{table}")
     end
   end
 

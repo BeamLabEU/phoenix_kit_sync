@@ -32,6 +32,7 @@ defmodule PhoenixKitSync.WebSocketClient do
   use WebSockex
   require Logger
 
+  alias PhoenixKitSync.PeerData
   alias PhoenixKitSync.PullCursor
 
   @heartbeat_interval 30_000
@@ -62,20 +63,23 @@ defmodule PhoenixKitSync.WebSocketClient do
     caller = Keyword.fetch!(opts, :caller)
     receiver_info = Keyword.get(opts, :receiver_info, %{})
 
-    ws_url = build_websocket_url(url, code)
+    with {:ok, ws_url} <- build_websocket_url(url, code) do
+      state = %__MODULE__{
+        url: url,
+        code: code,
+        caller: caller,
+        receiver_info: receiver_info,
+        ref_counter: 0,
+        pending_refs: %{},
+        joined: false,
+        heartbeat_ref: nil
+      }
 
-    state = %__MODULE__{
-      url: url,
-      code: code,
-      caller: caller,
-      receiver_info: receiver_info,
-      ref_counter: 0,
-      pending_refs: %{},
-      joined: false,
-      heartbeat_ref: nil
-    }
-
-    WebSockex.start_link(ws_url, __MODULE__, state, [])
+      case WebSockex.start_link(ws_url, __MODULE__, state, []) do
+        {:ok, pid} -> {:ok, pid}
+        {:error, _reason} -> {:error, :offline}
+      end
+    end
   end
 
   @doc """
@@ -141,7 +145,7 @@ defmodule PhoenixKitSync.WebSocketClient do
 
   @impl true
   def handle_connect(_conn, state) do
-    Logger.info("Sync.WebSocketClient: Connected to #{state.url}")
+    Logger.info("Sync.WebSocketClient: Connected to sender")
 
     # Join the transfer channel with receiver info
     join_payload = %{receiver_info: state.receiver_info}
@@ -166,8 +170,8 @@ defmodule PhoenixKitSync.WebSocketClient do
         Logger.warning("Sync.WebSocketClient: Ignoring a message that is not a channel frame")
         {:ok, state}
 
-      {:error, reason} ->
-        Logger.warning("Sync.WebSocketClient: Failed to decode message: #{inspect(reason)}")
+      {:error, _reason} ->
+        Logger.warning("Sync.WebSocketClient: Failed to decode message")
         {:ok, state}
     end
   end
@@ -293,15 +297,15 @@ defmodule PhoenixKitSync.WebSocketClient do
 
   @impl true
   def handle_disconnect(%{reason: reason}, state) do
-    Logger.info("Sync.WebSocketClient: Disconnected - #{inspect(reason)}")
-    notify_caller(state, {:disconnected, reason})
+    Logger.info("Sync.WebSocketClient: Disconnected")
+    notify_caller(state, {:disconnected, safe_reason(reason)})
     {:ok, state}
   end
 
   @impl true
   def terminate(reason, state) do
-    Logger.info("Sync.WebSocketClient: Terminating - #{inspect(reason)}")
-    notify_caller(state, {:terminated, reason})
+    Logger.info("Sync.WebSocketClient: Terminating")
+    notify_caller(state, {:terminated, safe_reason(reason)})
     :ok
   end
 
@@ -328,15 +332,15 @@ defmodule PhoenixKitSync.WebSocketClient do
     end
   end
 
-  defp handle_phoenix_message(_topic, "phx_reply", %{"status" => "error"} = payload, _ref, state) do
-    Logger.warning("Sync.WebSocketClient: Error response - #{inspect(payload)}")
-    notify_caller(state, {:error, payload})
+  defp handle_phoenix_message(_topic, "phx_reply", %{"status" => "error"}, _ref, state) do
+    Logger.warning("Sync.WebSocketClient: Join refused by sender")
+    notify_caller(state, {:error, :invalid_response})
     {:ok, state}
   end
 
-  defp handle_phoenix_message(_topic, "phx_error", payload, _ref, state) do
-    Logger.error("Sync.WebSocketClient: Channel error - #{inspect(payload)}")
-    notify_caller(state, {:error, payload})
+  defp handle_phoenix_message(_topic, "phx_error", _payload, _ref, state) do
+    Logger.error("Sync.WebSocketClient: Channel error")
+    notify_caller(state, {:error, :invalid_response})
     {:ok, state}
   end
 
@@ -370,13 +374,14 @@ defmodule PhoenixKitSync.WebSocketClient do
          %{"tables" => tables, "ref" => ref},
          _msg_ref,
          state
-       )
-       when is_list(tables) do
-    Logger.debug("Sync.WebSocketClient: Received #{length(tables)} tables")
+       ) do
     {request_type, state} = pop_request(state, ref)
 
     if request_type == :tables do
-      notify_caller(state, {:tables, tables})
+      case PeerData.tables(tables) do
+        {:ok, tables} -> notify_caller(state, {:tables, tables})
+        {:error, reason} -> notify_caller(state, {:request_error, :tables, reason})
+      end
     end
 
     {:ok, state}
@@ -398,8 +403,9 @@ defmodule PhoenixKitSync.WebSocketClient do
 
     case request_type do
       {:schema, table} ->
-        Logger.info("Sync.WebSocketClient: Notifying caller with schema for #{table}")
-        notify_caller(state, {:schema, table, schema})
+        if PeerData.valid_schema?(schema),
+          do: notify_caller(state, {:schema, table, schema}),
+          else: notify_caller(state, {:request_error, {:schema, table}, :invalid_response})
 
       other ->
         Logger.warning("Sync.WebSocketClient: Unexpected request type: #{inspect(other)}")
@@ -473,7 +479,7 @@ defmodule PhoenixKitSync.WebSocketClient do
          _msg_ref,
          state
        ) do
-    Logger.warning("Sync.WebSocketClient: Error response - #{inspect(error, limit: 5)}")
+    Logger.warning("Sync.WebSocketClient: Error response from sender")
     {request_type, state} = pop_request(state, ref)
     notify_caller(state, {:request_error, request_type, error_text(error)})
     {:ok, state}
@@ -481,7 +487,7 @@ defmodule PhoenixKitSync.WebSocketClient do
 
   # The topic is "transfer:" and the session code, so it is not logged.
   defp handle_phoenix_message(_topic, event, payload, _ref, state) do
-    Logger.debug("Sync.WebSocketClient: Received #{event}: #{inspect(payload, limit: 5)}")
+    Logger.debug("Sync.WebSocketClient: Received an unknown event")
 
     notify_caller(state, {:message, event, payload})
     {:ok, state}
@@ -496,21 +502,37 @@ defmodule PhoenixKitSync.WebSocketClient do
   # PRIVATE FUNCTIONS
   # ===========================================
 
-  defp build_websocket_url(base_url, code) do
-    uri = URI.parse(base_url)
+  defp build_websocket_url(base_url, code) when is_binary(base_url) and is_binary(code) do
+    with {:ok, %URI{scheme: scheme, host: host, userinfo: nil} = uri} <- URI.new(base_url),
+         true <- scheme in ["http", "https", "ws", "wss"] and is_binary(host) and host != "" do
+      query = URI.decode_query(uri.query || "") |> Map.merge(%{"code" => code, "vsn" => "2.0.0"})
 
-    scheme = to_ws_scheme(uri.scheme)
-    path = to_sync_path(uri.path)
-    query = append_sync_query(uri.query, code)
-
-    URI.to_string(%{uri | scheme: scheme, path: path, query: query})
+      {:ok,
+       URI.to_string(%{
+         uri
+         | scheme: to_ws_scheme(scheme),
+           path: to_sync_path(uri.path),
+           query: URI.encode_query(query),
+           fragment: nil
+       })}
+    else
+      _ -> {:error, :invalid_sender_url}
+    end
+  rescue
+    _ -> {:error, :invalid_sender_url}
   end
+
+  defp build_websocket_url(_base_url, _code), do: {:error, :invalid_sender_url}
+
+  defp safe_reason(reason) when reason in [:normal, :timeout, :nxdomain, :econnrefused],
+    do: reason
+
+  defp safe_reason(_reason), do: :offline
 
   defp to_ws_scheme("https"), do: "wss"
   defp to_ws_scheme("http"), do: "ws"
   defp to_ws_scheme("wss"), do: "wss"
   defp to_ws_scheme("ws"), do: "ws"
-  defp to_ws_scheme(_), do: "wss"
 
   defp to_sync_path(nil), do: "/sync/websocket"
   defp to_sync_path(""), do: "/sync/websocket"
@@ -522,9 +544,6 @@ defmodule PhoenixKitSync.WebSocketClient do
       "#{String.trim_trailing(p, "/")}/sync/websocket"
     end
   end
-
-  defp append_sync_query(nil, code), do: "code=#{code}&vsn=2.0.0"
-  defp append_sync_query(q, code), do: "#{q}&code=#{code}&vsn=2.0.0"
 
   defp encode_message(topic, event, payload, ref) do
     Jason.encode!([nil, ref, topic, event, payload])

@@ -623,6 +623,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
         })
 
       admin_uuid = PhoenixKitSync.TestActor.uuid()
+      {:ok, conn} = Connections.approve_connection(conn, admin_uuid)
       {:ok, _} = Connections.suspend_connection(conn, admin_uuid, "Security audit")
 
       assert_activity_logged("sync.connection.suspended",
@@ -655,6 +656,7 @@ defmodule PhoenixKitSync.Integration.ConnectionsTest do
         })
 
       admin_uuid = PhoenixKitSync.TestActor.uuid()
+      {:ok, conn} = Connections.approve_connection(conn, admin_uuid)
       {:ok, suspended} = Connections.suspend_connection(conn, admin_uuid)
       {:ok, _} = Connections.reactivate_connection(suspended, actor_uuid: admin_uuid)
 

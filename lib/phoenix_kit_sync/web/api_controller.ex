@@ -558,7 +558,7 @@ defmodule PhoenixKitSync.Web.ApiController do
            ) do
       record_count = length(page.data)
 
-      Connections.settle_transfer(reservation, record_count)
+      settle_records(reservation, record_count)
 
       record_send(connection, validated, record_count, page, params["paged"] == true)
 
@@ -660,6 +660,9 @@ defmodule PhoenixKitSync.Web.ApiController do
     Connections.cancel_transfer(reservation)
     error
   end
+
+  defp settle_records(reservation, 0), do: Connections.cancel_transfer(reservation)
+  defp settle_records(reservation, count), do: Connections.settle_transfer(reservation, count)
 
   defp continuation?(_conn, _connection, _table_name, nil, _params), do: false
 
@@ -774,7 +777,7 @@ defmodule PhoenixKitSync.Web.ApiController do
              get_table_records(table_name, reservation.records, offset, filter)
            ) do
         {:ok, records} ->
-          Connections.settle_transfer(reservation, length(records))
+          settle_records(reservation, length(records))
 
           conn
           |> put_status(200)
@@ -1373,6 +1376,9 @@ defmodule PhoenixKitSync.Web.ApiController do
   defp serialize_value(%Date{} = d), do: Date.to_iso8601(d)
   defp serialize_value(%Time{} = t), do: Time.to_iso8601(t)
   defp serialize_value(%Decimal{} = d), do: Decimal.to_string(d)
+  defp serialize_value(:NaN), do: "NaN"
+  defp serialize_value(:inf), do: "Infinity"
+  defp serialize_value(:"-inf"), do: "-Infinity"
 
   defp serialize_value(binary) when is_binary(binary) do
     if String.valid?(binary) do

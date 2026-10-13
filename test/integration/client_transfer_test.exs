@@ -169,7 +169,7 @@ defmodule PhoenixKitSync.Integration.ClientTransferTest do
       assert {:error, reason} =
                Client.transfer(connect_with_code(), "ct_keyless", strategy: :skip, batch_size: 3)
 
-      assert inspect(reason) =~ "no_primary_key"
+      assert reason == PhoenixKitSync.Errors.message(:no_primary_key)
       assert %{rows: [[4]]} = repo.query!("SELECT count(*) FROM ct_keyless")
     end
   end

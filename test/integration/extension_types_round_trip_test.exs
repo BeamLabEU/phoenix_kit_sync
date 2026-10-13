@@ -18,6 +18,9 @@ defmodule PhoenixKitSync.Integration.ExtensionTypesRoundTripTest do
 
   # {column, type, SQL literals}
   @carried [
+    {"c_numeric", "numeric", ["'NaN'", "'Infinity'", "'-Infinity'"]},
+    {"c_real", "real", ["'NaN'", "'Infinity'", "'-Infinity'"]},
+    {"c_double", "double precision", ["'NaN'", "'Infinity'", "'-Infinity'"]},
     {"c_interval", "interval",
      [
        "'1 year 2 mons 3 days 04:05:06.000007'",
@@ -45,6 +48,8 @@ defmodule PhoenixKitSync.Integration.ExtensionTypesRoundTripTest do
 
   # {column, type, SQL literal, the name the record's error carries}
   @refused [
+    {"r_bits", "bit(3)", "'101'", "bitstring"},
+    {"r_composite", "ext_pair_type", "'(private,1)'", "tuple"},
     {"r_int4range", "int4range", "'[1,5)'", "Postgrex.Range"},
     {"r_tsrange", "tsrange", "'[2026-01-01 00:00, 2026-01-02 00:00)'", "Postgrex.Range"},
     {"r_point", "point", "'(1,2)'", "Postgrex.Point"},
@@ -58,6 +63,8 @@ defmodule PhoenixKitSync.Integration.ExtensionTypesRoundTripTest do
     PhoenixKitSync.set_incoming_password(nil)
     StubRemote.reset()
     on_exit(&StubRemote.reset/0)
+
+    repo().query!("CREATE TYPE ext_pair_type AS (label text, n integer)")
 
     columns =
       Enum.map_join(@carried ++ @refused, ", ", fn spec -> "#{elem(spec, 0)} #{elem(spec, 1)}" end)

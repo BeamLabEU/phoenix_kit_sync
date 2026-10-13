@@ -10,6 +10,30 @@ defmodule PhoenixKitSync.ConnectionTest do
     site_url: "https://example.com"
   }
 
+  test "inspecting a schema or changeset redacts every credential field" do
+    private = "private-credential-#{System.unique_integer([:positive])}"
+
+    connection = %Connection{
+      auth_token: private,
+      auth_token_hash: private,
+      download_password: private,
+      download_password_hash: private
+    }
+
+    refute inspect(connection) =~ private
+
+    changeset =
+      Connection.changeset(
+        %Connection{},
+        Map.merge(@valid_attrs, %{
+          auth_token: private,
+          download_password: private
+        })
+      )
+
+    refute inspect(changeset) =~ private
+  end
+
   # ===========================================
   # CHANGESET TESTS
   # ===========================================

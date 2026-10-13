@@ -42,9 +42,11 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   alias PhoenixKitSync.Connection
   alias PhoenixKitSync.Connections
   alias PhoenixKitSync.DataExporter
+  alias PhoenixKitSync.Errors
   alias PhoenixKitSync.Params
   alias PhoenixKitSync.PullCursor
   alias PhoenixKitSync.SchemaInspector
+  alias PhoenixKitSync.SessionStore
   alias PhoenixKitSync.Transfers
 
   defstruct [
@@ -120,8 +122,8 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
         Logger.warning("Sync.Websock: Ignoring a message that is not a channel frame")
         {:ok, state}
 
-      {:error, reason} ->
-        Logger.warning("Sync.Websock: Failed to decode message: #{inspect(reason)}")
+      {:error, _reason} ->
+        Logger.warning("Sync.Websock: Failed to decode message")
         {:ok, state}
     end
   end
@@ -160,6 +162,17 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   # ===========================================
 
   # Handle join message
+  defp handle_message(_join_ref, ref, topic, "phx_join", _payload, %{refused: reason} = state)
+       when not is_nil(reason) do
+    reply =
+      encode_reply(ref, topic, "phx_reply", %{
+        "status" => "error",
+        "response" => %{"reason" => Atom.to_string(reason)}
+      })
+
+    {:push, {:text, reply}, state}
+  end
+
   defp handle_message(_join_ref, ref, "transfer:" <> code, "phx_join", payload, state) do
     if code == state.code do
       Logger.info("Sync.Websock: Receiver joined")
@@ -185,7 +198,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
       })
 
       # Notify sender's LiveView with full connection details
-      if state.session[:owner_pid] do
+      if state.session && state.session[:owner_pid] do
         send(
           state.session.owner_pid,
           {:sync, {:receiver_joined, self(), full_connection_info}}
@@ -261,7 +274,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
        when not is_nil(reason) do
     response =
       encode_push("transfer:#{state.code}", "response:error", %{
-        "error" => "Access denied: #{reason}",
+        "error" => Errors.public_message(reason),
         "ref" => if(is_map(payload), do: payload["ref"])
       })
 
@@ -286,7 +299,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
 
           {:error, reason} ->
             encode_push("transfer:#{state.code}", "response:error", %{
-              "error" => "Failed to list tables: #{inspect(reason)}",
+              "error" => Errors.public_message(reason),
               "ref" => client_ref
             })
         end
@@ -350,9 +363,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
         {:ok, state}
 
       not is_map(payload) or not is_binary(payload["table"]) or not is_binary(payload["ref"]) ->
-        Logger.warning(
-          "Sync.Websock: request:records missing/invalid required fields | payload=#{inspect(payload, limit: 5)}"
-        )
+        Logger.warning("Sync.Websock: request:records missing/invalid required fields")
 
         {:ok, state}
 
@@ -388,11 +399,8 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
 
   # Catch-all for unknown messages
   # The topic is "transfer:" and the session code, so it is not logged.
-  defp handle_message(_join_ref, _ref, _topic, event, payload, state) do
-    Logger.warning(
-      "Sync.Websock: Unknown message - event: #{inspect(event)}, " <>
-        "payload: #{inspect(payload, limit: 5)}"
-    )
+  defp handle_message(_join_ref, _ref, _topic, event, _payload, state) do
+    Logger.warning("Sync.Websock: Unknown message - event: #{inspect(event)}")
 
     {:ok, state}
   end
@@ -418,7 +426,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
 
         {:error, reason} ->
           encode_push("transfer:#{state.code}", "response:error", %{
-            "error" => "Failed to get schema: #{inspect(reason)}",
+            "error" => Errors.public_message(reason),
             "ref" => client_ref
           })
       end
@@ -444,7 +452,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
 
         {:error, reason} ->
           encode_push("transfer:#{state.code}", "response:error", %{
-            "error" => "Failed to get count: #{inspect(reason)}",
+            "error" => Errors.public_message(reason),
             "ref" => client_ref
           })
       end
@@ -498,13 +506,13 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
     else
       {:error, reason} when reason in [:download_limit_reached, :record_limit_reached] ->
         {encode_push("transfer:#{state.code}", "response:error", %{
-           "error" => "Access denied: #{reason}",
+           "error" => Errors.public_message(reason),
            "ref" => client_ref
          }), state}
 
       {:error, reason} ->
         {encode_push("transfer:#{state.code}", "response:error", %{
-           "error" => "Failed to fetch records: #{inspect(reason)}",
+           "error" => Errors.public_message(reason),
            "ref" => client_ref
          }), state}
     end
@@ -635,7 +643,8 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   defp get_effective_limit(requested_limit, %{auth_type: :session}), do: requested_limit
 
   defp get_effective_limit(requested_limit, %{auth_type: :connection, db_connection: conn}) do
-    max_per_request = conn.max_records_per_request || 10_000
+    max_per_request =
+      Params.bounded_int(conn.max_records_per_request, 10_000, 1, DataExporter.max_limit())
 
     case Connections.remaining_records(conn) do
       :unlimited -> min(requested_limit, max_per_request)
@@ -668,7 +677,17 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
     end
   end
 
-  defp authorize(state, _continuation), do: state
+  defp authorize(%__MODULE__{auth_type: :session, code: code} = state, _continuation) do
+    case SessionStore.get(code) do
+      {:ok, %{direction: :send, owner_pid: owner} = session} ->
+        if Process.alive?(owner),
+          do: %{state | session: session, refused: nil},
+          else: %{state | refused: :invalid_code}
+
+      _ ->
+        %{state | refused: :invalid_code}
+    end
+  end
 
   # Track transfer for permanent connections
   defp track_transfer(db_connection, table_name, records_count, connection_info) do

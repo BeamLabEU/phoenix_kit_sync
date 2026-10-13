@@ -173,7 +173,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.PullSyncTest do
     assert has_element?(view, ~s([data-table-error="#{@tree}"]), Errors.message(:truncated))
   end
 
-  test "an import that raises still reports back and closes its transfer", %{
+  test "an unreadable record is counted while later tables still import", %{
     conn: conn,
     connection: connection
   } do
@@ -185,21 +185,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.PullSyncTest do
 
     refute assigns.sync_in_progress
     assert assigns.sync_progress.status == :completed
-
-    assert [%{table: @parents, error_message: message}, %{table: @tree, imported: 1}] =
-             assigns.sync_progress.table_results
-
-    assert message == Errors.message(:import_failed)
+    results = Map.new(assigns.sync_progress.table_results, &{&1.table, &1})
+    assert %{errors: 1} = results[@parents]
+    assert %{imported: 1} = results[@tree]
     assert in_progress_transfers() == 0
-
-    # The failed table has no per-record errors to count; the page must
-    # still say the run did not finish cleanly, and why, on that table's row.
-    html = render(view)
-    assert html =~ "Sync Completed with Errors"
-    refute html =~ "Sync Complete!"
-    assert has_element?(view, ~s([data-table-error="#{@parents}"]), message)
-    refute has_element?(view, ~s([data-table-error="#{@tree}"]))
-    refute html =~ "not a record"
+    assert render(view) =~ "Sync Completed with Errors"
+    refute render(view) =~ "not a record"
   end
 
   test "a crash before the transfer exists still reports back to the page", %{

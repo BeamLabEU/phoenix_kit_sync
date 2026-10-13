@@ -24,6 +24,24 @@ defmodule PhoenixKitSync.Integration.WebSocketClientTest do
     "ws://localhost:#{port}"
   end
 
+  test "query delimiters in a code are encoded, and existing code parameters are replaced" do
+    {:ok, session} = PhoenixKitSync.create_session(:send)
+    code = session.code <> "&vsn=other+value"
+    :ok = PhoenixKitSync.SessionStore.create(%{session | code: code})
+    PhoenixKitSync.delete_session(session.code)
+    on_exit(fn -> PhoenixKitSync.delete_session(code) end)
+
+    assert {:ok, client} =
+             WebSocketClient.start_link(
+               url: test_url() <> "?code=wrong&vsn=wrong",
+               code: code,
+               caller: self()
+             )
+
+    assert_receive {:sync_client, :connected}, 5_000
+    WebSocketClient.disconnect(client)
+  end
+
   describe "start_link/1 — connect with valid session code" do
     test "joins and emits :tables when request_tables/1 is called" do
       {:ok, session} = PhoenixKitSync.create_session(:send)

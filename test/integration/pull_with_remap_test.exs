@@ -369,7 +369,7 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
 
       assert %{rows: [[0]]} = repo().query!("SELECT count(*)::int FROM #{@no_pk}")
       assert %{status: "failed", error_message: message} = transfer_for(@no_pk)
-      assert message =~ "No primary key on #{@no_pk}"
+      assert message == "no_primary_key"
       # Checked before the request: the sender's limits are not spent.
       assert StubRemote.pull_count(@no_pk) == 0
     end
@@ -394,7 +394,7 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
                )
 
       assert %{status: "failed", error_message: message} = transfer_for("cpk_missing")
-      assert message =~ "does not exist here"
+      assert message == "table_missing_locally"
       refute message =~ "primary key"
       assert StubRemote.pull_count("cpk_missing") == 0
     end
@@ -439,22 +439,25 @@ defmodule PhoenixKitSync.Integration.PullWithRemapTest do
   end
 
   describe "an import that raises" do
-    test "fails the transfer and returns an error instead of crashing the caller", %{
+    test "counts an unreadable record and continues instead of aborting the pull", %{
       connection: connection
     } do
       # A record that is not a map cannot be read field by field.
-      StubRemote.put_data(@parents, ["not a record"])
+      StubRemote.put_data(@parents, [
+        %{"code" => "first", "name" => "First"},
+        "not a record",
+        %{"code" => "last", "name" => "Last"}
+      ])
 
       remap = %{{"other", "a"} => "b"}
 
-      assert {:error, :import_failed, ^remap} =
+      assert {:ok, %{imported: 2, errors: 1, skipped: 0}, ^remap} =
                ConnectionNotifier.pull_table_data_with_remap(connection, @parents, remap,
                  conflict_strategy: "skip"
                )
 
-      transfer = transfer_for(@parents)
-      assert transfer.status == "failed"
-      refute transfer.error_message =~ "not a record"
+      assert %{status: "completed", records_created: 2, records_failed: 1} =
+               transfer_for(@parents)
     end
 
     test "on the pull without remap a record that is not a map is that record's error", %{

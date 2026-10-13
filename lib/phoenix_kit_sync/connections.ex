@@ -186,26 +186,22 @@ defmodule PhoenixKitSync.Connections do
   end
 
   defp do_insert_connection(attrs) do
+    with {:ok, connection, token} <- insert_connection(attrs) do
+      connection_created(connection)
+      {:ok, connection, token}
+    end
+  end
+
+  defp insert_connection(attrs) do
     repo = RepoHelper.repo()
     token = attrs["auth_token"] || attrs[:auth_token] || Connection.generate_auth_token()
     attrs_with_token = Map.put(attrs, "auth_token", token)
 
     %Connection{}
     |> Connection.changeset(attrs_with_token)
-    |> repo.insert()
+    |> repo.insert(log: false)
     |> case do
       {:ok, connection} ->
-        Logger.info(
-          "[Sync.Connections] Connection created " <>
-            "| uuid=#{connection.uuid} " <>
-            "| direction=#{connection.direction} " <>
-            "| name=#{inspect(connection.name)} " <>
-            "| site_url=#{connection.site_url} " <>
-            "| status=#{connection.status}"
-        )
-
-        log_sync_activity("created", connection, actor_uuid: connection.created_by_uuid)
-        broadcast({:connection_created, connection.uuid})
         {:ok, connection, token}
 
       {:error, changeset} ->
@@ -216,6 +212,19 @@ defmodule PhoenixKitSync.Connections do
 
         {:error, changeset}
     end
+  end
+
+  defp connection_created(connection) do
+    Logger.info(
+      "[Sync.Connections] Connection created " <>
+        "| uuid=#{connection.uuid} " <>
+        "| direction=#{connection.direction} " <>
+        "| name=#{inspect(connection.name)} " <>
+        "| status=#{connection.status}"
+    )
+
+    log_sync_activity("created", connection, actor_uuid: connection.created_by_uuid)
+    broadcast({:connection_created, connection.uuid})
   end
 
   defp self_connection?(nil), do: false
@@ -348,11 +357,16 @@ defmodule PhoenixKitSync.Connections do
           {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
   def update_connection(%Connection{} = connection, attrs, opts \\ []) do
     repo = RepoHelper.repo()
-    changed_fields = detect_changed_fields(connection, attrs)
 
-    connection
-    |> Connection.settings_changeset(attrs)
-    |> repo.update()
+    changeset =
+      connection
+      |> Connection.settings_changeset(attrs)
+      |> guard_settings_status()
+
+    changed_fields = Map.keys(changeset.changes) -- [:download_password, :auth_token]
+
+    changeset
+    |> repo.update(stale_error_field: :status, log: false)
     |> tap(fn
       {:ok, updated} ->
         broadcast_connection_update(connection, updated, changed_fields)
@@ -381,6 +395,29 @@ defmodule PhoenixKitSync.Connections do
     end)
   end
 
+  defp guard_settings_status(changeset) do
+    case Ecto.Changeset.fetch_change(changeset, :status) do
+      {:ok, status} -> guard_settings_transition(changeset, status)
+      :error -> changeset
+    end
+  end
+
+  defp guard_settings_transition(%{data: %{status: current}} = changeset, status)
+       when current in ["revoked", "expired"] and status != "revoked" do
+    Ecto.Changeset.add_error(
+      changeset,
+      :status,
+      gettext("This connection's current status does not allow that change")
+    )
+  end
+
+  defp guard_settings_transition(changeset, status) do
+    changeset
+    |> Ecto.Changeset.delete_change(:status)
+    |> Ecto.Changeset.optimistic_lock(:status, fn _ -> status end)
+    |> Ecto.Changeset.put_change(:status, status)
+  end
+
   # No changed fields = no-op save. Skip the log line AND the PubSub
   # broadcast; subscribers don't need to re-render their view of something
   # that didn't move. Pre-fix this branch was unreachable because string-
@@ -400,37 +437,6 @@ defmodule PhoenixKitSync.Connections do
       broadcast({:connection_updated, updated.uuid})
     end
   end
-
-  # Returns the subset of `attrs` whose values differ from the struct. Works
-  # for both atom-keyed (internal) and string-keyed (LiveView form) attrs:
-  # string keys are resolved against the struct via `String.to_existing_atom`
-  # so a typoed or unknown key doesn't crash and isn't falsely flagged as
-  # "changed". Without this, a form submit with `%{"status" => "active"}`
-  # against a struct's atom-keyed `:status` would make every field look
-  # changed (because `Map.get(struct, "status")` is always `nil`) and fire a
-  # misleading `:connection_updated` broadcast.
-  defp detect_changed_fields(%Connection{} = connection, attrs) do
-    Enum.reduce(attrs, [], fn {k, v}, acc ->
-      field = resolve_struct_key(k)
-
-      cond do
-        is_nil(field) -> acc
-        Map.get(connection, field) == v -> acc
-        true -> [k | acc]
-      end
-    end)
-    |> Enum.reverse()
-  end
-
-  defp resolve_struct_key(k) when is_atom(k), do: k
-
-  defp resolve_struct_key(k) when is_binary(k) do
-    String.to_existing_atom(k)
-  rescue
-    ArgumentError -> nil
-  end
-
-  defp resolve_struct_key(_), do: nil
 
   @doc """
   Deletes a connection.
@@ -478,7 +484,7 @@ defmodule PhoenixKitSync.Connections do
       {:ok, conn} = Connections.approve_connection(conn, actor_uuid: current_user.uuid)
   """
   @spec approve_connection(Connection.t(), keyword() | String.t() | nil) ::
-          {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
+          {:ok, Connection.t()} | {:error, :status_change_not_allowed | Ecto.Changeset.t()}
   def approve_connection(connection, opts \\ [])
 
   def approve_connection(%Connection{} = connection, opts) when is_list(opts) do
@@ -490,13 +496,19 @@ defmodule PhoenixKitSync.Connections do
         "| approved_by=#{admin_user_uuid}"
     )
 
-    repo = RepoHelper.repo()
+    result =
+      change_connection_status(connection, ["pending"], fn current ->
+        Connection.approve_changeset(current, admin_user_uuid)
+      end)
 
-    case connection |> Connection.approve_changeset(admin_user_uuid) |> repo.update() do
+    case result do
       {:ok, updated} ->
         log_sync_activity("approved", updated, actor_uuid: admin_user_uuid)
         broadcast({:connection_status_changed, updated.uuid, "active"})
         {:ok, updated}
+
+      {:error, :status_change_not_allowed} = error ->
+        error
 
       error ->
         log_sync_activity("approved", connection, [actor_uuid: admin_user_uuid], %{
@@ -525,7 +537,7 @@ defmodule PhoenixKitSync.Connections do
         Connections.suspend_connection(conn, actor_uuid: current_user.uuid, reason: "Security audit")
   """
   @spec suspend_connection(Connection.t(), keyword() | String.t() | nil) ::
-          {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
+          {:ok, Connection.t()} | {:error, :status_change_not_allowed | Ecto.Changeset.t()}
   def suspend_connection(connection, opts \\ [])
 
   def suspend_connection(%Connection{} = connection, opts) when is_list(opts) do
@@ -539,9 +551,12 @@ defmodule PhoenixKitSync.Connections do
         "| reason=#{inspect(reason)}"
     )
 
-    repo = RepoHelper.repo()
+    result =
+      change_connection_status(connection, ["active", "suspended"], fn current ->
+        Connection.suspend_changeset(current, admin_user_uuid, reason)
+      end)
 
-    case connection |> Connection.suspend_changeset(admin_user_uuid, reason) |> repo.update() do
+    case result do
       {:ok, updated} ->
         log_sync_activity("suspended", updated, [actor_uuid: admin_user_uuid], %{
           "reason" => reason
@@ -549,6 +564,9 @@ defmodule PhoenixKitSync.Connections do
 
         broadcast({:connection_status_changed, updated.uuid, "suspended"})
         {:ok, updated}
+
+      {:error, :status_change_not_allowed} = error ->
+        error
 
       error ->
         log_sync_activity("suspended", connection, [actor_uuid: admin_user_uuid], %{
@@ -565,7 +583,7 @@ defmodule PhoenixKitSync.Connections do
 
   @doc false
   @spec suspend_connection(Connection.t(), String.t() | nil, String.t() | nil) ::
-          {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
+          {:ok, Connection.t()} | {:error, :status_change_not_allowed | Ecto.Changeset.t()}
   def suspend_connection(%Connection{} = connection, actor_uuid, reason),
     do: suspend_connection(connection, actor_uuid: actor_uuid, reason: reason)
 
@@ -583,7 +601,7 @@ defmodule PhoenixKitSync.Connections do
         Connections.revoke_connection(conn, actor_uuid: current_user.uuid, reason: "Compromised")
   """
   @spec revoke_connection(Connection.t(), keyword() | String.t() | nil) ::
-          {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
+          {:ok, Connection.t()} | {:error, :status_change_not_allowed | Ecto.Changeset.t()}
   def revoke_connection(connection, opts \\ [])
 
   def revoke_connection(%Connection{} = connection, opts) when is_list(opts) do
@@ -597,9 +615,16 @@ defmodule PhoenixKitSync.Connections do
         "| reason=#{inspect(reason)}"
     )
 
-    repo = RepoHelper.repo()
+    result =
+      change_connection_status(
+        connection,
+        ["pending", "active", "suspended", "expired"],
+        fn current ->
+          Connection.revoke_changeset(current, admin_user_uuid, reason)
+        end
+      )
 
-    case connection |> Connection.revoke_changeset(admin_user_uuid, reason) |> repo.update() do
+    case result do
       {:ok, updated} ->
         log_sync_activity("revoked", updated, [actor_uuid: admin_user_uuid], %{
           "reason" => reason
@@ -607,6 +632,9 @@ defmodule PhoenixKitSync.Connections do
 
         broadcast({:connection_status_changed, updated.uuid, "revoked"})
         {:ok, updated}
+
+      {:error, :status_change_not_allowed} = error ->
+        error
 
       error ->
         log_sync_activity("revoked", connection, [actor_uuid: admin_user_uuid], %{
@@ -623,7 +651,7 @@ defmodule PhoenixKitSync.Connections do
 
   @doc false
   @spec revoke_connection(Connection.t(), String.t() | nil, String.t() | nil) ::
-          {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
+          {:ok, Connection.t()} | {:error, :status_change_not_allowed | Ecto.Changeset.t()}
   def revoke_connection(%Connection{} = connection, actor_uuid, reason),
     do: revoke_connection(connection, actor_uuid: actor_uuid, reason: reason)
 
@@ -635,20 +663,26 @@ defmodule PhoenixKitSync.Connections do
       {:ok, conn} = Connections.reactivate_connection(conn)
   """
   @spec reactivate_connection(Connection.t(), keyword()) ::
-          {:ok, Connection.t()} | {:error, Ecto.Changeset.t()}
+          {:ok, Connection.t()} | {:error, :status_change_not_allowed | Ecto.Changeset.t()}
   def reactivate_connection(%Connection{} = connection, opts \\ []) do
     Logger.info(
       "[Sync.Connections] Reactivating connection " <>
         "| uuid=#{connection.uuid}"
     )
 
-    repo = RepoHelper.repo()
+    result =
+      change_connection_status(connection, ["suspended"], fn current ->
+        Connection.reactivate_changeset(current)
+      end)
 
-    case connection |> Connection.reactivate_changeset() |> repo.update() do
+    case result do
       {:ok, updated} ->
         log_sync_activity("reactivated", updated, opts)
         broadcast({:connection_status_changed, updated.uuid, "active"})
         {:ok, updated}
+
+      {:error, :status_change_not_allowed} = error ->
+        error
 
       error ->
         log_sync_activity("reactivated", connection, opts, %{"db_pending" => true})
@@ -673,38 +707,63 @@ defmodule PhoenixKitSync.Connections do
           {:ok, Connection.t()}
           | {:error, :status_change_not_allowed | Ecto.Changeset.t()}
   def apply_remote_status(%Connection{} = connection, status) do
-    case Connection.remote_status_changeset(connection, status) do
-      :unchanged ->
-        {:ok, connection}
+    result = with_locked_connection(connection, &remote_status_update(&1, status))
 
-      {:ok, changeset} ->
-        with {:ok, updated} <- RepoHelper.repo().update(changeset) do
-          Logger.info(
-            "[Sync.Connections] Status set by the remote site " <>
-              "| uuid=#{updated.uuid} " <>
-              "| from=#{connection.status} " <>
-              "| to=#{updated.status}"
-          )
+    case result do
+      {:ok, {:unchanged, current}} ->
+        {:ok, current}
 
-          log_sync_activity(remote_status_verb(updated.status), updated, [], %{
-            "reason" => "remote_site"
-          })
+      {:ok, {:changed, updated}} ->
+        log_sync_activity(remote_status_verb(updated.status), updated, [], %{
+          "reason" => "remote_site"
+        })
 
-          broadcast({:connection_status_changed, updated.uuid, updated.status})
-          {:ok, updated}
-        end
+        broadcast({:connection_status_changed, updated.uuid, updated.status})
+        {:ok, updated}
 
-      {:error, :status_change_not_allowed} = error ->
-        Logger.warning(
-          "[Sync.Connections] Refused a status change from the remote site " <>
-            "| uuid=#{connection.uuid} " <>
-            "| direction=#{connection.direction} " <>
-            "| from=#{connection.status} " <>
-            "| to=#{inspect(status)}"
-        )
-
+      {:error, _reason} = error ->
         error
     end
+  end
+
+  defp remote_status_update(current, status) do
+    case Connection.remote_status_changeset(current, status) do
+      :unchanged -> {:ok, {:unchanged, current}}
+      {:ok, changeset} -> update_remote_status(changeset)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp update_remote_status(changeset) do
+    with {:ok, updated} <- RepoHelper.repo().update(changeset),
+         do: {:ok, {:changed, updated}}
+  end
+
+  defp change_connection_status(connection, allowed_statuses, changeset_fun) do
+    with_locked_connection(connection, fn current ->
+      if current.status in allowed_statuses,
+        do: RepoHelper.repo().update(changeset_fun.(current)),
+        else: {:error, :status_change_not_allowed}
+    end)
+  end
+
+  # Decide from the locked row, including the remote-suspension marker.
+  # Local and remote status writes share this lock; a stale snapshot can
+  # never overwrite an admin's revoke. Audit and PubSub happen after commit.
+  defp with_locked_connection(connection, fun) do
+    repo = RepoHelper.repo()
+
+    repo.transaction(fn ->
+      current =
+        repo.one(from(c in Connection, where: c.uuid == ^connection.uuid, lock: "FOR UPDATE"))
+
+      result = if current, do: fun.(current), else: {:error, :status_change_not_allowed}
+
+      case result do
+        {:ok, value} -> value
+        {:error, reason} -> repo.rollback(reason)
+      end
+    end)
   end
 
   defp remote_status_verb("active"), do: "reactivated"
@@ -865,7 +924,7 @@ defmodule PhoenixKitSync.Connections do
     repo = RepoHelper.repo()
     token_hash = hash_token(token)
 
-    case repo.get_by(Connection, auth_token_hash: token_hash) do
+    case repo.get_by(Connection, [auth_token_hash: token_hash], log: false) do
       nil -> {:error, :invalid_token}
       connection -> {:ok, connection}
     end
@@ -939,7 +998,7 @@ defmodule PhoenixKitSync.Connections do
     query
     |> where([c], fragment("lower(?) LIKE ?", c.site_url, ^pattern))
     |> order_by([c], asc: c.inserted_at, asc: c.uuid)
-    |> RepoHelper.repo().all()
+    |> RepoHelper.repo().all(log: false)
     |> Enum.filter(&(Connection.normalize_site_url(&1.site_url) == wanted))
     |> Enum.sort_by(&(&1.site_url != site_url))
     |> List.first()
@@ -977,6 +1036,10 @@ defmodule PhoenixKitSync.Connections do
         {:error, reason} -> repo.rollback(reason)
       end
     end)
+    |> tap(fn
+      {:ok, connection} -> connection_created(connection)
+      {:error, _reason} -> :ok
+    end)
   end
 
   defp do_register_incoming(attrs, site_url, max_pending) do
@@ -989,7 +1052,7 @@ defmodule PhoenixKitSync.Connections do
         {:error, :too_many_pending}
 
       true ->
-        with {:ok, connection, _token} <- create_connection(attrs), do: {:ok, connection}
+        with {:ok, connection, _token} <- insert_connection(attrs), do: {:ok, connection}
     end
   end
 
@@ -1007,7 +1070,7 @@ defmodule PhoenixKitSync.Connections do
     from(c in Connection,
       where: c.auth_token_hash == ^auth_token_hash and c.direction == ^direction
     )
-    |> repo.one()
+    |> repo.one(log: false)
   end
 
   # ===========================================
@@ -1225,7 +1288,7 @@ defmodule PhoenixKitSync.Connections do
 
     connection
     |> Connection.stats_changeset(%{last_connected_at: UtilsDate.utc_now()})
-    |> repo.update()
+    |> repo.update(log: false)
   end
 
   # ===========================================
@@ -1382,7 +1445,7 @@ defmodule PhoenixKitSync.Connections do
 
     connection
     |> Connection.changeset(%{auth_token: new_token})
-    |> repo.update()
+    |> repo.update(log: false)
     |> case do
       {:ok, updated_connection} ->
         # Token regeneration is a security-sensitive event — log it. The

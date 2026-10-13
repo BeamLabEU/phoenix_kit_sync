@@ -46,6 +46,7 @@ defmodule PhoenixKitSync.Errors do
           | :invalid_json
           | :invalid_password
           | :invalid_response
+          | :invalid_sender_url
           | :invalid_status
           | :invalid_table_name
           | :invalid_token
@@ -83,12 +84,18 @@ defmodule PhoenixKitSync.Errors do
           | :unsupported_key_type
           | :unsupported_column_type
 
+  @doc false
+  @spec public_message(term()) :: String.t()
+  def public_message(reason) when is_atom(reason), do: message(reason)
+  def public_message(_reason), do: message(:unexpected_response)
+
   @doc """
   Returns a human-readable message for an error atom, changeset, or other
   value. Safe for any input — falls through to `inspect/1` for unknown
   terms.
   """
   @spec message(term()) :: String.t()
+
   def message(:already_exists), do: gettext("Already exists")
   def message(:already_used), do: gettext("Already used")
   def message(:cannot_start), do: gettext("Cannot start")
@@ -139,6 +146,7 @@ defmodule PhoenixKitSync.Errors do
   def message(:invalid_json), do: gettext("Invalid JSON")
   def message(:invalid_password), do: gettext("Invalid password")
   def message(:invalid_response), do: gettext("Invalid response from remote site")
+  def message(:invalid_sender_url), do: gettext("Invalid sender URL")
   def message(:invalid_status), do: gettext("Invalid status")
   def message(:invalid_table_name), do: gettext("Invalid table name")
   def message(:invalid_token), do: gettext("Invalid auth token")
@@ -183,7 +191,7 @@ defmodule PhoenixKitSync.Errors do
       )
 
   def message(:status_change_not_allowed),
-    do: gettext("The remote site may not change this connection's status")
+    do: gettext("This connection's current status does not allow that change")
 
   def message(:too_many_pending),
     do: gettext("Too many connection requests are awaiting approval; try again later")
@@ -270,6 +278,20 @@ defmodule PhoenixKitSync.Errors do
   text (an older row, a remote site's own message) is shown as stored.
   """
   @spec transfer_error(String.t() | nil) :: String.t() | nil
-  def transfer_error("sent_truncated"), do: message(:sent_truncated)
+  @stored_errors ~w(sent_truncated truncated unauthorized table_not_found unexpected_response
+    offline invalid_response pull_failed sender_ignores_filters invalid_column_name
+    table_missing_locally no_primary_key import_failed response_too_large invalid_filter
+    unsupported_key_type filter_needs_single_key download_limit_reached record_limit_reached
+    connection_expired connection_not_active ip_not_allowed outside_allowed_hours invalid_password)a
+
+  def transfer_error("truncated_key_type:" <> type), do: message({:truncated_key_type, type})
+
+  def transfer_error(error_message) when is_binary(error_message) do
+    case Enum.find(@stored_errors, &(Atom.to_string(&1) == error_message)) do
+      nil -> error_message
+      reason -> message(reason)
+    end
+  end
+
   def transfer_error(error_message), do: error_message
 end

@@ -41,9 +41,11 @@ defmodule PhoenixKitSync.Web.SyncChannel do
 
   alias PhoenixKitSync
   alias PhoenixKitSync.DataExporter
+  alias PhoenixKitSync.Errors
   alias PhoenixKitSync.Params
   alias PhoenixKitSync.PullCursor
   alias PhoenixKitSync.SchemaInspector
+  alias PhoenixKitSync.SessionStore
 
   @impl true
   def join("transfer:" <> code, _params, socket) do
@@ -69,7 +71,28 @@ defmodule PhoenixKitSync.Web.SyncChannel do
   # ===========================================
 
   @impl true
-  def handle_in("request:capabilities", %{"ref" => ref}, socket) do
+  def handle_in(event, payload, socket) do
+    case SessionStore.get(socket.assigns.session_code) do
+      {:ok, %{direction: :send, owner_pid: owner}} ->
+        if Process.alive?(owner),
+          do: handle_request(event, payload, socket),
+          else: refuse_session(payload, socket)
+
+      _ ->
+        refuse_session(payload, socket)
+    end
+  end
+
+  defp refuse_session(payload, socket) do
+    push(socket, "response:error", %{
+      error: Errors.message(:invalid_code),
+      ref: if(is_map(payload), do: payload["ref"])
+    })
+
+    {:noreply, socket}
+  end
+
+  defp handle_request("request:capabilities", %{"ref" => ref}, socket) do
     Logger.debug("Sync.Channel: Capabilities requested")
 
     capabilities = %{
@@ -82,7 +105,7 @@ defmodule PhoenixKitSync.Web.SyncChannel do
     {:noreply, socket}
   end
 
-  def handle_in("request:tables", %{"ref" => ref}, socket) do
+  defp handle_request("request:tables", %{"ref" => ref}, socket) do
     Logger.debug("Sync.Channel: Tables requested")
 
     case SchemaInspector.list_tables() do
@@ -91,7 +114,7 @@ defmodule PhoenixKitSync.Web.SyncChannel do
 
       {:error, reason} ->
         push(socket, "response:error", %{
-          error: "Failed to list tables: #{inspect(reason)}",
+          error: Errors.public_message(reason),
           ref: ref
         })
     end
@@ -99,7 +122,8 @@ defmodule PhoenixKitSync.Web.SyncChannel do
     {:noreply, socket}
   end
 
-  def handle_in("request:schema", %{"table" => table, "ref" => ref}, socket) do
+  defp handle_request("request:schema", %{"table" => table, "ref" => ref}, socket)
+       when is_binary(table) and is_binary(ref) do
     Logger.info("Sync.Channel: Schema requested for #{table}")
 
     case SchemaInspector.get_schema(table) do
@@ -116,7 +140,7 @@ defmodule PhoenixKitSync.Web.SyncChannel do
         Logger.error("Sync.Channel: Failed to get schema for #{table}: #{inspect(reason)}")
 
         push(socket, "response:error", %{
-          error: "Failed to get schema: #{inspect(reason)}",
+          error: Errors.public_message(reason),
           ref: ref
         })
     end
@@ -124,7 +148,8 @@ defmodule PhoenixKitSync.Web.SyncChannel do
     {:noreply, socket}
   end
 
-  def handle_in("request:count", %{"table" => table, "ref" => ref}, socket) do
+  defp handle_request("request:count", %{"table" => table, "ref" => ref}, socket)
+       when is_binary(table) and is_binary(ref) do
     Logger.debug("Sync.Channel: Count requested for #{table}")
 
     case DataExporter.get_count(table) do
@@ -133,7 +158,7 @@ defmodule PhoenixKitSync.Web.SyncChannel do
 
       {:error, reason} ->
         push(socket, "response:error", %{
-          error: "Failed to get count: #{inspect(reason)}",
+          error: Errors.public_message(reason),
           ref: ref
         })
     end
@@ -141,7 +166,7 @@ defmodule PhoenixKitSync.Web.SyncChannel do
     {:noreply, socket}
   end
 
-  def handle_in("request:records", payload, socket) do
+  defp handle_request("request:records", payload, socket) do
     # Payload comes from the (potentially malicious) WebSocket peer —
     # never `Map.fetch!` on attacker-controlled keys, that crashes the
     # channel and triggers a reconnect storm. Match-and-validate first.
@@ -162,16 +187,14 @@ defmodule PhoenixKitSync.Web.SyncChannel do
         {:noreply, socket}
 
       _ ->
-        Logger.warning(
-          "Sync.Channel: request:records missing/invalid required fields | payload=#{inspect(payload, limit: 5)}"
-        )
+        Logger.warning("Sync.Channel: request:records missing/invalid required fields")
 
         {:reply, {:error, %{reason: "missing_fields"}}, socket}
     end
   end
 
-  def handle_in(event, payload, socket) do
-    Logger.warning("Sync: Unknown event #{event} with payload #{inspect(payload)}")
+  defp handle_request(event, _payload, socket) do
+    Logger.warning("Sync: Unknown event #{event}")
     {:reply, {:error, %{message: "Unknown event: #{event}"}}, socket}
   end
 
@@ -216,7 +239,7 @@ defmodule PhoenixKitSync.Web.SyncChannel do
     else
       {:error, reason} ->
         push(socket, "response:error", %{
-          error: "Failed to fetch records: #{inspect(reason)}",
+          error: Errors.public_message(reason),
           ref: ref
         })
     end

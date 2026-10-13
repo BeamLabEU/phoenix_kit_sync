@@ -551,8 +551,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       {:ok, %{"success" => true, "tables" => tables}} when is_list(tables) ->
         convert_tables_to_structs(tables)
 
-      {:ok, %{"success" => false, "error" => error}} ->
-        {:error, error}
+      {:ok, %{"success" => false}} ->
+        {:error, :unexpected_response}
 
       _ ->
         {:error, :invalid_response}
@@ -898,8 +898,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       {:ok, response, data} ->
         handle_pull_page(pull, progress, response, data)
 
-      {:error, reason, message} ->
-        Transfers.fail_transfer(pull.transfer, message, pull_stats(progress))
+      {:error, reason, _message} ->
+        Transfers.fail_transfer(pull.transfer, Atom.to_string(reason), pull_stats(progress))
         {:error, reason, progress.remap}
     end
   end
@@ -1034,7 +1034,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
       {:error, reason} ->
         Logger.error("Sync: Pull failed - #{inspect(reason)}")
-        {:error, reason, inspect(reason)}
+        classified = transport_reason(reason)
+        {:error, classified, Atom.to_string(classified)}
     end
   end
 
@@ -1042,8 +1043,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     do: {:ok, response, data}
 
   defp read_pull_page({:ok, %{"success" => false, "error" => error}}) when is_binary(error) do
-    Logger.error("Sync: Pull failed - remote error: #{error}")
-    {:error, error, error}
+    Logger.error("Sync: Pull failed - remote site refused the pull")
+    {:error, :pull_failed, "pull_failed"}
   end
 
   # A remote error that is not a string (a map, a list) is not shown or
@@ -1053,8 +1054,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {:error, :invalid_response, "Invalid response from remote site"}
   end
 
-  defp read_pull_page(other) do
-    Logger.error("Sync: Pull failed - invalid response format: #{inspect(other, limit: 5)}")
+  defp read_pull_page(_other) do
+    Logger.error("Sync: Pull failed - invalid response format")
     {:error, :invalid_response, "Invalid response from remote site"}
   end
 
@@ -1094,7 +1095,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp fail_ignored_filter(transfer) do
     Logger.error("Sync: Pull refused - the sender ignored the record filter")
-    Transfers.fail_transfer(transfer, "The sender ignored the record filter; not imported")
+    Transfers.fail_transfer(transfer, "sender_ignores_filters")
     {:error, :sender_ignores_filters}
   end
 
@@ -1112,10 +1113,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     Transfers.fail_transfer(
       transfer,
-      "The sender stopped at its max_records_per_request limit and gave no way to " <>
-        "continue; only the first #{progress.records} records were pulled. Update the " <>
-        "sync module on the source site, or have its admin raise that limit for this " <>
-        "connection",
+      "truncated",
       pull_stats(progress)
     )
 
@@ -1129,10 +1127,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     Transfers.fail_transfer(
       transfer,
-      "The sender stopped at its max_records_per_request limit and cannot continue past " <>
-        "it: the table's key is of type #{key_type}; only the first #{progress.records} " <>
-        "records were pulled. Have the source site's admin raise that limit for this " <>
-        "connection",
+      "truncated_key_type:" <> key_type,
       pull_stats(progress)
     )
 
@@ -1190,7 +1185,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       :ok
     else
       Logger.warning("Sync: sender data has a column name that is not a valid identifier")
-      Transfers.fail_transfer(transfer, "Invalid column name in sender data; not imported")
+      Transfers.fail_transfer(transfer, "invalid_column_name")
       {:error, :invalid_column_name}
     end
   end
@@ -1199,7 +1194,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp reject_local_table(transfer, reason, why) do
     Logger.warning("Sync: #{why}; not pulling it")
-    Transfers.fail_transfer(transfer, "#{why}; not pulled")
+    Transfers.fail_transfer(transfer, Atom.to_string(reason))
     {:error, reason}
   end
 
@@ -1214,22 +1209,13 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       wrap_error.(fail_import(transfer, table_name, kind, reason, __STACKTRACE__))
   end
 
-  # The log gets the details; the transfer row and the returned reason get
-  # only the table and the exception type, since an exception message can
-  # quote row values. Rows inserted before the failure stay (each INSERT is
+  # Exception messages can quote row values, so the log names only the
+  # exception type and the transfer stores a classified reason. Rows inserted before the failure stay (each INSERT is
   # its own statement), and the transfer records no counts for them: those
   # counts lived in the import loop that raised.
-  defp fail_import(transfer, table_name, kind, reason, stacktrace) do
-    Logger.error(
-      "Sync: Import of #{table_name} failed - " <>
-        Exception.format(kind, reason, stacktrace)
-    )
-
-    Transfers.fail_transfer(
-      transfer,
-      "Import of #{table_name} failed (#{error_kind(kind, reason)})"
-    )
-
+  defp fail_import(transfer, table_name, kind, reason, _stacktrace) do
+    Logger.error("Sync: Import of #{table_name} failed (#{error_kind(kind, reason)})")
+    Transfers.fail_transfer(transfer, "import_failed")
     :import_failed
   end
 
@@ -1274,10 +1260,12 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         # Older senders describe columns as column_name/data_type/is_nullable
         # and send no primary key; normalise so the page and create_table/3
         # read one shape.
-        {:ok, Map.merge(schema, SchemaInspector.normalize_schema_def(schema))}
+        if PhoenixKitSync.PeerData.valid_schema?(schema),
+          do: {:ok, Map.merge(schema, SchemaInspector.normalize_schema_def(schema))},
+          else: {:error, :invalid_response}
 
-      {:ok, %{"success" => false, "error" => error}} ->
-        {:error, error}
+      {:ok, %{"success" => false}} ->
+        {:error, :unexpected_response}
 
       _ ->
         {:error, :invalid_response}
@@ -1341,8 +1329,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       {:ok, %{"success" => true, "records" => records}} when is_list(records) ->
         if Enum.all?(records, &is_map/1), do: {:ok, records}, else: {:error, :invalid_response}
 
-      {:ok, %{"success" => false, "error" => error}} ->
-        {:error, error}
+      {:ok, %{"success" => false}} ->
+        {:error, :unexpected_response}
 
       _ ->
         {:error, :invalid_response}
@@ -1373,7 +1361,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {:ok, :offline}
   end
 
-  defp handle_standard_http_result({:error, reason}), do: {:error, reason}
+  defp handle_standard_http_result({:error, reason}), do: {:error, transport_reason(reason)}
 
   defp handle_api_http_result({:ok, %{status: 401}}), do: {:error, :unauthorized}
   defp handle_api_http_result({:ok, %{status: 404}}), do: {:error, :not_found}
@@ -1386,7 +1374,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {:error, :offline}
   end
 
-  defp handle_api_http_result({:error, reason}), do: {:error, reason}
+  defp handle_api_http_result({:error, reason}), do: {:error, transport_reason(reason)}
 
   defp handle_table_http_result({:ok, %{status: 401}}), do: {:error, :unauthorized}
   defp handle_table_http_result({:ok, %{status: 404}}), do: {:error, :table_not_found}
@@ -1410,7 +1398,15 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {:error, :offline}
   end
 
-  defp handle_table_http_result({:error, reason}), do: {:error, reason}
+  defp handle_table_http_result({:error, reason}), do: {:error, transport_reason(reason)}
+
+  defp transport_reason(reason) when reason in [:response_too_large, :invalid_response],
+    do: reason
+
+  defp transport_reason(%{reason: reason}) when reason in [:econnrefused, :timeout, :nxdomain],
+    do: :offline
+
+  defp transport_reason(_reason), do: :unexpected_response
 
   # --- Private Functions ---
 
@@ -1626,6 +1622,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     case Finch.stream_while(request, get_finch_name(), acc, collect,
            receive_timeout: timeout,
+           request_timeout: timeout,
            pool_timeout: @connect_timeout
          ) do
       {:ok, %{chunks: :too_large}} ->
@@ -1847,7 +1844,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     )
 
     if results.errors > 0 && results.error_sample do
-      Logger.warning("Sync: Sample error for #{table_name}: #{results.error_sample}")
+      Logger.warning("Sync: #{results.errors} record(s) failed in #{table_name}")
     end
 
     finish_import_acc(results)
@@ -1909,7 +1906,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     )
 
     if results.errors > 0 && results.error_sample do
-      Logger.warning("Sync: Sample error for #{table_name}: #{results.error_sample}")
+      Logger.warning("Sync: #{results.errors} record(s) failed in #{table_name}")
     end
 
     remap_additions = map_size(updated_remap) - map_size(uuid_remap)
@@ -1925,7 +1922,14 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {%{imported: 0, skipped: 0, errors: 0}, uuid_remap}
   end
 
-  defp import_single_record_with_remap(%{pk_cols: [pk_col]} = ctx, record, acc, remap) do
+  defp import_single_record_with_remap(ctx, record, acc, remap) do
+    import_remap_record(ctx, record, acc, remap)
+  rescue
+    _ -> {%{acc | errors: acc.errors + 1}, remap}
+  end
+
+  defp import_remap_record(%{pk_cols: [pk_col]} = ctx, record, acc, remap)
+       when is_map(record) do
     # FKs are remapped once, before matching: a unique set often holds an
     # FK (UNIQUE (parent_uuid, slug)), and only the remapped value can match
     # the local row. Remapping again at insert would follow a chain
@@ -1962,7 +1966,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   # composite key through it either. FK columns go through apply_fk_remap/4
   # as on the single-key path, then the insert resolves conflicts on the
   # whole key through ON CONFLICT, per the strategy.
-  defp import_single_record_with_remap(ctx, record, acc, remap) do
+  defp import_remap_record(ctx, record, acc, remap) when is_map(record) do
     remapped_record = apply_fk_remap(record, ctx.fk_columns, remap, ctx.target.column_types)
 
     updated_acc =
@@ -1978,6 +1982,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     {updated_acc, remap}
   end
+
+  defp import_remap_record(_ctx, _record, acc, remap),
+    do: {%{acc | errors: acc.errors + 1}, remap}
 
   # The record's FKs are already remapped.
   defp insert_remapped(ctx, record, acc, remap) do
@@ -2067,7 +2074,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          SchemaInspector.valid_identifier?(pk_col) do
       sql = ~s[SELECT 1 FROM "#{table_name}" WHERE "#{pk_col}" = $1 LIMIT 1]
 
-      case SQL.query(repo, sql, [Prepare.key_value(pk_value, key_type)]) do
+      case SQL.query(repo, sql, [Prepare.key_value(pk_value, key_type)], log: false) do
         {:ok, %{num_rows: 1}} -> true
         _ -> false
       end
@@ -2129,7 +2136,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
       sql = ~s[SELECT "#{pk_col}" FROM "#{table_name}" WHERE #{where_clauses} LIMIT 1]
 
-      case SQL.query(repo, sql, values) do
+      case SQL.query(repo, sql, values, log: false) do
         {:ok, %{rows: [[local_pk]]}} -> {:ok, local_pk}
         _ -> find_match_by_unique(repo, table_name, pk_col, record, rest, column_types)
       end
@@ -2334,7 +2341,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     do: "ON CONFLICT DO NOTHING"
 
   defp execute_insert(repo, sql, values, conflict_strategy) do
-    case SQL.query(repo, sql, values) do
+    case SQL.query(repo, sql, values, log: false) do
       {:ok, %{num_rows: 1}} ->
         :ok
 

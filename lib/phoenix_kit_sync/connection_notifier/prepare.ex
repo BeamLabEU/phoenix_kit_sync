@@ -282,6 +282,9 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   # the exporters send "5" for a whole number and "1.5E+3" for one with an
   # exponent, and Postgrex binds a string to numeric only as a Decimal.
   @numeric_regex ~r/\A-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\z/
+  defp parse_numeric_string(value, :decimal) when value in ["NaN", "Infinity", "-Infinity"],
+    do: Decimal.new(value)
+
   defp parse_numeric_string(value, :decimal) do
     if Regex.match?(@numeric_regex, value), do: new_decimal(value)
   end
@@ -290,6 +293,10 @@ defmodule PhoenixKitSync.ConnectionNotifier.Prepare do
   defp parse_numeric_string(_value, nil), do: nil
 
   @float_regex ~r/\A-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\z/
+
+  defp parse_float_string("NaN"), do: :NaN
+  defp parse_float_string("Infinity"), do: :inf
+  defp parse_float_string("-Infinity"), do: :"-inf"
 
   defp parse_float_string(value) do
     # Float.parse/1 does not take every match: "1e400" is out of range.

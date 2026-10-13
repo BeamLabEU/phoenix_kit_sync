@@ -192,8 +192,8 @@ defmodule PhoenixKitSync.Connection do
     field :name, :string
     field :direction, :string
     field :site_url, :string
-    field :auth_token, :string, virtual: true
-    field :auth_token_hash, :string
+    field :auth_token, :string, virtual: true, redact: true
+    field :auth_token_hash, :string, redact: true
     field :status, :string, default: "pending"
 
     # Sender-side settings
@@ -214,8 +214,8 @@ defmodule PhoenixKitSync.Connection do
     field :rate_limit_requests_per_minute, :integer, default: 60
 
     # Additional security
-    field :download_password, :string, virtual: true
-    field :download_password_hash, :string
+    field :download_password, :string, virtual: true, redact: true
+    field :download_password_hash, :string, redact: true
     field :ip_whitelist, {:array, :string}, default: []
     field :allowed_hours_start, :integer
     field :allowed_hours_end, :integer

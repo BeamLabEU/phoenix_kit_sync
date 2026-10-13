@@ -77,7 +77,7 @@ socket is open takes effect on its next message.
 |---------|----------|-------------|
 | **Allowed Tables** | Yes | Whitelist of tables the receiver can access |
 | **Excluded Tables** | Yes | Blacklist of tables to hide from receiver |
-| **Max Downloads** | Yes | Total pulls. A table read page by page is one pull, over REST (with the sender's cursor) and on one WebSocket (a request for exactly the position, or the offset, the page before ended on, within ten minutes). Every `table-records` answer, the 10-row preview of the receiving site's sync page included, is a pull of its own |
+| **Max Downloads** | Yes | Total pulls. A table read page by page is one pull, over REST (with the sender's cursor) and on one WebSocket (a request for exactly the position, or the offset, the page before ended on, within ten minutes). Every nonempty `table-records` answer, the 10-row preview of the receiving site's sync page included, is a pull of its own |
 | **Max Records Total** | Yes | Total records that can be downloaded, by `pull-data`, `table-records` and the WebSocket alike; a page is cut where the allowance ends |
 | **Max Records Per Request** | Yes | Records per page (default: 10,000), set as "Records per request" in the connection form. A larger table is sent in pages |
 | **Download Password** | Yes | The request must carry it (`password` in the REST body, `?password=` on the socket). The receiving site's sync page asks its admin for it when the sender refuses a request without one, keeps it for as long as that page is open, and stores it nowhere |
@@ -86,6 +86,8 @@ socket is open takes effect on its next message.
 | **Expiration Date** | Yes | Requests after `expires_at` are refused |
 | **Approval Mode** | **No** | `auto_approve` / `require_approval` / `per_table` and **Auto-Approve Tables** are stored, and `Connections.requires_approval?/2` answers for them, but no pull is held for approval: every mode behaves as `auto_approve` |
 | **Rate Limit** | **No** | `rate_limit_requests_per_minute` is stored but not applied |
+
+An answer with no rows returns its reservation and consumes no download.
 
 Both limits are taken with one conditional `UPDATE` before any row is read
 (`Connections.reserve_transfer/2`), so requests arriving together cannot
@@ -273,6 +275,8 @@ alias PhoenixKitSync.Connections
 
 # Rotate the auth token (returns the new raw token, hash stored in DB).
 # Logged as `sync.connection.token_regenerated`.
+# This is a local, low-level operation: the caller must also replace the
+# credential on the peer. The admin UI uses delete + create to reconnect.
 {:ok, connection, new_token} = Connections.regenerate_token(connection, actor_uuid: admin_user_uuid)
 
 # Validate a token (a sender connection's; what the socket upgrade does)

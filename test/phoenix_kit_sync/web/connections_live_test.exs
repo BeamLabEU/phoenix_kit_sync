@@ -35,6 +35,24 @@ defmodule PhoenixKitSync.Web.ConnectionsLiveTest do
     end
   end
 
+  test "token regeneration is unavailable in the UI and an older tab cannot rotate it", %{
+    conn: conn
+  } do
+    connection = create_connection(%{"status" => "active"})
+    conn = put_test_scope(conn, fake_scope())
+
+    {:ok, view, _html} =
+      live(conn, "/en/admin/sync/connections?action=show&id=#{connection.uuid}")
+
+    refute has_element?(view, "button[phx-click=regenerate_token]")
+
+    assert render_click(view, "regenerate_token", %{"uuid" => connection.uuid}) =~
+             "delete the connection and create it again"
+
+    assert Connections.get_connection!(connection.uuid).auth_token_hash ==
+             connection.auth_token_hash
+  end
+
   describe "create connection form" do
     test "new action renders the form", %{conn: conn} do
       conn = put_test_scope(conn, fake_scope())
@@ -235,6 +253,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLiveTest do
       connection = create_connection(%{"name" => "Reactivatable"})
       admin_uuid = PhoenixKitSync.TestActor.uuid()
 
+      {:ok, connection} = Connections.approve_connection(connection, admin_uuid)
       {:ok, suspended} = Connections.suspend_connection(connection, admin_uuid)
       {:ok, _} = Connections.reactivate_connection(suspended, actor_uuid: admin_uuid)
 

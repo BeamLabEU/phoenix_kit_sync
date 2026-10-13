@@ -129,7 +129,7 @@ defmodule PhoenixKitSync.Integration.WsKeysetPagingTest do
       assert {"response:error", %{"error" => error, "ref" => "r"}} =
                request(state, "wk_moods", %{"after" => %{"mood" => "mid"}})
 
-      assert error =~ "invalid_cursor"
+      assert error == PhoenixKitSync.Errors.message(:invalid_cursor)
     end
 
     @bad_positions [
@@ -149,7 +149,7 @@ defmodule PhoenixKitSync.Integration.WsKeysetPagingTest do
         assert {"response:error", %{"error" => error, "ref" => "r"}} =
                  request(state, @table, %{"after" => unquote(Macro.escape(position))})
 
-        assert error =~ "invalid_cursor"
+        assert error == PhoenixKitSync.Errors.message(:invalid_cursor)
         assert %{rows: [[10]]} = repo().query!("SELECT count(*) FROM #{@table}")
       end
     end

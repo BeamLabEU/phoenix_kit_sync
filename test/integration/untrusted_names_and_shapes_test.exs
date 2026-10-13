@@ -182,7 +182,8 @@ defmodule PhoenixKitSync.Integration.UntrustedNamesAndShapesTest do
     end
 
     test "a code session's socket does not read it" do
-      {:ok, state} = SyncWebsock.init(auth_type: :session, code: "ABCD2345", session: %{})
+      {:ok, session} = PhoenixKitSync.create_session(:send)
+      {:ok, state} = SyncWebsock.init(auth_type: :session, code: session.code, session: session)
       state = %{state | joined: true}
 
       frame =
@@ -198,7 +199,7 @@ defmodule PhoenixKitSync.Integration.UntrustedNamesAndShapesTest do
                SyncWebsock.handle_in({frame, [opcode: :text]}, state)
 
       assert [_, _, _, "response:error", %{"error" => error}] = Jason.decode!(reply)
-      assert error =~ "invalid_table_name"
+      assert error == PhoenixKitSync.Errors.message(:invalid_table_name)
       refute reply =~ "private"
     end
   end
@@ -529,7 +530,8 @@ defmodule PhoenixKitSync.Integration.UntrustedNamesAndShapesTest do
 
   describe "a request on the serving socket whose payload is not an object" do
     setup do
-      {:ok, state} = SyncWebsock.init(auth_type: :session, code: "ABCD2345", session: %{})
+      {:ok, session} = PhoenixKitSync.create_session(:send)
+      {:ok, state} = SyncWebsock.init(auth_type: :session, code: session.code, session: session)
       {:ok, state: %{state | joined: true}}
     end
 
