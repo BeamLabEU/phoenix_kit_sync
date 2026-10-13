@@ -6,7 +6,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.Status do
   The LiveView spawns linked tasks that call into this module when it mounts
   or reloads the connections list:
 
-  - `fetch_sender_statuses/1` — for each `receiver` connection, asks the
+  - `fetch_sender_statuses/1` — for each active `receiver` connection, asks the
     remote site's `/sync/api/status` endpoint whether this site's paired
     sender is still reachable, sending `{:sender_status_fetched, uuid, status}`
     back to the LV once the HTTP round-trip completes.
@@ -19,10 +19,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.Status do
   Both are display-only — the tasks die with the LiveView via
   `Task.start_link/1`.
 
-  Extracted from `ConnectionsLive` in 2026-04 to shrink the LiveView module
-  without changing behavior. Task supervision semantics and message shapes
-  are unchanged; the LV still owns the `handle_info` clauses that process
-  the results.
+  The LV owns the `handle_info` clauses that process the results.
   """
 
   alias PhoenixKitSync.ConnectionNotifier
@@ -30,8 +27,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.Status do
   require Logger
 
   @doc """
-  For each receiver connection, fetches the paired sender's status from the
-  remote site in a linked task. Result is sent back to the caller as
+  For each active receiver connection, fetches the paired sender's status
+  from the remote site in a linked task. Result is sent back to the caller as
   `{:sender_status_fetched, connection_uuid, status_string}`.
 
   Status strings: `"active"`, `"suspended"`, `"revoked"`, `"pending"` (from
@@ -40,7 +37,13 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.Status do
   """
   @spec fetch_sender_statuses(list(), pid()) :: :ok
   def fetch_sender_statuses(receiver_connections, pid \\ self()) do
-    Enum.each(receiver_connections, fn conn ->
+    # Only an active connection is asked about. A pending receiver row is a
+    # registration nobody here has approved: its `site_url` is whatever the
+    # request claimed, and this site makes no request to it until an admin
+    # has.
+    receiver_connections
+    |> Enum.filter(&(&1.status == "active"))
+    |> Enum.each(fn conn ->
       Task.start_link(fn ->
         status = resolve_sender_status(conn)
         send(pid, {:sender_status_fetched, conn.uuid, status})

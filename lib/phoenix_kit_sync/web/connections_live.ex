@@ -7,7 +7,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   """
 
   use PhoenixKitWeb, :live_view
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitSync.Gettext
 
   require Logger
 
@@ -108,6 +108,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
   defp handle_action(socket, _action, _id, params) do
     socket
+    |> assign(:sync_password, nil)
     |> assign(:view_mode, :list)
     |> assign(:selected_connection, nil)
     |> assign_form(nil)
@@ -167,6 +168,17 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         |> assign_trail(:list)
         |> load_connections()
 
+      # A receiver connection pulls only once it is active here: a pending
+      # one is a registration no admin of this site has approved, whatever
+      # its sender says.
+      %{direction: "receiver", status: status} when status != "active" ->
+        socket
+        |> put_flash(:error, gettext("This connection is not active, so it cannot sync"))
+        |> assign(:view_mode, :list)
+        |> assign(:selected_connection, nil)
+        |> assign_trail(:list)
+        |> load_connections()
+
       connection ->
         setup_sync_view(socket, connection)
     end
@@ -184,6 +196,11 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     |> assign(:sync_local_checksums, %{})
     |> assign(:sync_loading, true)
     |> assign(:sync_error, nil)
+    # The sender's download password, when it asks for one: typed on this
+    # page, held here for as long as the page is open, sent with each
+    # request to the sender and written nowhere.
+    |> assign(:sync_password, nil)
+    |> assign(:sync_password_needed, false)
     |> assign(:selected_sync_tables, MapSet.new())
     |> assign(:suggested_sync_tables, MapSet.new())
     |> assign(:sync_in_progress, false)
@@ -290,7 +307,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     connection = Connections.get_connection!(uuid)
     actor_uuid = Actor.uuid(socket)
 
-    case Connections.approve_connection(connection, actor_uuid) do
+    case Connections.approve_connection(connection, actor_uuid: actor_uuid) do
       {:ok, updated_connection} ->
         # Fire-and-forget: the DB change is committed; the remote site must
         # hear about it even if the admin closes the tab.
@@ -314,7 +331,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     connection = Connections.get_connection!(uuid)
     actor_uuid = Actor.uuid(socket)
 
-    case Connections.suspend_connection(connection, actor_uuid) do
+    case Connections.suspend_connection(connection, actor_uuid: actor_uuid) do
       {:ok, updated_connection} ->
         notify_remote_async(fn ->
           ConnectionNotifier.notify_status_change(updated_connection, "suspended")
@@ -358,7 +375,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     connection = Connections.get_connection!(uuid)
     actor_uuid = Actor.uuid(socket)
 
-    case Connections.revoke_connection(connection, actor_uuid, gettext("Revoked by admin")) do
+    case Connections.revoke_connection(connection,
+           actor_uuid: actor_uuid,
+           reason: gettext("Revoked by admin")
+         ) do
       {:ok, updated_connection} ->
         notify_remote_async(fn ->
           ConnectionNotifier.notify_status_change(updated_connection, "revoked")
@@ -433,6 +453,23 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     send(self(), {:fetch_sender_tables, connection})
     {:noreply, socket}
   end
+
+  # The field is named "password" so the endpoint's parameter filter keeps
+  # it out of the event log.
+  def handle_event("set_sync_password", %{"password" => password}, socket)
+      when is_binary(password) and password != "" do
+    socket =
+      socket
+      |> assign(:sync_password, password)
+      |> assign(:sync_password_needed, false)
+      |> assign(:sync_error, nil)
+      |> assign(:sync_loading, true)
+
+    send(self(), {:fetch_sender_tables, socket.assigns.selected_connection})
+    {:noreply, socket}
+  end
+
+  def handle_event("set_sync_password", _params, socket), do: {:noreply, socket}
 
   def handle_event("toggle_table", %{"table" => table_name}, socket) do
     selected = socket.assigns.selected_sync_tables
@@ -646,7 +683,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
       # table-schema carried primary_key reports none: a table created from
       # that would have no key, and every pull of it is refused, so it is
       # not created at all.
-      case create_table_with_key(table, schema) do
+      case create_table_with_key(table, schema, Actor.uuid(socket)) do
         :ok ->
           socket =
             socket
@@ -712,8 +749,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
     # Linked: result is only used to render the table picker; no point
     # continuing if the LV is gone.
+    password = socket.assigns.sync_password
+
     Task.start_link(fn ->
-      result = ConnectionNotifier.fetch_sender_tables(connection)
+      result = ConnectionNotifier.fetch_sender_tables(connection, password: password)
       send(liveview_pid, {:sender_tables_result, result})
     end)
 
@@ -738,12 +777,28 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         {:error, :offline} ->
           socket
           |> assign(:sync_loading, false)
-          |> assign(:sync_error, "Sender site is offline or unreachable")
+          |> assign(:sync_error, gettext("Sender site is offline or unreachable"))
+
+        # No password yet: ask for it. One was sent: it was wrong, say so
+        # and ask again.
+        {:error, :invalid_password} ->
+          message =
+            if socket.assigns.sync_password,
+              do: Errors.message(:invalid_password),
+              else: gettext("This connection asks for its download password")
+
+          socket
+          |> assign(:sync_loading, false)
+          |> assign(:sync_error, message)
+          |> ask_sync_password()
 
         {:error, reason} ->
           socket
           |> assign(:sync_loading, false)
-          |> assign(:sync_error, "Failed to fetch tables: #{inspect(reason)}")
+          |> assign(
+            :sync_error,
+            gettext("Failed to fetch tables: %{reason}", reason: Errors.message(reason))
+          )
       end
 
     {:noreply, socket}
@@ -754,8 +809,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     liveview_pid = self()
 
     # Linked: schema fetch is render-only.
+    password = socket.assigns.sync_password
+
     Task.start_link(fn ->
-      result = ConnectionNotifier.fetch_table_schema(connection, table_name)
+      result = ConnectionNotifier.fetch_table_schema(connection, table_name, password: password)
       send(liveview_pid, {:table_schema_result, table_name, result})
     end)
 
@@ -780,9 +837,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             socket
             |> assign(:detail_table_schema, nil)
             |> assign(:loading_schema, false)
+            |> ask_sync_password(reason)
             |> put_flash(
               :error,
-              gettext("Failed to load schema: %{reason}", reason: inspect(reason))
+              gettext("Failed to load schema: %{reason}", reason: Errors.message(reason))
             )
         end
 
@@ -797,6 +855,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     liveview_pid = self()
 
     # Linked: record preview is render-only.
+    password = socket.assigns.sync_password
+
     Task.start_link(fn ->
       opts =
         case filter.mode do
@@ -810,6 +870,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             [id_range: {parse_int(filter.range_start), parse_int(filter.range_end)}, limit: 10]
         end
 
+      opts = Keyword.put(opts, :password, password)
       result = ConnectionNotifier.fetch_table_records(connection, table_name, opts)
       send(liveview_pid, {:preview_records_result, table_name, result})
     end)
@@ -831,6 +892,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             socket
             |> assign(:detail_preview, nil)
             |> assign(:loading_preview, false)
+            |> ask_sync_password(reason)
             |> put_flash(
               :error,
               gettext("Failed to load preview: %{reason}", reason: Errors.message(reason))
@@ -847,6 +909,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   def handle_info({:start_detail_sync, connection, table, filter}, socket) do
     liveview_pid = self()
     strategy = socket.assigns.conflict_strategy
+    actor_uuid = Actor.uuid(socket)
+    password = socket.assigns.sync_password
 
     # Supervised: this actually mutates the local DB mid-stream; cancelling
     # mid-flight would leave partial imports. Let it run to completion and
@@ -854,20 +918,21 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     notify_remote_async(fn ->
       result =
         guard_pull(table, {:error, :pull_failed}, fn ->
-          opts =
+          filter_opts =
             case filter.mode do
               :all ->
-                [conflict_strategy: strategy]
+                []
 
               :ids ->
-                [conflict_strategy: strategy, ids: parse_id_list(filter.ids)]
+                [ids: parse_id_list(filter.ids)]
 
               :range ->
-                [
-                  conflict_strategy: strategy,
-                  id_range: {parse_int(filter.range_start), parse_int(filter.range_end)}
-                ]
+                [id_range: {parse_int(filter.range_start), parse_int(filter.range_end)}]
             end
+
+          opts =
+            [conflict_strategy: strategy, actor_uuid: actor_uuid, password: password] ++
+              filter_opts
 
           ConnectionNotifier.pull_table_data(connection, table, opts)
         end)
@@ -885,8 +950,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     retry_pass = Map.get(progress, :retry_pass, 0)
     max_retries = 3
 
-    # Find tables that had errors
-    failed_tables = for tr <- table_results, tr.errors > 0, do: tr.table
+    # Find tables that had errors. A table the sender cut short is not one
+    # of them: another pass pulls the same rows and is cut at the same row.
+    failed_tables =
+      for tr <- table_results, tr.errors > 0, not Map.get(tr, :truncated, false), do: tr.table
 
     if failed_tables != [] && retry_pass < max_retries do
       # Check if last pass made any progress (imported anything)
@@ -939,7 +1006,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     liveview_pid = self()
     connection = socket.assigns.selected_connection
     strategy = socket.assigns.conflict_strategy
+    actor_uuid = Actor.uuid(socket)
     uuid_remap = Map.get(socket.assigns.sync_progress, :uuid_remap, %{})
+    password = socket.assigns.sync_password
 
     progress =
       socket.assigns.sync_progress
@@ -956,7 +1025,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           connection,
           table,
           uuid_remap,
-          conflict_strategy: strategy
+          conflict_strategy: strategy,
+          actor_uuid: actor_uuid,
+          password: password
         )
       end
 
@@ -1101,10 +1172,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     {:noreply, socket}
   end
 
-  defp create_table_with_key(table, schema) do
+  defp create_table_with_key(table, schema, actor_uuid) do
     case SchemaInspector.normalize_schema_def(schema) do
       %{"primary_key" => []} -> {:error, :schema_without_primary_key}
-      _with_key -> SchemaInspector.create_table(table, schema)
+      _with_key -> SchemaInspector.create_table(table, schema, actor_uuid: actor_uuid)
     end
   end
 
@@ -1149,7 +1220,16 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   # that came are in), records carried columns this table lacks, or both.
   defp import_result_message(import_result) do
     truncated =
-      if Map.get(import_result, :truncated) == true, do: sync_error_message(:truncated)
+      case import_result do
+        %{truncated: true, unsupported_key_type: type} when is_binary(type) ->
+          Errors.message({:truncated_key_type, type})
+
+        %{truncated: true} ->
+          sync_error_message(:truncated)
+
+        _whole ->
+          nil
+      end
 
     unknown_columns =
       case Map.get(import_result, :unknown_columns) do
@@ -1201,8 +1281,26 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     """
   end
 
+  # The sender refused the download password (none was sent, or a wrong
+  # one): the one held is dropped and the page asks for it.
+  defp ask_sync_password(socket, reason \\ :invalid_password)
+
+  defp ask_sync_password(socket, :invalid_password) do
+    socket
+    |> assign(:sync_password, nil)
+    |> assign(:sync_password_needed, true)
+  end
+
+  defp ask_sync_password(socket, _other_reason), do: socket
+
   # Process a single table's sync result: extract counts, merge with retries, update progress
   defp process_table_sync_result(socket, table, result) do
+    socket =
+      case result do
+        {:error, reason} -> ask_sync_password(socket, reason)
+        _other -> socket
+      end
+
     {records_fetched, records_skipped, records_errors, error_message} =
       extract_sync_counts(result)
 
@@ -1211,7 +1309,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
       imported: records_fetched,
       skipped: records_skipped,
       errors: records_errors,
-      error_message: error_message
+      error_message: error_message,
+      truncated: match?({:ok, %{truncated: true}}, result)
     }
 
     progress = socket.assigns.sync_progress
@@ -1229,6 +1328,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               skipped: prev.skipped + records_skipped,
               errors: records_errors,
               error_message: error_message,
+              truncated: table_result.truncated,
               retried: true
             }
 
@@ -1471,9 +1571,9 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           </.link>
 
           <div class="text-center">
-            <h1 class="text-4xl font-bold text-base-content mb-3">Connections</h1>
+            <h1 class="text-4xl font-bold text-base-content mb-3">{gettext("Connections")}</h1>
             <p class="text-lg text-base-content">
-              Manage permanent connections for data sync
+              {gettext("Manage permanent connections for data sync")}
             </p>
           </div>
         </header>
@@ -1512,6 +1612,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               local_checksums={@sync_local_checksums}
               loading={@sync_loading}
               error={@sync_error}
+              password_needed={@sync_password_needed}
               selected_tables={@selected_sync_tables}
               suggested_tables={@suggested_sync_tables}
               sync_in_progress={@sync_in_progress}
@@ -1548,16 +1649,16 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               phx-change="filter"
               name="direction"
             >
-              <option value="" selected={@direction_filter == nil}>All Connections</option>
-              <option value="sender" selected={@direction_filter == "sender"}>Outgoing Only</option>
+              <option value="" selected={@direction_filter == nil}>{gettext("All Connections")}</option>
+              <option value="sender" selected={@direction_filter == "sender"}>{gettext("Outgoing Only")}</option>
               <option value="receiver" selected={@direction_filter == "receiver"}>
-                Incoming Only
+                {gettext("Incoming Only")}
               </option>
             </select>
           </label>
         </div>
         <button type="button" phx-click="new_connection" class="btn btn-primary btn-sm">
-          <.icon name="hero-plus" class="w-4 h-4" /> New Connection
+          <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New Connection")}
         </button>
       </div>
 
@@ -1566,26 +1667,26 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         <div class="card bg-base-100 shadow">
           <div class="card-body">
             <h2 class="card-title">
-              <.icon name="hero-arrow-up-tray" class="w-5 h-5" /> Outgoing
+              <.icon name="hero-arrow-up-tray" class="w-5 h-5" /> {gettext("Outgoing")}
               <span class="badge badge-ghost">{length(@sender_connections)}</span>
             </h2>
             <p class="text-sm text-base-content/70 mb-4">
-              Sites that can pull data from this site
+              {gettext("Sites that can pull data from this site")}
             </p>
 
             <%= if Enum.empty?(@sender_connections) do %>
               <p class="text-center text-base-content/50 py-4">
-                No outgoing connections configured
+                {gettext("No outgoing connections configured")}
               </p>
             <% else %>
               <div class="overflow-x-auto">
                 <table class="table">
                   <thead>
                     <tr>
-                      <th>Name</th>
-                      <th>Site URL</th>
-                      <th>Status</th>
-                      <th>Actions</th>
+                      <th>{gettext("Name")}</th>
+                      <th>{gettext("Site URL")}</th>
+                      <th>{gettext("Status")}</th>
+                      <th>{gettext("Actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1593,7 +1694,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                       <tr>
                         <td class="font-semibold">{conn.name}</td>
                         <td class="text-sm font-mono">{conn.site_url}</td>
-                        <td><.status_badge status={conn.status} /></td>
+                        <td><.connection_status_badge status={conn.status} /></td>
                         <td>
                           <.connection_actions connection={conn} />
                         </td>
@@ -1612,25 +1713,25 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         <div class="card bg-base-100 shadow">
           <div class="card-body">
             <h2 class="card-title">
-              <.icon name="hero-arrow-down-tray" class="w-5 h-5" /> Incoming
+              <.icon name="hero-arrow-down-tray" class="w-5 h-5" /> {gettext("Incoming")}
               <span class="badge badge-ghost">{length(@receiver_connections)}</span>
             </h2>
             <p class="text-sm text-base-content/70 mb-4">
-              Sites this site can pull data from
+              {gettext("Sites this site can pull data from")}
             </p>
 
             <%= if Enum.empty?(@receiver_connections) do %>
               <p class="text-center text-base-content/50 py-4">
-                No incoming connections configured
+                {gettext("No incoming connections configured")}
               </p>
             <% else %>
               <div class="overflow-x-auto">
                 <table class="table">
                   <thead>
                     <tr>
-                      <th>Site URL</th>
-                      <th>Status</th>
-                      <th>Actions</th>
+                      <th>{gettext("Site URL")}</th>
+                      <th>{gettext("Status")}</th>
+                      <th>{gettext("Actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1638,7 +1739,13 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                       <tr>
                         <td class="text-sm font-mono">{conn.site_url}</td>
                         <td>
-                          <.status_badge status={Map.get(@sender_statuses, conn.uuid, "loading")} />
+                          <%!-- An active connection shows what the sender reports; any
+                               other shows its own status here, which is what gates it --%>
+                          <.connection_status_badge status={
+                            if conn.status == "active",
+                              do: Map.get(@sender_statuses, conn.uuid, "loading"),
+                              else: conn.status
+                          } />
                         </td>
                         <td>
                           <.connection_actions
@@ -1656,6 +1763,44 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         </div>
       <% end %>
     </div>
+    """
+  end
+
+  @doc """
+  The label of a connection status, in the reader's language: the stored
+  statuses, and what a status fetch from the sender can come back as.
+  Unknown values show as stored.
+  """
+  @spec status_label(String.t() | nil) :: String.t()
+  def status_label("pending"), do: gettext("Pending")
+  def status_label("active"), do: gettext("Active")
+  def status_label("suspended"), do: gettext("Suspended")
+  def status_label("revoked"), do: gettext("Revoked")
+  def status_label("expired"), do: gettext("Expired")
+  def status_label("loading"), do: gettext("Loading")
+  def status_label("offline"), do: gettext("Offline")
+  def status_label("not_found"), do: gettext("Not found")
+  def status_label("error"), do: gettext("Error")
+  def status_label(nil), do: ""
+  def status_label(other) when is_binary(other), do: other
+
+  defp direction_label("sender"), do: gettext("Sender")
+  defp direction_label("receiver"), do: gettext("Receiver")
+  defp direction_label(other), do: other
+
+  defp strategy_label("skip"), do: gettext("Skip")
+  defp strategy_label("overwrite"), do: gettext("Overwrite")
+  defp strategy_label("merge"), do: gettext("Merge")
+  defp strategy_label("append"), do: gettext("Append")
+  defp strategy_label(other), do: other
+
+  # The badge with its label translated here; core's own label is the
+  # status with its underscores spaced, in English.
+  attr :status, :string, required: true
+
+  defp connection_status_badge(assigns) do
+    ~H"""
+    <.status_badge status={@status} label={status_label(@status)} />
     """
   end
 
@@ -1722,21 +1867,23 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           <% end %>
         </span>
       </button>
-      <%!-- Status controls only for sender connections (receivers sync from sender) --%>
+      <%!-- A pending connection of either direction waits for an admin here:
+           an incoming registration under "require approval" is created pending --%>
+      <%= if @connection.status == "pending" do %>
+        <button
+          type="button"
+          phx-click="approve_connection"
+          phx-value-uuid={@connection.uuid}
+          phx-disable-with={gettext("Approving…")}
+          class="btn btn-success btn-xs tooltip tooltip-bottom"
+          data-tip={gettext("Approve")}
+        >
+          <.icon name="hero-check" class="w-4 h-4 hidden sm:inline" />
+          <span class="sm:hidden whitespace-nowrap">{gettext("Approve")}</span>
+        </button>
+      <% end %>
+      <%!-- Other status controls only for sender connections (receivers sync from sender) --%>
       <%= if @connection.direction == "sender" do %>
-        <%= if @connection.status == "pending" do %>
-          <button
-            type="button"
-            phx-click="approve_connection"
-            phx-value-uuid={@connection.uuid}
-            phx-disable-with={gettext("Approving…")}
-            class="btn btn-success btn-xs tooltip tooltip-bottom"
-            data-tip={gettext("Approve")}
-          >
-            <.icon name="hero-check" class="w-4 h-4 hidden sm:inline" />
-            <span class="sm:hidden whitespace-nowrap">{gettext("Approve")}</span>
-          </button>
-        <% end %>
         <%= if @connection.status == "active" do %>
           <button
             type="button"
@@ -1773,16 +1920,19 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   # ===========================================
 
   defp connection_form(assigns) do
-    assigns = assign_new(assigns, :connection, fn -> nil end)
+    assigns =
+      assigns
+      |> assign_new(:connection, fn -> nil end)
+      |> assign(:records_per_request, Connection.max_records_per_request_range())
 
     ~H"""
     <div class="card bg-base-100 shadow max-w-2xl mx-auto">
       <div class="card-body">
         <h2 class="card-title mb-4">
           <%= if @action == :new do %>
-            New Connection
+            {gettext("New Connection")}
           <% else %>
-            Edit Connection
+            {gettext("Edit Connection")}
           <% end %>
         </h2>
 
@@ -1803,20 +1953,22 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
           <%!-- Direction Field --%>
           <div>
-            <label class="block text-sm font-medium mb-2">Direction</label>
+            <label class="block text-sm font-medium mb-2">{gettext("Direction")}</label>
             <%= if @action == :new do %>
               <input type="hidden" name="connection[direction]" value="sender" />
               <div class="bg-base-200 rounded-lg p-3">
-                <p class="font-semibold">Sender</p>
-                <p class="text-sm text-base-content/70">Allow remote site to pull data from here</p>
+                <p class="font-semibold">{direction_label("sender")}</p>
+                <p class="text-sm text-base-content/70">
+                  {gettext("Allow remote site to pull data from here")}
+                </p>
               </div>
               <p class="text-sm text-base-content/60 mt-1">
-                Incoming connections are created automatically when remote sites connect
+                {gettext("Incoming connections appear when a remote site connects")}
               </p>
             <% else %>
               <div class="bg-base-200 rounded-lg p-3">
-                <p class="font-semibold capitalize">
-                  {Ecto.Changeset.get_field(@changeset, :direction)}
+                <p class="font-semibold">
+                  {direction_label(Ecto.Changeset.get_field(@changeset, :direction))}
                 </p>
               </div>
             <% end %>
@@ -1836,12 +1988,30 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             </p>
           </div>
 
+          <%!-- Sender-specific settings --%>
+          <%= if @action == :new or Ecto.Changeset.get_field(@changeset, :direction) == "sender" do %>
+            <div>
+              <.input
+                field={@form[:max_records_per_request]}
+                type="number"
+                label={gettext("Records per request")}
+                min={@records_per_request.first}
+                max={@records_per_request.last}
+              />
+              <p class="text-sm text-base-content/60 mt-1">
+                {gettext(
+                  "The most rows the remote site gets in one answer. A table whose key has no cursor can only be pulled whole when it fits in this limit"
+                )}
+              </p>
+            </div>
+          <% end %>
+
           <%!-- Receiver-specific settings --%>
           <%= if Ecto.Changeset.get_field(@changeset, :direction) == "receiver" do %>
-            <div class="divider">Import Settings</div>
+            <div class="divider">{gettext("Import Settings")}</div>
 
             <div>
-              <label class="block text-sm font-medium mb-2">Default Conflict Strategy</label>
+              <label class="block text-sm font-medium mb-2">{gettext("Default Conflict Strategy")}</label>
               <label class="select w-full">
                 <select
                   name="connection[default_conflict_strategy]"
@@ -1852,7 +2022,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                       Ecto.Changeset.get_field(@changeset, :default_conflict_strategy) == "skip"
                     }
                   >
-                    Skip - Don't overwrite existing records
+                    {gettext("Skip - Don't overwrite existing records")}
                   </option>
                   <option
                     value="overwrite"
@@ -1860,7 +2030,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                       Ecto.Changeset.get_field(@changeset, :default_conflict_strategy) == "overwrite"
                     }
                   >
-                    Overwrite - Replace existing records
+                    {gettext("Overwrite - Replace existing records")}
                   </option>
                   <option
                     value="merge"
@@ -1868,17 +2038,11 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                       Ecto.Changeset.get_field(@changeset, :default_conflict_strategy) == "merge"
                     }
                   >
-                    Merge - Combine with existing records
+                    {gettext("Merge - Combine with existing records")}
                   </option>
                 </select>
               </label>
             </div>
-
-            <.checkbox
-              field={@form[:auto_sync_enabled]}
-              label="Enable Auto Sync"
-              wrapper_class="mt-4"
-            />
           <% end %>
 
           <%!-- Actions --%>
@@ -1907,7 +2071,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         <div class="flex justify-between items-start">
           <div>
             <h2 class="card-title">{@connection.name}</h2>
-            <.status_badge status={@connection.status} />
+            <.connection_status_badge status={@connection.status} />
           </div>
           <div class="flex gap-2">
             <button
@@ -1916,7 +2080,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               phx-value-uuid={@connection.uuid}
               class="btn btn-ghost btn-sm"
             >
-              <.icon name="hero-pencil" class="w-4 h-4" /> Edit
+              <.icon name="hero-pencil" class="w-4 h-4" /> {gettext("Edit")}
             </button>
           </div>
         </div>
@@ -1926,80 +2090,68 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         <%!-- Basic Info --%>
         <div class="grid grid-cols-2 gap-4">
           <div>
-            <label class="text-sm text-base-content/70">Direction</label>
-            <p class="font-semibold capitalize">{@connection.direction}</p>
+            <label class="text-sm text-base-content/70">{gettext("Direction")}</label>
+            <p class="font-semibold">{direction_label(@connection.direction)}</p>
           </div>
           <div>
-            <label class="text-sm text-base-content/70">Site URL</label>
+            <label class="text-sm text-base-content/70">{gettext("Site URL")}</label>
             <p class="font-mono text-sm">{@connection.site_url}</p>
           </div>
         </div>
 
         <%!-- Receiver Settings --%>
         <%= if @connection.direction == "receiver" do %>
-          <div class="divider">Import Settings</div>
+          <div class="divider">{gettext("Import Settings")}</div>
 
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label class="text-sm text-base-content/70">Conflict Strategy</label>
-              <p class="capitalize">{@connection.default_conflict_strategy}</p>
-            </div>
-            <div>
-              <label class="text-sm text-base-content/70">Auto Sync</label>
-              <p>
-                <%= if @connection.auto_sync_enabled do %>
-                  <span class="badge badge-success">{gettext("Enabled")}</span>
-                <% else %>
-                  <span class="badge badge-ghost">{gettext("Disabled")}</span>
-                <% end %>
-              </p>
-            </div>
+          <div>
+            <label class="text-sm text-base-content/70">{gettext("Conflict Strategy")}</label>
+            <p>{strategy_label(@connection.default_conflict_strategy)}</p>
           </div>
         <% end %>
 
         <%!-- Statistics --%>
-        <div class="divider">Statistics</div>
+        <div class="divider">{gettext("Statistics")}</div>
 
         <div class="grid grid-cols-3 gap-4">
           <div>
-            <label class="text-sm text-base-content/70">Total Transfers</label>
+            <label class="text-sm text-base-content/70">{gettext("Total Transfers")}</label>
             <p class="text-2xl font-bold">{@connection.total_transfers}</p>
           </div>
           <div>
-            <label class="text-sm text-base-content/70">Records Transferred</label>
+            <label class="text-sm text-base-content/70">{gettext("Records Transferred")}</label>
             <p class="text-2xl font-bold">{@connection.total_records_transferred}</p>
           </div>
           <div>
-            <label class="text-sm text-base-content/70">Bytes Transferred</label>
+            <label class="text-sm text-base-content/70">{gettext("Bytes Transferred")}</label>
             <p class="text-2xl font-bold">{format_bytes(@connection.total_bytes_transferred)}</p>
           </div>
         </div>
 
         <div class="grid grid-cols-2 gap-4 mt-4">
           <div>
-            <label class="text-sm text-base-content/70">Last Connected</label>
+            <label class="text-sm text-base-content/70">{gettext("Last Connected")}</label>
             <p>
               <%= if @connection.last_connected_at do %>
                 {format_time_ago(@connection.last_connected_at)}
               <% else %>
-                Never
+                {gettext("Never")}
               <% end %>
             </p>
           </div>
           <div>
-            <label class="text-sm text-base-content/70">Last Transfer</label>
+            <label class="text-sm text-base-content/70">{gettext("Last Transfer")}</label>
             <p>
               <%= if @connection.last_transfer_at do %>
                 {format_time_ago(@connection.last_transfer_at)}
               <% else %>
-                Never
+                {gettext("Never")}
               <% end %>
             </p>
           </div>
         </div>
 
         <%!-- Actions --%>
-        <div class="divider">Actions</div>
+        <div class="divider">{gettext("Actions")}</div>
 
         <div class="flex flex-wrap gap-2">
           <%!-- Status controls only for sender connections (receivers sync status from sender) --%>
@@ -2086,14 +2238,14 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
         <div class="flex justify-between items-start">
           <div>
             <h2 class="card-title">
-              <.icon name="hero-arrow-path" class="w-6 h-6" /> Sync Data
+              <.icon name="hero-arrow-path" class="w-6 h-6" /> {gettext("Sync Data")}
             </h2>
             <p class="text-sm text-base-content/70 mt-1">
-              Pull data from <span class="font-semibold">{@connection.name}</span>
+              {gettext("Pull data from")} <span class="font-semibold">{@connection.name}</span>
             </p>
           </div>
           <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
-            <.icon name="hero-x-mark" class="w-4 h-4" /> Close
+            <.icon name="hero-x-mark" class="w-4 h-4" /> {gettext("Close")}
           </button>
         </div>
 
@@ -2105,8 +2257,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           active_tab={to_string(@active_tab)}
           on_change="switch_sync_tab"
           tabs={[
-            %{id: "bulk", label: "Bulk Transfer", icon: "hero-table-cells"},
-            %{id: "details", label: "Precise Transfer", icon: "hero-adjustments-horizontal"}
+            %{id: "bulk", label: gettext("Bulk Transfer"), icon: "hero-table-cells"},
+            %{
+              id: "details",
+              label: gettext("Precise Transfer"),
+              icon: "hero-adjustments-horizontal"
+            }
           ]}
         />
 
@@ -2115,17 +2271,52 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           <div class="alert alert-error mb-4">
             <.icon name="hero-exclamation-circle" class="w-5 h-5" />
             <span>{@error}</span>
-            <button type="button" phx-click="refresh_tables" class="btn btn-sm btn-ghost">
-              Retry
+            <button
+              type="button"
+              phx-click="refresh_tables"
+              phx-disable-with={gettext("Loading…")}
+              class="btn btn-sm btn-ghost"
+            >
+              {gettext("Retry")}
             </button>
           </div>
+        <% end %>
+
+        <%!-- The sender's download password. The value is never rendered
+             back: the field is empty on every render. --%>
+        <%= if @password_needed do %>
+          <form
+            id="sync-password-form"
+            phx-submit="set_sync_password"
+            class="flex flex-wrap items-end gap-2 mb-4"
+          >
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">{gettext("Download password")}</span>
+              <input
+                type="password"
+                name="password"
+                value=""
+                autocomplete="off"
+                required
+                class="input input-bordered"
+              />
+            </label>
+            <button type="submit" class="btn btn-primary" phx-disable-with={gettext("Loading…")}>
+              {gettext("Continue")}
+            </button>
+            <p class="basis-full text-sm text-base-content/60">
+              {gettext(
+                "Set on the sending site for this connection. It is used for this page only and is not stored"
+              )}
+            </p>
+          </form>
         <% end %>
 
         <%!-- Loading State --%>
         <%= if @loading do %>
           <div class="flex flex-col items-center justify-center py-12">
             <span class="loading loading-spinner loading-lg text-primary"></span>
-            <p class="mt-4 text-base-content/70">Fetching available tables...</p>
+            <p class="mt-4 text-base-content/70">{gettext("Fetching available tables…")}</p>
           </div>
         <% else %>
           <%= if @active_tab == :bulk do %>
@@ -2135,15 +2326,19 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               <div class="flex flex-col items-center justify-center py-12">
                 <%= if has_errors do %>
                   <div class="text-6xl mb-4">⚠️</div>
-                  <h3 class="text-2xl font-bold text-warning mb-4">Sync Completed with Errors</h3>
+                  <h3 class="text-2xl font-bold text-warning mb-4">{gettext("Sync Completed with Errors")}</h3>
                 <% else %>
                   <div class="text-6xl mb-4">🎉</div>
-                  <h3 class="text-2xl font-bold text-success mb-4">Sync Complete!</h3>
+                  <h3 class="text-2xl font-bold text-success mb-4">{gettext("Sync Complete!")}</h3>
                 <% end %>
 
                 <%= if Map.get(@progress, :retry_pass, 0) > 0 do %>
                   <p class="text-sm text-base-content/60 mb-4">
-                    Auto-retried {Map.get(@progress, :retry_pass, 0)} time(s) to resolve dependencies
+                    {ngettext(
+                      "Auto-retried %{count} time to resolve dependencies",
+                      "Auto-retried %{count} times to resolve dependencies",
+                      Map.get(@progress, :retry_pass, 0)
+                    )}
                   </p>
                 <% end %>
 
@@ -2152,10 +2347,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                   <table class="table table-sm w-full">
                     <thead>
                       <tr>
-                        <th>Table</th>
-                        <th class="text-right">Imported</th>
-                        <th class="text-right">Skipped</th>
-                        <th class="text-right">Errors</th>
+                        <th>{gettext("Table")}</th>
+                        <th class="text-right">{gettext("Imported")}</th>
+                        <th class="text-right">{gettext("Skipped")}</th>
+                        <th class="text-right">{gettext("Errors")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2195,7 +2390,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                     </tbody>
                     <tfoot>
                       <tr class="font-semibold">
-                        <td>Total</td>
+                        <td>{gettext("Total")}</td>
                         <td class="text-right text-success">
                           {format_number(@progress.records_fetched)}
                         </td>
@@ -2211,7 +2406,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                 </div>
 
                 <button type="button" phx-click="cancel" class="btn btn-primary">
-                  Done
+                  {gettext("Done")}
                 </button>
               </div>
             <% else %>
@@ -2221,16 +2416,23 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                   <%= if @progress do %>
                     <p class="mt-4 font-semibold">
                       <%= if Map.get(@progress, :status) == :retrying do %>
-                        Retry pass {Map.get(@progress, :retry_pass, 1)} — {@progress.current}/{@progress.total}
+                        {gettext("Retry pass %{pass} — %{current}/%{total}",
+                          pass: Map.get(@progress, :retry_pass, 1),
+                          current: @progress.current,
+                          total: @progress.total
+                        )}
                       <% else %>
-                        Syncing {@progress.current}/{@progress.total}
+                        {gettext("Syncing %{current}/%{total}",
+                          current: @progress.current,
+                          total: @progress.total
+                        )}
                       <% end %>
                     </p>
                     <p class="text-base-content/70">
                       <%= if @progress.table do %>
-                        Processing: <span class="font-mono">{@progress.table}</span>
+                        {gettext("Processing:")} <span class="font-mono">{@progress.table}</span>
                       <% else %>
-                        Preparing...
+                        {gettext("Preparing…")}
                       <% end %>
                     </p>
                   <% end %>
@@ -2239,7 +2441,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                 <%= if Enum.empty?(@tables) do %>
                   <div class="text-center py-8 text-base-content/50">
                     <.icon name="hero-table-cells" class="w-12 h-12 mx-auto mb-2 opacity-30" />
-                    <p>No tables available for sync</p>
+                    <p>{gettext("No tables available for sync")}</p>
                   </div>
                 <% else %>
                   <%!-- Legend --%>
@@ -2262,24 +2464,27 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                   <div class="flex flex-wrap gap-4 items-center justify-between mb-4">
                     <div class="flex gap-2 flex-wrap">
                       <button type="button" phx-click="select_all_tables" class="btn btn-ghost btn-xs">
-                        Select All
+                        {gettext("Select All")}
                       </button>
                       <button
                         type="button"
                         phx-click="deselect_all_tables"
                         class="btn btn-ghost btn-xs"
                       >
-                        Deselect All
+                        {gettext("Deselect All")}
                       </button>
                       <button
                         type="button"
                         phx-click="select_different_tables"
                         class="btn btn-ghost btn-xs"
                       >
-                        Select Different
+                        {gettext("Select Different")}
                       </button>
                       <span class="text-sm text-base-content/70 ml-2">
-                        {MapSet.size(@selected_tables)} of {length(@tables)} selected
+                        {gettext("%{selected} of %{total} selected",
+                          selected: MapSet.size(@selected_tables),
+                          total: length(@tables)
+                        )}
                       </span>
                     </div>
 
@@ -2287,16 +2492,15 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                       phx-change="change_conflict_strategy"
                       class="fieldset flex-row items-center gap-2"
                     >
-                      <span class="fieldset-legend font-semibold text-sm">Conflict:</span>
+                      <span class="fieldset-legend font-semibold text-sm">{gettext("Conflict:")}</span>
                       <label class="select select-sm">
                         <select name="strategy">
-                          <option value="skip" selected={@conflict_strategy == "skip"}>Skip</option>
-                          <option value="overwrite" selected={@conflict_strategy == "overwrite"}>
-                            Overwrite
-                          </option>
-                          <option value="merge" selected={@conflict_strategy == "merge"}>Merge</option>
-                          <option value="append" selected={@conflict_strategy == "append"}>
-                            Append
+                          <option
+                            :for={strategy <- ~w(skip overwrite merge append)}
+                            value={strategy}
+                            selected={@conflict_strategy == strategy}
+                          >
+                            {strategy_label(strategy)}
                           </option>
                         </select>
                       </label>
@@ -2320,12 +2524,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                               <% end %>
                             </button>
                           </th>
-                          <th>Table</th>
-                          <th class="text-right">Sender</th>
-                          <th class="text-right">Local</th>
-                          <th class="text-right">Size</th>
-                          <th class="text-center">Checksum</th>
-                          <th class="text-center">Status</th>
+                          <th>{gettext("Table")}</th>
+                          <th class="text-right">{gettext("Sender")}</th>
+                          <th class="text-right">{gettext("Local")}</th>
+                          <th class="text-right">{gettext("Size")}</th>
+                          <th class="text-center">{gettext("Checksum")}</th>
+                          <th class="text-center">{gettext("Status")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2407,19 +2611,21 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                               <%= cond do %>
                                 <% local_count == nil -> %>
                                   <span class="badge badge-info badge-sm gap-1">
-                                    <.icon name="hero-plus-circle-mini" class="w-3 h-3" /> New
+                                    <.icon name="hero-plus-circle-mini" class="w-3 h-3" /> {gettext("New")}
                                   </span>
                                 <% data_matches -> %>
                                   <span class="badge badge-success badge-sm gap-1">
-                                    <.icon name="hero-check-circle-mini" class="w-3 h-3" /> Match
+                                    <.icon name="hero-check-circle-mini" class="w-3 h-3" /> {gettext(
+                                      "Match"
+                                    )}
                                   </span>
                                 <% true -> %>
                                   <span class="badge badge-warning badge-sm gap-1">
                                     <.icon name="hero-exclamation-triangle-mini" class="w-3 h-3" />
                                     <%= if local_count != sender_count do %>
-                                      {abs(sender_count - local_count)} diff
+                                      {gettext("%{count} diff", count: abs(sender_count - local_count))}
                                     <% else %>
-                                      Modified
+                                      {gettext("Modified")}
                                     <% end %>
                                   </span>
                               <% end %>
@@ -2434,17 +2640,17 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                   <div class="mt-4 pt-4 border-t border-base-300">
                     <div class="flex flex-wrap gap-4 text-sm">
                       <.table_summary_stat
-                        label="New tables"
+                        label={gettext("New tables")}
                         count={count_new_tables(@tables, @local_counts)}
                         color="info"
                       />
                       <.table_summary_stat
-                        label="Different"
+                        label={gettext("Different")}
                         count={count_different_tables(@tables, @local_counts, @local_checksums)}
                         color="warning"
                       />
                       <.table_summary_stat
-                        label="Match"
+                        label={gettext("Match")}
                         count={count_same_tables(@tables, @local_counts, @local_checksums)}
                         color="success"
                       />
@@ -2453,7 +2659,11 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
                   <div class="flex justify-between items-center mt-4">
                     <div class="text-sm text-base-content/70">
-                      {MapSet.size(@selected_tables)} table(s) selected
+                      {ngettext(
+                        "%{count} table selected",
+                        "%{count} tables selected",
+                        MapSet.size(@selected_tables)
+                      )}
                     </div>
                     <button
                       type="button"
@@ -2462,20 +2672,28 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                       disabled={MapSet.size(@selected_tables) == 0}
                     >
                       <.icon name="hero-arrow-down-tray" class="w-4 h-4" />
-                      Pull {MapSet.size(@selected_tables)} Table(s)
+                      {ngettext(
+                        "Pull %{count} Table",
+                        "Pull %{count} Tables",
+                        MapSet.size(@selected_tables)
+                      )}
                     </button>
                   </div>
 
                   <div class="text-xs text-base-content/50 mt-3 space-y-1">
                     <p>
                       <span class="inline-block w-3 h-3 bg-primary/10 rounded mr-1 align-middle"></span>
-                      <span class="font-semibold">Selected</span>
-                      — tables that will be synced. Dependencies (via foreign keys) are auto-selected.
+                      <span class="font-semibold">{gettext("Selected")}</span>
+                      {gettext(
+                        "— tables that will be synced. Dependencies (via foreign keys) are auto-selected."
+                      )}
                     </p>
                     <p>
                       <span class="inline-block w-3 h-3 bg-warning/10 rounded mr-1 align-middle"></span>
-                      <span class="font-semibold">Suggested</span>
-                      — tables that reference selected tables. Consider including them for data to function correctly.
+                      <span class="font-semibold">{gettext("Suggested")}</span>
+                      {gettext(
+                        "— tables that reference selected tables. Consider including them for data to function correctly."
+                      )}
                     </p>
                   </div>
                 <% end %>
@@ -2488,10 +2706,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               <div class="flex flex-col items-center justify-center py-12">
                 <%= if has_errors do %>
                   <div class="text-6xl mb-4">⚠️</div>
-                  <h3 class="text-2xl font-bold text-warning mb-4">Transfer Completed with Errors</h3>
+                  <h3 class="text-2xl font-bold text-warning mb-4">{gettext("Transfer Completed with Errors")}</h3>
                 <% else %>
                   <div class="text-6xl mb-4">🎉</div>
-                  <h3 class="text-2xl font-bold text-success mb-4">Transfer Complete!</h3>
+                  <h3 class="text-2xl font-bold text-success mb-4">{gettext("Transfer Complete!")}</h3>
                 <% end %>
 
                 <%!-- Per-table results --%>
@@ -2499,10 +2717,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                   <table class="table table-sm w-full">
                     <thead>
                       <tr>
-                        <th>Table</th>
-                        <th class="text-right">Imported</th>
-                        <th class="text-right">Skipped</th>
-                        <th class="text-right">Errors</th>
+                        <th>{gettext("Table")}</th>
+                        <th class="text-right">{gettext("Imported")}</th>
+                        <th class="text-right">{gettext("Skipped")}</th>
+                        <th class="text-right">{gettext("Errors")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2541,7 +2759,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                     </tbody>
                     <tfoot>
                       <tr class="font-semibold">
-                        <td>Total</td>
+                        <td>{gettext("Total")}</td>
                         <td class="text-right text-success">
                           {format_number(@progress.records_fetched || 0)}
                         </td>
@@ -2556,23 +2774,28 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                   </table>
                 </div>
 
-                <button type="button" phx-click="cancel" class="btn btn-primary">Done</button>
+                <button type="button" phx-click="cancel" class="btn btn-primary">
+                    {gettext("Done")}
+                  </button>
               </div>
             <% else %>
               <div class="space-y-4">
                 <form phx-change="select_detail_table" class="fieldset">
                   <label class="label">
-                    <span class="fieldset-legend font-semibold">Select Table</span>
+                    <span class="fieldset-legend font-semibold">{gettext("Select Table")}</span>
                   </label>
                   <label class="select w-full max-w-md">
                     <select name="table">
-                      <option value="">-- Select a table --</option>
+                      <option value="">{gettext("-- Select a table --")}</option>
                       <%= for table <- @tables do %>
                         <% table_name = if is_map(table), do: get_table_field(table, :name), else: table %>
                         <% sender_count =
                           if is_map(table), do: table.row_count || table["row_count"] || 0, else: 0 %>
                         <option value={table_name} selected={@selected_detail_table == table_name}>
-                          {table_name} ({format_number(sender_count)} records)
+                          {gettext("%{table} (%{count} records)",
+                            table: table_name,
+                            count: format_number(sender_count)
+                          )}
                         </option>
                       <% end %>
                     </select>
@@ -2596,15 +2819,15 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                           do: table_info.row_count || table_info["row_count"] || 0,
                           else: 0 %>
                       <div class="text-sm text-base-content/70 mt-1">
-                        Sender:
+                        {gettext("Sender:")}
                         <span class="font-semibold text-primary">{format_number(sender_count)}</span>
-                        records
+                        {gettext("records")}
                         <%= if local_count do %>
-                          | Local:
+                          | {gettext("Local:")}
                           <span class="font-semibold text-success">{format_number(local_count)}</span>
-                          records
+                          {gettext("records")}
                         <% else %>
-                          | <span class="badge badge-info badge-sm">New table</span>
+                          | <span class="badge badge-info badge-sm">{gettext("New table")}</span>
                         <% end %>
                       </div>
                     </div>
@@ -2614,15 +2837,15 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                       <% schema_columns = get_schema_columns(@detail_table_schema) %>
                       <%= if length(schema_columns) > 0 do %>
                         <div class="bg-base-100 border border-base-300 rounded-lg p-4">
-                          <h4 class="font-semibold text-sm mb-3">Table Schema</h4>
+                          <h4 class="font-semibold text-sm mb-3">{gettext("Table Schema")}</h4>
                           <div class="overflow-x-auto max-h-48">
                             <table class="table table-xs">
                               <thead>
                                 <tr>
-                                  <th>Column</th>
-                                  <th>Type</th>
-                                  <th>Nullable</th>
-                                  <th>Default</th>
+                                  <th>{gettext("Column")}</th>
+                                  <th>{gettext("Type")}</th>
+                                  <th>{gettext("Nullable")}</th>
+                                  <th>{gettext("Default")}</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -2631,7 +2854,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                                     <td class="font-mono text-xs">
                                       {col["name"] || col[:name]}
                                       <%= if col["primary_key"] || col[:primary_key] do %>
-                                        <span class="badge badge-primary badge-xs ml-1">PK</span>
+                                        <span class="badge badge-primary badge-xs ml-1">{gettext("PK")}</span>
                                       <% end %>
                                     </td>
                                     <td class="text-xs text-base-content/70">
@@ -2657,10 +2880,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                       <div class="alert alert-warning">
                         <.icon name="hero-exclamation-triangle" class="w-5 h-5" />
                         <div>
-                          <h3 class="font-bold">Table doesn't exist locally</h3>
+                          <h3 class="font-bold">{gettext("Table doesn't exist locally")}</h3>
                           <p class="text-sm">
-                            The table <code class="font-mono">{@selected_detail_table}</code>
-                            doesn't exist in your local database. Create it first to transfer data.
+                            <code class="font-mono">{@selected_detail_table}</code>
+                            {gettext(
+                              "doesn't exist in your local database. Create it first to transfer data."
+                            )}
                           </p>
                         </div>
                         <button
@@ -2680,7 +2905,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
                     <form phx-change="update_detail_filter" class="space-y-3">
                       <label class="label">
-                        <span class="fieldset-legend font-semibold">Filter Records</span>
+                        <span class="fieldset-legend font-semibold">{gettext("Filter Records")}</span>
                       </label>
                       <div class="flex flex-wrap gap-4">
                         <label class="flex items-center gap-2 cursor-pointer">
@@ -2691,7 +2916,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                             class="radio radio-primary radio-sm"
                             checked={@detail_filter.mode == :all}
                           />
-                          <span>All records</span>
+                          <span>{gettext("All records")}</span>
                         </label>
                         <label class="flex items-center gap-2 cursor-pointer">
                           <input
@@ -2701,7 +2926,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                             class="radio radio-primary radio-sm"
                             checked={@detail_filter.mode == :ids}
                           />
-                          <span>Specific IDs</span>
+                          <span>{gettext("Specific IDs")}</span>
                         </label>
                         <label class="flex items-center gap-2 cursor-pointer">
                           <input
@@ -2711,7 +2936,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                             class="radio radio-primary radio-sm"
                             checked={@detail_filter.mode == :range}
                           />
-                          <span>ID Range</span>
+                          <span>{gettext("ID Range")}</span>
                         </label>
                       </div>
                       <%= if @detail_filter.mode == :ids do %>
@@ -2720,7 +2945,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                           name="ids"
                           value={@detail_filter.ids}
                           class="input w-full"
-                          placeholder="Enter IDs (e.g., 1,2,3)"
+                          placeholder={gettext("Enter IDs (e.g., 1,2,3)")}
                         />
                       <% end %>
                       <%= if @detail_filter.mode == :range do %>
@@ -2732,7 +2957,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                             class="input w-32"
                             placeholder={gettext("From")}
                           />
-                          <span>to</span>
+                          <span>{gettext("to")}</span>
                           <input
                             type="number"
                             name="range_end"
@@ -2757,7 +2982,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                         <% else %>
                           <.icon name="hero-eye" class="w-4 h-4" />
                         <% end %>
-                        Preview
+                        {gettext("Preview")}
                       </button>
                     </div>
 
@@ -2765,7 +2990,11 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                     <%= if @detail_preview do %>
                       <div class="bg-base-100 border border-base-300 rounded-lg p-4">
                         <p class="text-sm font-semibold mb-2">
-                          Preview ({@detail_preview.total} matching records)
+                          {ngettext(
+                            "Preview (%{count} matching record)",
+                            "Preview (%{count} matching records)",
+                            @detail_preview.total
+                          )}
                         </p>
                         <%= if length(@detail_preview.records) > 0 do %>
                           <div class="overflow-x-auto max-h-64">
@@ -2792,13 +3021,15 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                           </div>
                           <%= if @detail_preview.total > 10 do %>
                             <p class="text-xs text-base-content/50 mt-2">
-                              Showing first 10 of {@detail_preview.total} records
+                              {gettext("Showing first 10 of %{total} records",
+                                total: @detail_preview.total
+                              )}
                             </p>
                           <% end %>
                         <% else %>
                           <div class="alert alert-warning">
                             <.icon name="hero-exclamation-triangle" class="w-5 h-5" />
-                            <span>No records match your filter criteria.</span>
+                            <span>{gettext("No records match your filter criteria.")}</span>
                           </div>
                         <% end %>
                       </div>
@@ -2806,19 +3037,16 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
                     <form phx-change="change_conflict_strategy" class="fieldset">
                       <label class="label">
-                        <span class="fieldset-legend font-semibold">Conflict Strategy</span>
+                        <span class="fieldset-legend font-semibold">{gettext("Conflict Strategy")}</span>
                       </label>
                       <label class="select w-full max-w-xs">
                         <select name="strategy">
-                          <option value="skip" selected={@conflict_strategy == "skip"}>
-                            Skip existing
-                          </option>
-                          <option value="overwrite" selected={@conflict_strategy == "overwrite"}>
-                            Overwrite
-                          </option>
-                          <option value="merge" selected={@conflict_strategy == "merge"}>Merge</option>
-                          <option value="append" selected={@conflict_strategy == "append"}>
-                            Append
+                          <option
+                            :for={strategy <- ~w(skip overwrite merge append)}
+                            value={strategy}
+                            selected={@conflict_strategy == strategy}
+                          >
+                            {strategy_label(strategy)}
                           </option>
                         </select>
                       </label>
@@ -2832,10 +3060,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                         disabled={@sync_in_progress or not @local_table_exists}
                       >
                         <%= if @sync_in_progress do %>
-                          <span class="loading loading-spinner loading-sm"></span> Transferring...
+                          <span class="loading loading-spinner loading-sm"></span> {gettext(
+                            "Transferring…"
+                          )}
                         <% else %>
                           <.icon name="hero-arrow-down-tray" class="w-4 h-4" />
-                          Transfer {@selected_detail_table}
+                          {gettext("Transfer %{table}", table: @selected_detail_table)}
                         <% end %>
                       </button>
                     </div>
@@ -2843,7 +3073,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                 <% else %>
                   <div class="text-center py-8 text-base-content/50">
                     <.icon name="hero-table-cells" class="w-12 h-12 mx-auto mb-2 opacity-30" />
-                    <p>Select a table above to view details and transfer options</p>
+                    <p>{gettext("Select a table above to view details and transfer options")}</p>
                   </div>
                 <% end %>
               </div>
@@ -2868,10 +3098,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     diff = DateTime.diff(now, datetime, :second)
 
     cond do
-      diff < 60 -> "just now"
-      diff < 3600 -> "#{div(diff, 60)}m ago"
-      diff < 86_400 -> "#{div(diff, 3600)}h ago"
-      diff < 604_800 -> "#{div(diff, 86_400)}d ago"
+      diff < 60 -> gettext("just now")
+      diff < 3600 -> gettext("%{count}m ago", count: div(diff, 60))
+      diff < 86_400 -> gettext("%{count}h ago", count: div(diff, 3600))
+      diff < 604_800 -> gettext("%{count}d ago", count: div(diff, 86_400))
       true -> Calendar.strftime(datetime, "%b %d")
     end
   end
@@ -3076,7 +3306,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
   # Checksum display/comparison helpers — checksums can be strings, :too_large, or nil
   defp format_checksum(nil), do: "—"
-  defp format_checksum(:too_large), do: "large"
+  defp format_checksum(:too_large), do: gettext("large")
   defp format_checksum(cs) when is_binary(cs), do: String.slice(cs, 0, 6)
   defp format_checksum(_), do: "—"
 

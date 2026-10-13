@@ -39,10 +39,13 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.PullSyncTest do
       Connections.create_connection(%{
         "name" => "Stub sender #{System.unique_integer([:positive])}",
         "direction" => "receiver",
+        "status" => "active",
         "site_url" => StubRemote.url()
       })
 
-    {:ok, conn: put_test_scope(conn, fake_scope()), connection: connection}
+    {:ok,
+     conn: put_test_scope(conn, fake_scope(user_uuid: PhoenixKitSync.TestActor.uuid())),
+     connection: connection}
   end
 
   defp repo, do: PhoenixKit.RepoHelper.repo()
@@ -90,6 +93,84 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.PullSyncTest do
     refute assigns.sync_in_progress
     assert assigns.sync_progress.total == 2
     assert Enum.map(assigns.sync_progress.table_results, & &1.table) == [@parents, @tree]
+  end
+
+  test "the pull is recorded under the admin who started it", %{
+    conn: conn,
+    connection: connection
+  } do
+    StubRemote.put_data(@parents, [%{"code" => "p1", "name" => "a"}])
+    StubRemote.put_data(@tree, [])
+
+    view = open_sync_page(conn, connection)
+    run_sync(view)
+
+    actor = assigns(view).phoenix_kit_current_scope.user.uuid
+    transfers = repo().all(from(t in Transfer, where: t.direction == "receive"))
+
+    assert length(transfers) == 2
+    assert Enum.all?(transfers, &(&1.initiated_by_uuid == actor))
+    assert Enum.all?(transfers, &match?(%DateTime{}, &1.started_at))
+
+    for transfer <- transfers do
+      assert_activity_logged("sync.transfer.created",
+        resource_uuid: transfer.uuid,
+        actor_uuid: actor
+      )
+    end
+  end
+
+  test "a table the sender cut short is not pulled again by the retry passes", %{
+    conn: conn,
+    connection: connection
+  } do
+    # Cut by a sender with no cursor, and one of its records fails: the
+    # errors would put it in the retry set, and every pass would pull the
+    # same rows and be cut at the same row.
+    StubRemote.put_data(@parents, [
+      %{"code" => "p1", "name" => "a"},
+      %{"code" => "p2", "name" => "b", "no_such_column" => 1}
+    ])
+
+    StubRemote.put_response_extra(@parents, %{"truncated" => true})
+    # A table with errors of its own, which is retried.
+    StubRemote.put_data(@tree, [%{"code" => "t1", "owner_code" => "missing"}])
+
+    assigns = conn |> open_sync_page(connection) |> run_sync()
+
+    assert assigns.sync_progress.status == :completed
+    assert StubRemote.pull_count(@parents) == 1
+    assert StubRemote.pull_count(@tree) > 1
+
+    assert %{truncated: true, errors: 1, imported: 1} =
+             Enum.find(assigns.sync_progress.table_results, &(&1.table == @parents))
+  end
+
+  test "a table cut because of its key type says which type, on that table's row", %{
+    conn: conn,
+    connection: connection
+  } do
+    StubRemote.put_data(@parents, [%{"code" => "p1", "name" => "a"}])
+    StubRemote.put_data(@tree, [%{"code" => "t1", "parent_code" => nil}])
+
+    StubRemote.put_response_extra(@parents, %{
+      "truncated" => true,
+      "unsupported_key_type" => "time with time zone"
+    })
+
+    StubRemote.put_response_extra(@tree, %{"truncated" => true})
+
+    view = open_sync_page(conn, connection)
+    run_sync(view)
+
+    assert has_element?(
+             view,
+             ~s([data-table-error="#{@parents}"]),
+             Errors.message({:truncated_key_type, "time with time zone"})
+           )
+
+    # A sender that names no type keeps the message it always had.
+    assert has_element?(view, ~s([data-table-error="#{@tree}"]), Errors.message(:truncated))
   end
 
   test "an import that raises still reports back and closes its transfer", %{

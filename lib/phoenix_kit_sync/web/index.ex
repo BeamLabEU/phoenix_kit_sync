@@ -8,7 +8,7 @@ defmodule PhoenixKitSync.Web.Index do
   """
 
   use PhoenixKitWeb, :live_view
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitSync.Gettext
 
   require Logger
 
@@ -21,10 +21,10 @@ defmodule PhoenixKitSync.Web.Index do
   def mount(params, _session, socket) do
     locale = params["locale"] || "en"
     project_title = Settings.get_project_title()
-    config = PhoenixKitSync.get_config()
 
-    # Get connection stats
-    stats = get_connection_stats()
+    # Subscribed before the first read, so a change that lands between the
+    # read and the subscription is not lost.
+    if connected?(socket), do: subscribe()
 
     socket =
       socket
@@ -32,10 +32,22 @@ defmodule PhoenixKitSync.Web.Index do
       |> assign(:project_title, project_title)
       |> assign(:current_locale, locale)
       |> assign(:current_path, Routes.path("/admin/sync", locale: locale))
-      |> assign(:config, config)
-      |> assign(:stats, stats)
+      |> load_overview()
 
     {:ok, socket}
+  end
+
+  defp subscribe do
+    case PhoenixKit.Config.pubsub_server() do
+      nil -> :ok
+      pubsub -> Phoenix.PubSub.subscribe(pubsub, Connections.pubsub_topic())
+    end
+  end
+
+  defp load_overview(socket) do
+    socket
+    |> assign(:config, PhoenixKitSync.get_config())
+    |> assign(:stats, get_connection_stats())
   end
 
   @impl true
@@ -43,9 +55,20 @@ defmodule PhoenixKitSync.Web.Index do
     {:noreply, socket}
   end
 
+  # A connection was created, changed or deleted, here or by the remote
+  # site: the numbers on this page are read again.
+  @impl true
+  def handle_info({event, _uuid}, socket)
+      when event in [:connection_created, :connection_updated, :connection_deleted] do
+    {:noreply, load_overview(socket)}
+  end
+
+  def handle_info({:connection_status_changed, _uuid, _status}, socket) do
+    {:noreply, load_overview(socket)}
+  end
+
   # Catch-all so a stray PubSub message or an internal monitor signal can't
   # crash the LV. Mirrors the defensive clause on ConnectionsLive.
-  @impl true
   def handle_info(msg, socket) do
     Logger.debug("[Sync.Index] unhandled message | msg=#{inspect(msg)}")
     {:noreply, socket}
@@ -96,9 +119,9 @@ defmodule PhoenixKitSync.Web.Index do
           </.link>
 
           <div class="text-center">
-            <h1 class="text-4xl font-bold text-base-content mb-3">DB Sync</h1>
+            <h1 class="text-4xl font-bold text-base-content mb-3">{gettext("DB Sync")}</h1>
             <p class="text-lg text-base-content/70">
-              Sync data between PhoenixKit instances
+              {gettext("Sync data between sites")}
             </p>
           </div>
         </header>
@@ -107,49 +130,13 @@ defmodule PhoenixKitSync.Web.Index do
           <div class="alert alert-warning mb-6">
             <.icon name="hero-exclamation-triangle" class="w-5 h-5" />
             <span>
-              DB Sync module is disabled. Enable it in
+              {gettext("The DB Sync module is disabled.")}
               <.link navigate={Routes.path("/admin/modules")} class="link link-primary">
-                Modules
+                {gettext("Enable it on the Modules page")}
               </.link>
-              to use this feature.
             </span>
           </div>
         <% end %>
-
-        <%!-- Stats Overview (commented out for now - will add back later)
-        <%= if @config.enabled do %>
-          <div class="grid gap-4 md:grid-cols-3 max-w-3xl mx-auto mb-8">
-            <div class="stat bg-base-100 rounded-box shadow">
-              <div class="stat-figure text-primary">
-                <.icon name="hero-arrow-up-tray" class="w-8 h-8" />
-              </div>
-              <div class="stat-title">Outgoing</div>
-              <div class="stat-value text-primary">{@stats.total_senders}</div>
-              <div class="stat-desc">{@stats.active_senders} active</div>
-            </div>
-
-            <div class="stat bg-base-100 rounded-box shadow">
-              <div class="stat-figure text-secondary">
-                <.icon name="hero-arrow-down-tray" class="w-8 h-8" />
-              </div>
-              <div class="stat-title">Incoming</div>
-              <div class="stat-value text-secondary">{@stats.total_receivers}</div>
-              <div class="stat-desc">{@stats.active_receivers} active</div>
-            </div>
-
-            <div class="stat bg-base-100 rounded-box shadow">
-              <div class="stat-figure text-success">
-                <.icon name="hero-check-circle" class="w-8 h-8" />
-              </div>
-              <div class="stat-title">Total Active</div>
-              <div class="stat-value text-success">
-                {@stats.active_senders + @stats.active_receivers}
-              </div>
-              <div class="stat-desc">connections ready</div>
-            </div>
-          </div>
-        <% end %>
-        --%>
 
         <%!-- Main Actions --%>
         <div class="grid gap-6 md:grid-cols-2 max-w-4xl mx-auto">
@@ -162,17 +149,18 @@ defmodule PhoenixKitSync.Web.Index do
               <div class="text-6xl mb-4">
                 <.icon name="hero-link" class="w-16 h-16 text-primary" />
               </div>
-              <h2 class="card-title text-2xl">Manage Connections</h2>
+              <h2 class="card-title text-2xl">{gettext("Manage Connections")}</h2>
               <p class="text-base-content/70 mb-4">
-                Create connections to share your data with other sites.
-                Incoming connections are created automatically when remote sites connect.
+                {gettext(
+                  "Create connections to share your data with other sites. Incoming connections appear when a remote site connects, and wait for your approval unless this site accepts them automatically."
+                )}
               </p>
               <div class="card-actions">
                 <.link
                   navigate={Routes.path("/admin/sync/connections", locale: @current_locale)}
                   class="btn btn-primary btn-lg"
                 >
-                  <.icon name="hero-cog-6-tooth" class="w-5 h-5" /> Manage Connections
+                  <.icon name="hero-cog-6-tooth" class="w-5 h-5" /> {gettext("Manage Connections")}
                 </.link>
               </div>
             </div>
@@ -187,17 +175,18 @@ defmodule PhoenixKitSync.Web.Index do
               <div class="text-6xl mb-4">
                 <.icon name="hero-clock" class="w-16 h-16 text-secondary" />
               </div>
-              <h2 class="card-title text-2xl">Transfer History</h2>
+              <h2 class="card-title text-2xl">{gettext("Transfer History")}</h2>
               <p class="text-base-content/70 mb-4">
-                View all data transfers and monitor sync activity.
-                Track records transferred and connection statistics.
+                {gettext(
+                  "View all data transfers and monitor sync activity. Track records transferred and connection statistics."
+                )}
               </p>
               <div class="card-actions">
                 <.link
                   navigate={Routes.path("/admin/sync/history", locale: @current_locale)}
                   class="btn btn-secondary btn-lg"
                 >
-                  <.icon name="hero-queue-list" class="w-5 h-5" /> View History
+                  <.icon name="hero-queue-list" class="w-5 h-5" /> {gettext("View History")}
                 </.link>
               </div>
             </div>
@@ -210,35 +199,36 @@ defmodule PhoenixKitSync.Web.Index do
             <div class="card-body">
               <h3 class="card-title text-lg">
                 <.icon name="hero-information-circle" class="w-5 h-5" />
-                How Cross-Site Connections Work
+                {gettext("How Cross-Site Connections Work")}
               </h3>
               <div class="grid gap-6 md:grid-cols-2 mt-4">
                 <div>
                   <h4 class="font-bold text-primary mb-2 flex items-center gap-2">
-                    <.icon name="hero-arrow-up-tray" class="w-5 h-5" /> As a Sender
+                    <.icon name="hero-arrow-up-tray" class="w-5 h-5" /> {gettext("As a Sender")}
                   </h4>
                   <ol class="list-decimal list-inside space-y-2 text-sm text-base-content/80">
-                    <li>Create a <strong>connection</strong> with a name</li>
-                    <li>Enter the remote site's URL</li>
-                    <li>The remote site is <strong>notified automatically</strong></li>
-                    <li>They can now pull data from your tables</li>
+                    <li>{gettext("Create a connection with a name")}</li>
+                    <li>{gettext("Enter the remote site's URL")}</li>
+                    <li>{gettext("The remote site is notified automatically")}</li>
+                    <li>{gettext("Once it accepts, it can pull data from your tables")}</li>
                   </ol>
                 </div>
                 <div>
                   <h4 class="font-bold text-secondary mb-2 flex items-center gap-2">
-                    <.icon name="hero-arrow-down-tray" class="w-5 h-5" /> As a Receiver
+                    <.icon name="hero-arrow-down-tray" class="w-5 h-5" /> {gettext("As a Receiver")}
                   </h4>
                   <ol class="list-decimal list-inside space-y-2 text-sm text-base-content/80">
-                    <li>When another site creates a connection to you</li>
-                    <li>A <strong>connection</strong> appears automatically on your end</li>
-                    <li>Use it to sync data from their site</li>
-                    <li>Choose conflict strategy when importing</li>
+                    <li>{gettext("Another site creates a connection to you")}</li>
+                    <li>{gettext("The connection appears on your end, pending your approval")}</li>
+                    <li>{gettext("Approve it, then use it to sync data from their site")}</li>
+                    <li>{gettext("Choose a conflict strategy when importing")}</li>
                   </ol>
                 </div>
               </div>
               <div class="divider"></div>
               <div class="text-sm text-base-content/70">
-                <strong>Security:</strong> All connections use token-based authentication.
+                <strong>{gettext("Security:")}</strong>
+                {gettext("All connections use token-based authentication.")}
               </div>
             </div>
           </div>

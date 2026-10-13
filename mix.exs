@@ -24,7 +24,7 @@ defmodule PhoenixKitSync.MixProject do
   end
 
   def application do
-    [extra_applications: [:logger, :crypto]]
+    [extra_applications: [:logger, :crypto, :gettext]]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
@@ -55,7 +55,7 @@ defmodule PhoenixKitSync.MixProject do
       maintainers: ["BeamLab EU"],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib docs mix.exs README.md LICENSE)
+      files: ~w(lib priv docs mix.exs README.md LICENSE)
     ]
   end
 
@@ -105,6 +105,7 @@ defmodule PhoenixKitSync.MixProject do
       {:websock_adapter, "~> 0.5"},
       {:oban, "~> 2.20"},
       {:jason, "~> 1.4"},
+      {:gettext, "~> 1.0"},
       {:ex_doc, "~> 0.39", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},

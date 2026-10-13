@@ -30,6 +30,7 @@ defmodule PhoenixKitSync.Web.SocketPlug do
   require Logger
 
   alias PhoenixKit.Utils.Date, as: UtilsDate
+  alias PhoenixKit.Utils.IpAddress
   alias PhoenixKitSync
   alias PhoenixKitSync.Connections
 
@@ -76,11 +77,11 @@ defmodule PhoenixKitSync.Web.SocketPlug do
 
     cond do
       # Permanent connection token authentication
-      token != nil ->
+      is_binary(token) ->
         validate_token_and_upgrade(conn, token)
 
       # Ephemeral session code authentication
-      code != nil ->
+      is_binary(code) ->
         validate_code_and_upgrade(conn, code)
 
       # No authentication provided
@@ -104,10 +105,20 @@ defmodule PhoenixKitSync.Web.SocketPlug do
   # SESSION CODE AUTHENTICATION (EPHEMERAL)
   # ===========================================
 
+  # A session code grants a read of the database, and a wrong one is
+  # whatever the client typed: neither is written to the log.
+  #
+  # Only a `:send` session serves rows: its owner opened it to share this
+  # site's data. A `:receive` session's owner asked for nothing to leave
+  # the site, so its code opens no socket here.
   defp validate_code_and_upgrade(conn, code) do
     case PhoenixKitSync.validate_code(code) do
+      {:ok, %{direction: direction}} when direction != :send ->
+        Logger.warning("Sync: Session code of a session that does not send")
+        send_forbidden(conn, "Invalid code")
+
       {:ok, session} ->
-        Logger.info("Sync: Receiver connecting with code #{code}")
+        Logger.info("Sync: Receiver connecting with a session code")
 
         # Capture connection metadata
         connection_info = extract_connection_info(conn)
@@ -128,11 +139,11 @@ defmodule PhoenixKitSync.Web.SocketPlug do
         Plug.Conn.halt(conn)
 
       {:error, :invalid_code} ->
-        Logger.warning("Sync: Invalid code attempt: #{code}")
+        Logger.warning("Sync: Invalid session code attempt")
         send_forbidden(conn, "Invalid code")
 
       {:error, :already_used} ->
-        Logger.warning("Sync: Code already used: #{code}")
+        Logger.warning("Sync: Session code already used")
         send_forbidden(conn, "Code already used")
     end
   end
@@ -141,24 +152,15 @@ defmodule PhoenixKitSync.Web.SocketPlug do
   # CONNECTION TOKEN AUTHENTICATION (PERMANENT)
   # ===========================================
 
+  # Connections.validate_connection/3 runs the same authorize_request/3 the
+  # REST actions use, download password included; SyncWebsock runs it again
+  # for every request on the open socket.
   defp validate_token_and_upgrade(conn, token) do
-    # Extract client IP for validation
     client_ip = get_remote_ip(conn)
+    password = string_or_nil(conn.query_params["password"])
 
-    case Connections.validate_connection(token, client_ip) do
+    case Connections.validate_connection(token, client_ip, password: password) do
       {:ok, db_connection} ->
-        validate_password_and_upgrade(conn, db_connection)
-
-      {:error, reason} ->
-        handle_token_error(conn, reason, client_ip)
-    end
-  end
-
-  defp validate_password_and_upgrade(conn, db_connection) do
-    password = conn.query_params["password"]
-
-    case Connections.validate_download_password(db_connection, password) do
-      :ok ->
         Logger.info("Sync: Token connection validated for #{db_connection.name}")
 
         # Update last connected timestamp
@@ -174,6 +176,7 @@ defmodule PhoenixKitSync.Web.SocketPlug do
             [
               auth_type: :connection,
               connection: db_connection,
+              password: password,
               connection_info: connection_info
             ],
             timeout: 60_000
@@ -181,11 +184,13 @@ defmodule PhoenixKitSync.Web.SocketPlug do
 
         Plug.Conn.halt(conn)
 
-      {:error, :invalid_password} ->
-        Logger.warning("Sync: Invalid download password for connection #{db_connection.uuid}")
-        send_forbidden(conn, "Invalid password")
+      {:error, reason} ->
+        handle_token_error(conn, reason, client_ip)
     end
   end
+
+  defp string_or_nil(value) when is_binary(value), do: value
+  defp string_or_nil(_value), do: nil
 
   defp handle_token_error(conn, :invalid_token, _client_ip) do
     Logger.warning("Sync: Invalid token attempt")
@@ -222,8 +227,17 @@ defmodule PhoenixKitSync.Web.SocketPlug do
     send_forbidden(conn, "Outside allowed hours")
   end
 
+  defp handle_token_error(conn, :invalid_password, _client_ip) do
+    Logger.warning("Sync: Invalid download password")
+    send_forbidden(conn, "Invalid password")
+  end
+
+  defp handle_token_error(conn, reason, _client_ip) do
+    Logger.warning("Sync: Token connection refused (#{inspect(reason)})")
+    send_forbidden(conn, "Not authorized")
+  end
+
   defp extract_connection_info(conn) do
-    # Get remote IP - check for forwarded headers first (for proxies)
     remote_ip = get_remote_ip(conn)
 
     # Get user agent
@@ -264,32 +278,20 @@ defmodule PhoenixKitSync.Web.SocketPlug do
       port: port,
       scheme: scheme,
       request_path: conn.request_path,
-      query_string: conn.query_string,
+      # Not the query string: it carries the session code, or the token and
+      # the download password, and this map is shown and logged.
       websocket_version: ws_version,
       accept_language: accept_language,
       connected_at: UtilsDate.utc_now()
     }
   end
 
-  defp get_remote_ip(conn) do
-    # Check X-Forwarded-For first (for load balancers/proxies)
-    forwarded_for =
-      Plug.Conn.get_req_header(conn, "x-forwarded-for")
-      |> List.first()
-
-    if forwarded_for do
-      # Take the first IP in the chain (original client)
-      forwarded_for
-      |> String.split(",")
-      |> List.first()
-      |> String.trim()
-    else
-      # Fall back to direct connection IP
-      conn.remote_ip
-      |> :inet.ntoa()
-      |> to_string()
-    end
-  end
+  # The address the request came from, by core's rule: `conn.remote_ip`,
+  # and a forwarded header only when that is a proxy on this box or network
+  # (the last hop, which the proxy appended). The first hop of
+  # `X-Forwarded-For` is whatever the client sent, so it is never believed:
+  # it would let any client name a whitelisted address.
+  defp get_remote_ip(conn), do: IpAddress.client_address(conn) || "unknown"
 
   defp send_forbidden(conn, message) do
     conn

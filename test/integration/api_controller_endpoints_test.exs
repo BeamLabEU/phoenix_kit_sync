@@ -249,7 +249,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       conn =
         post(conn, "/sync/api/pull-data", %{
           "auth_token_hash" => String.duplicate("b", 64),
-          "table_name" => "phoenix_kit_sync_connections"
+          "table_name" => "phoenix_kit_staff_skills"
         })
 
       assert json_response(conn, 401)["success"] == false
@@ -259,13 +259,13 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       {connection, token} = create_active_sender()
 
       Connections.update_connection(connection, %{
-        "allowed_tables" => ["phoenix_kit_sync_connections"]
+        "allowed_tables" => ["phoenix_kit_staff_skills"]
       })
 
       conn =
         post(conn, "/sync/api/pull-data", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_sync_transfers"
+          "table_name" => "phoenix_kit_post_tags"
         })
 
       assert json_response(conn, 403)["success"] == false
@@ -277,12 +277,46 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       conn =
         post(conn, "/sync/api/pull-data", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_sync_connections"
+          "table_name" => "phoenix_kit_staff_skills"
         })
 
       body = json_response(conn, 200)
       assert body["success"] == true
       assert is_list(body["data"])
+    end
+  end
+
+  describe "POST /sync/api/list-tables checksums" do
+    setup do
+      PhoenixKitSync.SyncableTable.insert!()
+      {_connection, token} = create_active_sender()
+      {:ok, hash: token_hash(token)}
+    end
+
+    defp listed(conn, hash, extra) do
+      conn
+      |> post("/sync/api/list-tables", Map.merge(%{"auth_token_hash" => hash}, extra))
+      |> json_response(200)
+      |> Map.fetch!("tables")
+      |> Map.new(&{&1["name"], &1})
+    end
+
+    test "are sent unless the receiver opts out", %{conn: conn, hash: hash} do
+      table = PhoenixKitSync.SyncableTable.name()
+
+      for extra <- [%{}, %{"include_checksums" => true}, %{"include_checksums" => "false"}] do
+        assert %{"checksum" => checksum, "row_count" => 1} = listed(conn, hash, extra)[table]
+        assert checksum =~ ~r/\A[0-9a-f]{32}\z/
+      end
+    end
+
+    test "are left out, with everything else in place, when it does", %{conn: conn, hash: hash} do
+      tables = listed(conn, hash, %{"include_checksums" => false})
+
+      assert %{"checksum" => nil, "row_count" => 1, "depends_on" => _, "size_bytes" => _} =
+               tables[PhoenixKitSync.SyncableTable.name()]
+
+      assert Enum.all?(tables, fn {_name, table} -> is_nil(table["checksum"]) end)
     end
   end
 
@@ -296,13 +330,13 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       {connection, token} = create_active_sender()
 
       Connections.update_connection(connection, %{
-        "excluded_tables" => ["phoenix_kit_sync_connections"]
+        "excluded_tables" => ["phoenix_kit_staff_skills"]
       })
 
       conn =
         post(conn, "/sync/api/table-schema", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_sync_connections"
+          "table_name" => "phoenix_kit_staff_skills"
         })
 
       assert json_response(conn, 403)["success"] == false
@@ -314,7 +348,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       conn =
         post(conn, "/sync/api/table-schema", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_sync_connections"
+          "table_name" => "phoenix_kit_staff_skills"
         })
 
       body = json_response(conn, 200)
@@ -338,12 +372,13 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
   describe "POST /sync/api/table-records" do
     test "limit and offset out of range or not numbers still answer 200", %{conn: conn} do
       {_connection, token} = create_active_sender()
+      PhoenixKitSync.SyncableTable.insert!()
 
       for {limit, offset} <- [{"abc", "xyz"}, {-1, -5}, {0, 0}, {"5abc", "2x"}] do
         conn =
           post(conn, "/sync/api/table-records", %{
             "auth_token_hash" => token_hash(token),
-            "table_name" => "phoenix_kit_sync_connections",
+            "table_name" => "phoenix_kit_staff_skills",
             "limit" => limit,
             "offset" => offset
           })
@@ -378,13 +413,13 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       {connection, token} = create_active_sender()
 
       Connections.update_connection(connection, %{
-        "excluded_tables" => ["phoenix_kit_sync_connections"]
+        "excluded_tables" => ["phoenix_kit_staff_skills"]
       })
 
       conn =
         post(conn, "/sync/api/table-records", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_sync_connections"
+          "table_name" => "phoenix_kit_staff_skills"
         })
 
       assert json_response(conn, 403)["success"] == false
@@ -396,7 +431,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       conn =
         post(conn, "/sync/api/table-records", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_sync_connections",
+          "table_name" => "phoenix_kit_staff_skills",
           "limit" => "5"
         })
 
@@ -467,8 +502,17 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       assert json_response(conn, 404)["success"] == false
     end
 
+    # The sender reports its status for this site's receiver connection;
+    # the full table of what a peer may change is in
+    # remote_authorization_test.exs.
     test "valid update transitions status", %{conn: conn} do
-      {connection, token} = create_active_sender()
+      {:ok, connection, token} =
+        Connections.create_connection(%{
+          "name" => "From: peer",
+          "direction" => "receiver",
+          "site_url" => "https://peer-#{System.unique_integer([:positive])}.example.com",
+          "status" => "active"
+        })
 
       conn =
         post(conn, "/sync/api/update-status", %{
@@ -511,6 +555,76 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       body = json_response(conn, 200)
       assert body["success"] == true
       assert body["status"] == connection.status
+    end
+
+    # The query is a read. Whatever state the sender connection is in, the
+    # answer names it and the row is as it was: a pending connection is not
+    # activated by its peer asking.
+    for status <- ~w(pending active suspended revoked expired) do
+      test "a #{status} connection is reported and left exactly as it was", %{conn: conn} do
+        {:ok, connection, token} =
+          Connections.create_connection(%{
+            "name" => "Queried #{System.unique_integer([:positive])}",
+            "direction" => "sender",
+            "site_url" => "https://queried-#{System.unique_integer([:positive])}.example.com",
+            "status" => unquote(status)
+          })
+
+        before = Connections.get_connection!(connection.uuid)
+        assert before.status == unquote(status)
+
+        body =
+          conn
+          |> post("/sync/api/get-connection-status", %{
+            "receiver_url" => connection.site_url,
+            "auth_token_hash" => token_hash(token)
+          })
+          |> json_response(200)
+
+        assert body["status"] == unquote(status)
+        assert Connections.get_connection!(connection.uuid) == before
+
+        refute_activity_logged("sync.connection.updated", resource_uuid: connection.uuid)
+        refute_activity_logged("sync.connection.approved", resource_uuid: connection.uuid)
+      end
+    end
+
+    test "a pending connection still authorizes nothing after its peer asked", %{conn: conn} do
+      {:ok, connection, token} =
+        Connections.create_connection(%{
+          "name" => "Waiting",
+          "direction" => "sender",
+          "site_url" => "https://waiting-#{System.unique_integer([:positive])}.example.com"
+        })
+
+      hash = token_hash(token)
+
+      post(conn, "/sync/api/get-connection-status", %{
+        "receiver_url" => connection.site_url,
+        "auth_token_hash" => hash
+      })
+
+      assert %{"error_code" => "connection_not_active"} =
+               build_conn()
+               |> post("/sync/api/list-tables", %{"auth_token_hash" => hash})
+               |> json_response(403)
+    end
+
+    test "a receiver connection is not found by it", %{conn: conn} do
+      {:ok, _connection, token} =
+        Connections.create_connection(%{
+          "name" => "Incoming",
+          "direction" => "receiver",
+          "site_url" => "https://incoming-#{System.unique_integer([:positive])}.example.com"
+        })
+
+      assert %{"success" => false} =
+               conn
+               |> post("/sync/api/get-connection-status", %{
+                 "receiver_url" => "https://x.example.com",
+                 "auth_token_hash" => token_hash(token)
+               })
+               |> json_response(404)
     end
   end
 

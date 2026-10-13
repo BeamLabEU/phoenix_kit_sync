@@ -65,13 +65,18 @@ defmodule PhoenixKitSync.ErrorsTest do
       {:table_not_found, "Table not found"},
       {:timeout, "Request timed out"},
       {:truncated,
-       "Table only partly pulled: the sender hit max_records_per_request. Its admin can raise it for this connection (not in the form), or pull the rest by ID range in Precise Transfer (single integer key)"},
+       "Table only partly pulled: the sender stopped at its max_records_per_request limit and gave no way to continue. Update sync on the source site, or have its admin raise that limit"},
       {:unauthorized, "Unauthorized"},
       {:unavailable, "Unavailable"},
       {:unsupported_key_type,
        "This table's key type does not take an ID filter (it takes integer, uuid or text keys)"},
       {:unexpected_response, "Unexpected response from remote site"}
     ]
+
+    test "a pull cut because of its key type names the type" do
+      assert Errors.message({:truncated_key_type, "interval"}) ==
+               "Table only partly pulled: its key is of type interval, which the sender cannot continue from once it stops at its max_records_per_request limit. Have the source site's admin raise that limit for this connection"
+    end
 
     for {atom, expected} <- @atom_expectations do
       test "#{inspect(atom)} maps to #{inspect(expected)}" do

@@ -8,8 +8,13 @@ defmodule PhoenixKitSync.DataExporter do
   ## Security Considerations
 
   - Uses parameterized queries to prevent SQL injection
+  - Refuses a table, schema or `:order_by` name outside
+    `SchemaInspector.valid_identifier?/1` (`{:error, :invalid_table_name}`,
+    `{:error, :invalid_column_name}`) before any query, on every function
+    here: quoting alone would read a real table named `"customer-data"`
+  - Refuses the tables that are never synced
+    (`SchemaInspector.excluded_table?/1`, `{:error, :table_excluded}`)
   - Validates table names against actual database tables
-  - Respects configured table whitelist/blacklist (future feature)
 
   ## Example
 
@@ -24,6 +29,8 @@ defmodule PhoenixKitSync.DataExporter do
   """
 
   alias PhoenixKit.RepoHelper
+  alias PhoenixKitSync.ExtensionTypes
+  alias PhoenixKitSync.PullCursor
   alias PhoenixKitSync.SchemaInspector
 
   @default_limit 100
@@ -42,10 +49,32 @@ defmodule PhoenixKitSync.DataExporter do
   """
   @spec get_count(String.t(), keyword()) :: {:ok, non_neg_integer()} | {:error, any()}
   def get_count(table_name, opts \\ []) do
-    if SchemaInspector.excluded_table?(table_name) do
-      {:error, :table_excluded}
-    else
-      do_get_count(table_name, opts)
+    with :ok <- check_names(table_name, opts) do
+      if SchemaInspector.excluded_table?(table_name) do
+        {:error, :table_excluded}
+      else
+        do_get_count(table_name, opts)
+      end
+    end
+  end
+
+  # The names a caller hands in, which come from the peer on the socket
+  # paths: checked before anything is read.
+  defp check_names(table_name, opts) do
+    order_by = opts |> Keyword.get(:order_by) |> List.wrap()
+
+    cond do
+      not SchemaInspector.valid_identifier?(table_name) ->
+        {:error, :invalid_table_name}
+
+      not SchemaInspector.valid_identifier?(Keyword.get(opts, :schema, "public")) ->
+        {:error, :invalid_table_name}
+
+      not Enum.all?(order_by, &SchemaInspector.valid_identifier?/1) ->
+        {:error, :invalid_column_name}
+
+      true ->
+        :ok
     end
   end
 
@@ -82,18 +111,44 @@ defmodule PhoenixKitSync.DataExporter do
   - `:limit` - Maximum records to return (default: 100, max: 1000)
   - `:schema` - Database schema (default: "public")
   - `:order_by` - Column(s) to order by (default: primary key)
+  - `:after` - A `PhoenixKitSync.PullCursor` position; see `fetch_page/2`
+
+  Returns `{:error, :no_primary_key}` for a table with no primary key and
+  no `:order_by`: its rows have no order to page in.
   """
   @spec fetch_records(String.t(), keyword()) :: {:ok, [map()]} | {:error, any()}
   def fetch_records(table_name, opts \\ []) do
+    with {:ok, %{records: records}} <- fetch_page(table_name, opts), do: {:ok, records}
+  end
+
+  @doc """
+  Fetches one page of a table and the position the next page continues
+  from.
+
+  Takes the options of `fetch_records/2`. With `:after` (the `next_after`
+  of the page before, as `PhoenixKitSync.PullCursor.from_params/1` reads
+  it) the page is the rows after that key and `:offset` is ignored, so rows
+  inserted or deleted since the page before neither repeat nor hide a row.
+  Without it the page is cut by `:offset`, which is what a peer that does
+  not send a position gets.
+
+  `next_after` is `nil` for an empty page, for a key no cursor continues
+  from and under a custom `:order_by`; the caller then pages by offset.
+  `{:error, :invalid_cursor}` when `:after` does not fit the table's key.
+  """
+  @spec fetch_page(String.t(), keyword()) ::
+          {:ok, %{records: [map()], next_after: %{String.t() => String.t()} | nil}}
+          | {:error, any()}
+  def fetch_page(table_name, opts \\ []) do
     schema = Keyword.get(opts, :schema, "public")
     offset = max(Keyword.get(opts, :offset, 0), 0)
     limit = min(Keyword.get(opts, :limit, @default_limit), @max_limit)
 
     # Validate table exists and get schema info
-    case SchemaInspector.get_schema(table_name, schema: schema) do
-      {:ok, table_schema} ->
-        do_fetch_records(table_name, schema, table_schema, offset, limit, opts)
-
+    with :ok <- check_names(table_name, opts),
+         {:ok, table_schema} <- SchemaInspector.get_schema(table_name, schema: schema) do
+      do_fetch_page(table_name, schema, table_schema, offset, limit, opts)
+    else
       {:error, :not_found} ->
         {:error, :table_not_found}
 
@@ -106,7 +161,8 @@ defmodule PhoenixKitSync.DataExporter do
   Exports all records from a table as a stream.
 
   Useful for large tables where loading all records into memory
-  is not practical. Returns a stream that yields batches of records.
+  is not practical. Returns a stream that yields batches of records, each
+  starting after the key the one before ended on (`fetch_page/2`).
 
   ## Options
 
@@ -118,64 +174,143 @@ defmodule PhoenixKitSync.DataExporter do
     schema = Keyword.get(opts, :schema, "public")
     batch_size = Keyword.get(opts, :batch_size, 500)
 
-    case SchemaInspector.get_schema(table_name, schema: schema) do
-      {:ok, table_schema} ->
-        stream =
-          Stream.resource(
-            fn -> 0 end,
-            fn offset ->
-              stream_next_batch(table_name, schema, table_schema, offset, batch_size, opts)
-            end,
-            fn _offset -> :ok end
-          )
+    with :ok <- check_names(table_name, opts),
+         {:ok, table_schema} <- SchemaInspector.get_schema(table_name, schema: schema) do
+      stream =
+        Stream.resource(
+          fn -> {0, nil} end,
+          fn at ->
+            stream_next_batch(table_name, schema, table_schema, at, batch_size, opts)
+          end,
+          fn _at -> :ok end
+        )
 
-        {:ok, stream}
-
-      {:error, reason} ->
-        {:error, reason}
+      {:ok, stream}
     end
   end
+
+  @doc """
+  Serializes the value of an array column, a list as Postgrex returned it,
+  by the type of its elements (`ColumnInfo.element_type`).
+
+  Each element follows the rule for a scalar of that type at every depth of
+  a multi-dimensional array: a uuid goes as its canonical text, other
+  non-UTF-8 bytes wrapped in base64, a date or a number as its text or
+  itself. `PhoenixKitSync.DataImporter.prepare_array/2` reads the list back.
+  """
+  @spec serialize_array(String.t() | nil, list()) :: list()
+  def serialize_array(element_type, list) when is_list(list),
+    do: serialize_elements(element_type, list)
 
   # ===========================================
   # PRIVATE FUNCTIONS
   # ===========================================
 
-  defp do_fetch_records(table_name, schema, table_schema, offset, limit, opts) do
-    columns = Enum.map(table_schema.columns, & &1.name)
-    order_by = Keyword.get(opts, :order_by) || table_schema.primary_key
+  # Pages are cut with LIMIT/OFFSET, which only means something over a fixed
+  # order: without one, Postgres is free to return rows in a different
+  # order on each query, and a paged read skips some rows and repeats
+  # others. A table with no primary key (and no `:order_by`) is refused.
+  # A position (`:after`) is a place in primary-key order, so it is refused
+  # under any other order.
+  defp do_fetch_page(table_name, schema, table_schema, offset, limit, opts) do
+    source = {table_name, schema, table_schema}
 
-    # Build column list for SELECT
-    column_list = Enum.map_join(columns, ", ", &quote_identifier/1)
+    case {Keyword.get(opts, :order_by), table_schema.primary_key, Keyword.get(opts, :after)} do
+      {nil, [], _after} ->
+        {:error, :no_primary_key}
 
-    # Build ORDER BY clause
-    order_clause = build_order_clause(order_by)
+      {nil, primary_key, nil} ->
+        fetch_ordered(source, primary_key, primary_key(table_schema), {:offset, offset}, limit)
 
-    query = """
-    SELECT #{column_list}
-    FROM #{quote_identifier(schema)}.#{quote_identifier(table_name)}
-    #{order_clause}
-    LIMIT $1 OFFSET $2
-    """
+      {nil, primary_key, %{} = position} ->
+        fetch_ordered(source, primary_key, primary_key(table_schema), {:after, position}, limit)
 
-    case RepoHelper.query(query, [limit, offset]) do
-      {:ok, %{rows: rows}} ->
-        {:ok, Enum.map(rows, &row_to_map(table_schema.columns, &1))}
+      {[], _primary_key, _after} ->
+        {:error, :no_primary_key}
 
-      {:error, reason} ->
-        {:error, reason}
+      {order_by, _primary_key, nil} ->
+        fetch_ordered(source, order_by, [], {:offset, offset}, limit)
+
+      {_order_by, _primary_key, _after} ->
+        {:error, :invalid_cursor}
     end
   end
 
-  defp stream_next_batch(table_name, schema, table_schema, offset, batch_size, opts) do
-    case do_fetch_records(table_name, schema, table_schema, offset, batch_size, opts) do
-      {:ok, []} ->
-        {:halt, offset}
+  # The primary key as PullCursor reads it: `{column, type}` in key order.
+  defp primary_key(table_schema) do
+    types = Map.new(table_schema.columns, &{&1.name, &1.type})
+    Enum.map(table_schema.primary_key, &{&1, Map.get(types, &1)})
+  end
 
-      {:ok, records} ->
-        {[records], offset + length(records)}
+  defp fetch_ordered({table_name, schema, table_schema}, order_by, key, page, limit) do
+    # Build column list for SELECT
+    column_list = Enum.map_join(table_schema.columns, ", ", &quote_identifier(&1.name))
+
+    with {:ok, page_clause, binds} <- page_clause(key, page, limit) do
+      query = """
+      SELECT #{column_list}
+      FROM #{quote_identifier(schema)}.#{quote_identifier(table_name)}
+      #{page_clause.where}
+      #{build_order_clause(order_by)}
+      #{page_clause.limit}
+      """
+
+      case RepoHelper.query(query, binds) do
+        {:ok, %{rows: rows}} ->
+          {:ok,
+           %{
+             records: Enum.map(rows, &row_to_map(table_schema.columns, &1)),
+             next_after: next_after(key, table_schema.columns, rows)
+           }}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
+  defp page_clause(_key, {:offset, offset}, limit),
+    do: {:ok, %{where: "", limit: "LIMIT $1 OFFSET $2"}, [limit, offset]}
+
+  defp page_clause(key, {:after, position}, limit) do
+    case PullCursor.where(key, position, 1, &quote_identifier/1) do
+      {:ok, condition, binds} ->
+        {:ok, %{where: "WHERE #{condition}", limit: "LIMIT $1"}, [limit | binds]}
+
+      # A key with no cursor never answered a position to send back.
+      {:error, _reason} ->
+        {:error, :invalid_cursor}
+    end
+  end
+
+  # Where the page after this one starts: the key of its last row, read
+  # from the row as Postgrex returned it.
+  defp next_after(_key, _columns, []), do: nil
+
+  defp next_after(key, columns, rows) do
+    last = columns |> Enum.map(& &1.name) |> Enum.zip(List.last(rows)) |> Map.new()
+
+    case PullCursor.next_after(key, last) do
+      {:ok, position} -> position
+      _no_position -> nil
+    end
+  end
+
+  # The next batch starts after the key the one before ended on, so rows
+  # written while the stream is read do not shift it; by offset for a key
+  # that has no cursor.
+  defp stream_next_batch(table_name, schema, table_schema, {offset, position} = at, size, opts) do
+    opts = Keyword.put(opts, :after, position)
+
+    case do_fetch_page(table_name, schema, table_schema, offset, size, opts) do
+      {:ok, %{records: []}} ->
+        {:halt, at}
+
+      {:ok, %{records: records, next_after: next_after}} ->
+        {[records], {offset + length(records), next_after}}
 
       {:error, _reason} ->
-        {:halt, offset}
+        {:halt, at}
     end
   end
 
@@ -205,8 +340,6 @@ defmodule PhoenixKitSync.DataExporter do
   # bytes for a uuid column.
   defp serialize_typed("uuid", <<_::128>> = bytes), do: Ecto.UUID.load!(bytes)
   defp serialize_typed(_type, value), do: serialize_value(value)
-
-  defp build_order_clause([]), do: ""
 
   defp build_order_clause(columns) when is_list(columns) do
     order_cols = Enum.map_join(columns, ", ", &quote_identifier/1)
@@ -239,6 +372,7 @@ defmodule PhoenixKitSync.DataExporter do
 
   defp serialize_value(value) when is_number(value), do: value
   defp serialize_value(value) when is_boolean(value), do: value
+  defp serialize_value([%Postgrex.Lexeme{} = lexeme | _]), do: ExtensionTypes.serialize(lexeme)
   defp serialize_value(value) when is_list(value), do: Enum.map(value, &serialize_value/1)
 
   defp serialize_value(%Date{} = date), do: Date.to_iso8601(date)
@@ -248,14 +382,11 @@ defmodule PhoenixKitSync.DataExporter do
 
   defp serialize_value(%Decimal{} = decimal), do: Decimal.to_string(decimal)
 
-  # Handle other Ecto types (must be before is_map guard)
-  defp serialize_value(%{__struct__: _} = struct) do
-    if function_exported?(struct.__struct__, :to_string, 1) do
-      to_string(struct)
-    else
-      inspect(struct)
-    end
-  end
+  # Any other struct is a Postgrex type of its own (an interval, an inet,
+  # a range): ExtensionTypes writes the ones that travel and marks the
+  # rest, so `inspect/1` text never stands in for a value. Must be before
+  # the is_map guard.
+  defp serialize_value(%_{} = struct), do: ExtensionTypes.serialize(struct)
 
   # Plain maps (after struct matchers)
   defp serialize_value(value) when is_map(value), do: serialize_map(value)

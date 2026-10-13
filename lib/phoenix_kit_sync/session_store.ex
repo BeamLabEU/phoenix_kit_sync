@@ -30,6 +30,14 @@ defmodule PhoenixKitSync.SessionStore do
         sender_info: nil | %{...},
         receiver_info: nil | %{...}
       }
+
+  ## Single use
+
+  A code is claimed once (`claim/2`). That it was claimed is kept apart from
+  the session map, in a table of its own that only this process writes, so
+  no later `status` (`:completed`, `:failed`, or `:pending` written back by
+  `update/2` or `merge/2`) makes the code claimable again. The claim lives
+  as long as the session does.
   """
 
   use GenServer
@@ -38,6 +46,7 @@ defmodule PhoenixKitSync.SessionStore do
 
   @table_name :phoenix_kit_sync_sessions
   @monitors_table :phoenix_kit_sync_monitors
+  @claims_table :phoenix_kit_sync_claims
   @cleanup_interval :timer.hours(1)
 
   # ===========================================
@@ -122,11 +131,46 @@ defmodule PhoenixKitSync.SessionStore do
   end
 
   @doc """
+  Marks a session as connected, once.
+
+  The check and the write happen in the store's own process, so two callers
+  racing on one code cannot both be told it is free. A code is claimed once
+  for the life of its session, whatever its status becomes afterwards.
+
+  ## Returns
+
+  - `{:ok, session}` - The session, now `:connected` at `connected_at`
+  - `{:error, :already_used}` - It was claimed before
+  - `{:error, :not_found}` - No such session
+  """
+  @spec claim(String.t(), DateTime.t()) ::
+          {:ok, map()} | {:error, :already_used | :not_found}
+  def claim(code, connected_at) when is_binary(code) do
+    GenServer.call(__MODULE__, {:claim, code, connected_at})
+  end
+
+  @doc """
+  Merges `updates` into an existing session, in the store's own process so
+  the merge cannot write back a copy read before a concurrent `claim/2`.
+
+  ## Returns
+
+  - `{:ok, session}` - The merged session
+  - `{:error, :not_found}` - No such session
+  """
+  @spec merge(String.t(), map()) :: {:ok, map()} | {:error, :not_found}
+  def merge(code, updates) when is_binary(code) and is_map(updates) do
+    GenServer.call(__MODULE__, {:merge, code, updates})
+  end
+
+  @doc """
   Deletes a session by code.
   """
   @spec delete(String.t()) :: :ok
   def delete(code) when is_binary(code) do
     :ets.delete(@table_name, code)
+    # The claim goes with its session, in the process that owns the table.
+    if Process.whereis(__MODULE__), do: GenServer.cast(__MODULE__, {:forget_claim, code})
     :ok
   end
 
@@ -175,6 +219,9 @@ defmodule PhoenixKitSync.SessionStore do
       :protected
     ])
 
+    # Codes that were claimed. Written by this process only.
+    :ets.new(@claims_table, [:set, :named_table, :protected])
+
     # Schedule periodic cleanup of orphaned sessions (fallback safety)
     schedule_cleanup()
 
@@ -183,11 +230,57 @@ defmodule PhoenixKitSync.SessionStore do
   end
 
   @impl true
+  def handle_call({:claim, code, connected_at}, _from, state) do
+    reply =
+      case :ets.lookup(@table_name, code) do
+        # A session connected by other means than a claim is used as well.
+        [{^code, %{status: :connected}}] ->
+          {:error, :already_used}
+
+        [{^code, session}] ->
+          if :ets.insert_new(@claims_table, {code}) do
+            claimed = %{session | status: :connected, connected_at: connected_at}
+            :ets.insert(@table_name, {code, claimed})
+            {:ok, claimed}
+          else
+            {:error, :already_used}
+          end
+
+        [] ->
+          {:error, :not_found}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:merge, code, updates}, _from, state) do
+    reply =
+      case :ets.lookup(@table_name, code) do
+        [{^code, session}] ->
+          merged = Map.merge(session, updates)
+          :ets.insert(@table_name, {code, merged})
+          {:ok, merged}
+
+        [] ->
+          {:error, :not_found}
+      end
+
+    {:reply, reply, state}
+  end
+
+  @impl true
+  def handle_cast({:forget_claim, code}, state) do
+    # Only once the session is gone: a code deleted and created again
+    # between the delete and this message keeps nothing it should not.
+    if :ets.lookup(@table_name, code) == [], do: :ets.delete(@claims_table, code)
+    {:noreply, state}
+  end
+
   def handle_cast({:monitor_session, code, pid}, state) do
     ref = Process.monitor(pid)
     # Store mapping from monitor ref to session code
     :ets.insert(@monitors_table, {ref, code})
-    Logger.debug("Sync.SessionStore: Monitoring #{inspect(pid)} for session #{code}")
+    Logger.debug("Sync.SessionStore: Monitoring #{inspect(pid)} for a session")
     {:noreply, state}
   end
 
@@ -198,8 +291,9 @@ defmodule PhoenixKitSync.SessionStore do
       [{^ref, code}] ->
         :ets.delete(@monitors_table, ref)
         :ets.delete(@table_name, code)
+        :ets.delete(@claims_table, code)
 
-        Logger.debug("Sync.SessionStore: Session #{code} deleted (owner process terminated)")
+        Logger.debug("Sync.SessionStore: Session deleted (owner process terminated)")
 
       [] ->
         :ok
@@ -243,7 +337,10 @@ defmodule PhoenixKitSync.SessionStore do
       )
 
     # Delete orphaned sessions
-    Enum.each(orphaned, &:ets.delete(@table_name, &1))
+    Enum.each(orphaned, fn code ->
+      :ets.delete(@table_name, code)
+      :ets.delete(@claims_table, code)
+    end)
 
     if orphaned != [] do
       Logger.debug("Sync.SessionStore: Cleaned up #{length(orphaned)} orphaned sessions")

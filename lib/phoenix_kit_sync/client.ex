@@ -47,6 +47,10 @@ defmodule PhoenixKitSync.Client do
 
   require Logger
 
+  # The furthest a paged transfer reads: the largest offset the sender
+  # accepts from a request.
+  @max_offset PhoenixKitSync.Params.max_offset()
+
   @default_timeout 30_000
   @default_batch_size 500
 
@@ -189,11 +193,15 @@ defmodule PhoenixKitSync.Client do
 
   - `:offset` - Number of records to skip (default: 0)
   - `:limit` - Maximum records to return (default: 100)
+  - `:after` - The `next_after` of the page before; the sender continues
+    from that key instead of the offset
   - `:timeout` - Request timeout in ms (default: 30_000)
 
   ## Returns
 
-      {:ok, %{records: [...], offset: 0, has_more: true}}
+      {:ok, %{records: [...], offset: 0, has_more: true, next_after: %{"id" => "100"}}}
+
+  `next_after` is `nil` from a sender that pages by offset only.
 
   ## Examples
 
@@ -205,7 +213,12 @@ defmodule PhoenixKitSync.Client do
     offset = Keyword.get(opts, :offset, 0)
     limit = Keyword.get(opts, :limit, 100)
 
-    WebSocketClient.request_records(client, table, offset: offset, limit: limit)
+    WebSocketClient.request_records(client, table,
+      offset: offset,
+      limit: limit,
+      after: Keyword.get(opts, :after)
+    )
+
     wait_for_response({:records, table}, timeout)
   end
 
@@ -398,23 +411,52 @@ defmodule PhoenixKitSync.Client do
       timeout: timeout
     }
 
-    fetch_and_import_loop(loop_state, 0, %{
-      created: 0,
-      updated: 0,
-      skipped: 0,
-      errors: []
-    })
+    fetch_and_import_loop(
+      loop_state,
+      %{offset: 0, after: nil},
+      %{
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        errors: []
+      },
+      nil
+    )
   end
 
-  defp fetch_and_import_loop(state, offset, acc) do
+  # `at` is where the next page starts: the count of records taken so far
+  # (`offset`) and, once the sender has answered one, the key the page
+  # before ended on (`after`). A sender that knows positions reads `after`
+  # and its pages do not shift when rows are written during the transfer;
+  # one that does not reads `offset`.
+  #
+  # `prev_first` is the first record of the page before: a sender that
+  # ignores both answers the same page again, and without this the loop
+  # below, which ends only on an empty page, would never end.
+  defp fetch_and_import_loop(state, at, acc, prev_first) do
     %{client: client, table: table, batch_size: batch_size, timeout: timeout} = state
+    opts = [offset: at.offset, after: at.after, limit: batch_size, timeout: timeout]
 
-    case fetch_records(client, table, offset: offset, limit: batch_size, timeout: timeout) do
-      {:ok, %{records: records}} when records != [] ->
-        import_and_continue(state, offset, acc, records)
+    case fetch_records(client, table, opts) do
+      {:ok, %{records: [first | _]}} when first == prev_first ->
+        Logger.warning("Sync.Client: the sender repeated a page of #{table}; transfer stopped")
+        {:error, :paging_stalled}
+
+      {:ok, %{records: [_ | _]}} when at.offset >= @max_offset ->
+        Logger.warning(
+          "Sync.Client: #{table} did not end within the paging cap; transfer stopped"
+        )
+
+        {:error, :paging_stalled}
+
+      {:ok, %{records: [first | _] = records} = page} ->
+        import_and_continue(state, at, acc, page, records, first)
 
       {:ok, %{records: []}} ->
         {:ok, acc}
+
+      {:ok, _not_a_page} ->
+        {:error, :invalid_response}
 
       {:error, reason} ->
         {:error, reason}
@@ -426,11 +468,16 @@ defmodule PhoenixKitSync.Client do
   # max_records_per_request, another version) returns fewer records than
   # asked and may still say there are no more. The price is one extra
   # request per table.
-  defp import_and_continue(state, offset, acc, records) do
+  defp import_and_continue(state, at, acc, page, records, first) do
     case PhoenixKitSync.import_records(state.table, records, state.strategy) do
       {:ok, result} ->
         # Advance by what arrived, not by what was asked.
-        fetch_and_import_loop(state, offset + length(records), merge_results(acc, result))
+        fetch_and_import_loop(
+          state,
+          %{offset: at.offset + length(records), after: Map.get(page, :next_after)},
+          merge_results(acc, result),
+          first
+        )
 
       {:error, reason} ->
         {:error, reason}

@@ -25,6 +25,12 @@ defmodule PhoenixKitSync.Web.SyncSocketTest do
       assert {:error, :invalid_code} = connect(SyncSocket, %{"code" => "NOTAREAL"})
     end
 
+    test "refuses the code of a session that does not send" do
+      {:ok, session} = PhoenixKitSync.create_session(:receive)
+
+      assert {:error, :invalid_code} = connect(SyncSocket, %{"code" => session.code})
+    end
+
     test "accepts a valid session code and assigns session state" do
       {:ok, session} = PhoenixKitSync.create_session(:send)
 

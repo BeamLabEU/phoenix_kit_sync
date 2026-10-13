@@ -68,6 +68,88 @@ defmodule PhoenixKitSync.SessionStoreTest do
     end
   end
 
+  describe "claim/2" do
+    @later_states [
+      %{status: :completed},
+      %{status: :failed},
+      %{status: :pending},
+      %{status: :pending, connected_at: nil},
+      %{channel_pid: nil}
+    ]
+
+    test "a code is claimed once" do
+      session = make_session()
+      :ok = SessionStore.create(session)
+
+      assert {:ok, %{status: :connected}} = SessionStore.claim(session.code, DateTime.utc_now())
+      assert {:error, :already_used} = SessionStore.claim(session.code, DateTime.utc_now())
+    end
+
+    for {updates, index} <- Enum.with_index(@later_states) do
+      test "stays claimed after merge(#{inspect(updates)}) (case #{index})" do
+        session = make_session()
+        :ok = SessionStore.create(session)
+        assert {:ok, _} = SessionStore.claim(session.code, DateTime.utc_now())
+
+        assert {:ok, _} = SessionStore.merge(session.code, unquote(Macro.escape(updates)))
+        assert {:error, :already_used} = SessionStore.claim(session.code, DateTime.utc_now())
+      end
+
+      test "stays claimed after update/2 writes #{inspect(updates)} (case #{index})" do
+        session = make_session()
+        :ok = SessionStore.create(session)
+        assert {:ok, _} = SessionStore.claim(session.code, DateTime.utc_now())
+
+        # The whole map as it was before the claim, as a stale writer holds it.
+        assert :ok =
+                 SessionStore.update(
+                   session.code,
+                   Map.merge(session, unquote(Macro.escape(updates)))
+                 )
+
+        assert {:error, :already_used} = SessionStore.claim(session.code, DateTime.utc_now())
+      end
+    end
+
+    test "update_session/2 with a final status does not free the code" do
+      {:ok, session} = PhoenixKitSync.create_session(:send)
+      assert {:ok, _} = PhoenixKitSync.validate_code(session.code)
+
+      for status <- [:completed, :failed, :pending] do
+        assert {:ok, _} = PhoenixKitSync.update_session(session.code, %{status: status})
+        assert {:error, :already_used} = PhoenixKitSync.validate_code(session.code)
+      end
+    end
+
+    test "a code created again after its session was deleted starts unclaimed" do
+      session = make_session()
+      :ok = SessionStore.create(session)
+      assert {:ok, _} = SessionStore.claim(session.code, DateTime.utc_now())
+
+      :ok = SessionStore.delete(session.code)
+      assert {:error, :not_found} = SessionStore.claim(session.code, DateTime.utc_now())
+
+      :ok = SessionStore.create(session)
+      assert {:ok, _} = SessionStore.claim(session.code, DateTime.utc_now())
+    end
+
+    test "the claim goes when the owner does" do
+      owner = spawn(fn -> receive(do: (:stop -> :ok)) end)
+      session = make_session(%{owner_pid: owner})
+      :ok = SessionStore.create(session)
+      assert {:ok, _} = SessionStore.claim(session.code, DateTime.utc_now())
+
+      ref = Process.monitor(owner)
+      send(owner, :stop)
+      assert_receive {:DOWN, ^ref, :process, ^owner, _}
+      # The store handles its own DOWN before this call.
+      assert {:error, :not_found} = SessionStore.claim(session.code, DateTime.utc_now())
+
+      :ok = SessionStore.create(%{session | owner_pid: self()})
+      assert {:ok, _} = SessionStore.claim(session.code, DateTime.utc_now())
+    end
+  end
+
   describe "delete/1" do
     test "deletes a session" do
       session = make_session()

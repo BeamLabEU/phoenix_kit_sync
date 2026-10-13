@@ -10,19 +10,18 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
   - `table` - The table name to import into
   - `records` - List of records to import (JSON-serialized)
   - `strategy` - Conflict resolution strategy ("skip", "overwrite", "merge")
-  - `session_code` - The sync session code (for tracking)
+  - `session_ref` - A tag that groups the batches of one transfer. It is
+    derived from the `session_code` given to `create_job/5` and is not the
+    code: a session code is a credential, so it is never stored in a job,
+    logged or put in the activity log
   - `batch_index` - Optional batch index for large transfers
 
   ## Usage
 
   The Receiver LiveView enqueues jobs after receiving data:
 
-      ImportWorker.new(%{
-        table: "users",
-        records: records,
-        strategy: "skip",
-        session_code: "ABC12345"
-      })
+      "users"
+      |> ImportWorker.create_job(records, :skip, session_code)
       |> Oban.insert()
 
   ## Queue Configuration
@@ -45,7 +44,7 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
     table = Map.fetch!(args, "table")
     records = Map.fetch!(args, "records")
     strategy = args |> Map.get("strategy", "skip") |> String.to_existing_atom()
-    session_code = Map.get(args, "session_code", "unknown")
+    session_ref = session_ref_of(args)
     batch_index = Map.get(args, "batch_index", 0)
     schema = Map.get(args, "schema")
 
@@ -59,7 +58,7 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
       case DataImporter.import_records(table, records, strategy) do
         {:ok, result} ->
           Logger.info(
-            "Sync.ImportWorker: Completed import for #{table} (session: #{session_code}) - " <>
+            "Sync.ImportWorker: Completed import for #{table} (session ref: #{session_ref}) - " <>
               "created: #{result.created}, updated: #{result.updated}, " <>
               "skipped: #{result.skipped}, errors: #{length(result.errors)}"
           )
@@ -67,7 +66,7 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
           # Audit-log a per-batch import row so operators can see in
           # the activity feed which sessions touched which tables.
           # Mode is "auto" because Oban (not a person) drove this.
-          log_batch_completion(table, session_code, batch_index, strategy, result)
+          log_batch_completion(table, session_ref, batch_index, strategy, result)
 
           # Log any errors for debugging
           log_import_errors(result.errors, table)
@@ -78,7 +77,7 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
 
         {:error, reason} ->
           Logger.error(
-            "Sync.ImportWorker: Failed import for #{table} (session: #{session_code}) - " <>
+            "Sync.ImportWorker: Failed import for #{table} (session ref: #{session_ref}) - " <>
               "#{inspect(reason)}"
           )
 
@@ -91,13 +90,13 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
   # Best-effort audit row for a successful batch import. Core's log never
   # raises, so a missing phoenix_kit_activities table never crashes the
   # worker and re-queues the batch.
-  defp log_batch_completion(table, session_code, batch_index, strategy, result) do
+  defp log_batch_completion(table, session_ref, batch_index, strategy, result) do
     PhoenixKit.Activity.log("sync", "sync.import.batch_completed",
       mode: "auto",
       resource_type: "sync_table",
       metadata: %{
         "table_name" => table,
-        "session_code" => session_code,
+        "session_ref" => session_ref,
         "batch_index" => batch_index,
         "strategy" => to_string(strategy),
         "created" => result.created,
@@ -119,14 +118,20 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
     end
   end
 
+  defp extract_record_pk(record) when not is_map(record), do: ""
+
   defp extract_record_pk(record) do
     pk =
       Map.get(record, "uuid") || Map.get(record, :uuid) ||
         Map.get(record, "id") || Map.get(record, :id)
 
+    # The key is the sender's: a uuid column arrives as 16 raw bytes, which
+    # are not text, and anything else may be any JSON value.
     case pk do
       nil -> ""
-      value -> " (uuid: #{value})"
+      <<_::128>> = bytes -> " (uuid: #{Ecto.UUID.load!(bytes)})"
+      value when is_binary(value) -> " (uuid: #{inspect(value)})"
+      value -> " (uuid: #{inspect(value, limit: 5)})"
     end
   end
 
@@ -160,7 +165,8 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
   - `table` - Table name to import into
   - `records` - List of record maps
   - `strategy` - Conflict strategy (atom or string)
-  - `session_code` - Transfer session code for tracking
+  - `session_code` - Transfer session code for tracking. The job keeps a
+    tag derived from it (`session_ref`), never the code
   - `opts` - Additional options:
     - `:batch_index` - Index of the batch for multi-batch imports
     - `:schema` - Table schema definition (for auto-creating missing tables)
@@ -179,13 +185,26 @@ defmodule PhoenixKitSync.Workers.ImportWorker do
         "table" => table,
         "records" => records,
         "strategy" => strategy_str,
-        "session_code" => session_code,
+        "session_ref" => session_ref(session_code),
         "batch_index" => Keyword.get(opts, :batch_index, 0)
       }
       |> maybe_add_schema(Keyword.get(opts, :schema))
 
     new(args)
   end
+
+  # What a job, a log line and an activity row carry in place of the
+  # session code: enough to tell the batches of one transfer from those of
+  # another, and nothing a socket accepts.
+  defp session_ref(session_code) when is_binary(session_code) do
+    :crypto.hash(:sha256, session_code) |> Base.encode16(case: :lower) |> binary_part(0, 8)
+  end
+
+  defp session_ref(_session_code), do: "unknown"
+
+  # A job enqueued with the code itself in its args is read the same way.
+  defp session_ref_of(%{"session_ref" => ref}) when is_binary(ref), do: ref
+  defp session_ref_of(args), do: session_ref(Map.get(args, "session_code"))
 
   defp maybe_add_schema(args, nil), do: args
   defp maybe_add_schema(args, schema), do: Map.put(args, "schema", schema)

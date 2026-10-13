@@ -40,10 +40,12 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
     end
   end
 
-  # These replies are served by a live Postgres introspection query, so the
-  # default 100 ms assert_push deadline loses the race on a loaded machine and
-  # reports an empty mailbox as a protocol failure.
-  @reply_timeout 2_000
+  # These replies are served by live Postgres queries (the table list counts
+  # the rows of every table), so the default 100 ms assert_push deadline
+  # loses the race on a loaded machine and reports an empty mailbox as a
+  # protocol failure. The deadline is only how long a missing reply takes to
+  # fail: a reply that arrives ends the wait at once.
+  @reply_timeout 15_000
 
   test "a session cannot request token-table schema, counts, or records", %{
     socket: socket,
@@ -80,7 +82,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       ref = "sch-1"
-      push(channel, "request:schema", %{"table" => "phoenix_kit_sync_connections", "ref" => ref})
+      push(channel, "request:schema", %{"table" => "phoenix_kit_staff_skills", "ref" => ref})
 
       assert_push("response:schema", %{schema: schema, ref: ^ref}, @reply_timeout)
       assert is_list(schema.columns) or is_map(schema)
@@ -104,7 +106,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       ref = "cnt-1"
-      push(channel, "request:count", %{"table" => "phoenix_kit_sync_connections", "ref" => ref})
+      push(channel, "request:count", %{"table" => "phoenix_kit_staff_skills", "ref" => ref})
 
       assert_push("response:count", %{count: count, ref: ^ref}, @reply_timeout)
       assert is_integer(count)
@@ -119,7 +121,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
       ref = "rec-1"
 
       push(channel, "request:records", %{
-        "table" => "phoenix_kit_sync_connections",
+        "table" => "phoenix_kit_staff_skills",
         "ref" => ref,
         "limit" => 10
       })
@@ -143,18 +145,13 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
       socket: socket,
       session: session
     } do
-      {:ok, _connection, _token} =
-        PhoenixKitSync.Connections.create_connection(%{
-          "name" => "Channel uuid #{System.unique_integer([:positive])}",
-          "direction" => "sender",
-          "site_url" => "https://channel-uuid-#{System.unique_integer([:positive])}.example.com"
-        })
+      PhoenixKitSync.SyncableTable.insert!()
 
       {:ok, _reply, channel} =
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       push(channel, "request:records", %{
-        "table" => "phoenix_kit_sync_connections",
+        "table" => "phoenix_kit_staff_skills",
         "ref" => "uuid-json"
       })
 
@@ -186,7 +183,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
           channel,
           "request:records",
           Map.merge(
-            %{"table" => "phoenix_kit_sync_connections", "ref" => "bounded"},
+            %{"table" => "phoenix_kit_staff_skills", "ref" => "bounded"},
             unquote(Macro.escape(extra))
           )
         )
@@ -254,6 +251,99 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
     end
   end
 
+  describe "request:records — paging by key" do
+    setup do
+      PhoenixKit.RepoHelper.repo().query!("CREATE TABLE ch_keyed (id int PRIMARY KEY)")
+      PhoenixKit.RepoHelper.repo().query!("INSERT INTO ch_keyed SELECT generate_series(1, 7)")
+      :ok
+    end
+
+    test "a page names the position after it, and a request with it continues there", %{
+      socket: socket,
+      session: session
+    } do
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      push(channel, "request:records", %{"table" => "ch_keyed", "ref" => "k1", "limit" => 3})
+
+      assert_push(
+        "response:records",
+        %{ref: "k1", records: first, next_after: position, offset: 0},
+        @reply_timeout
+      )
+
+      assert Enum.map(first, & &1["id"]) == [1, 2, 3]
+      assert position == %{"id" => "3"}
+
+      # A row before the position goes: by offset the next page would
+      # start at 5.
+      PhoenixKit.RepoHelper.repo().query!("DELETE FROM ch_keyed WHERE id = 1")
+
+      push(channel, "request:records", %{
+        "table" => "ch_keyed",
+        "ref" => "k2",
+        "limit" => 3,
+        "offset" => 3,
+        "after" => position
+      })
+
+      assert_push("response:records", %{ref: "k2", records: second}, @reply_timeout)
+      assert Enum.map(second, & &1["id"]) == [4, 5, 6]
+    end
+
+    test "a request without a position is cut by its offset, as before", %{
+      socket: socket,
+      session: session
+    } do
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      push(channel, "request:records", %{
+        "table" => "ch_keyed",
+        "ref" => "k3",
+        "limit" => 3,
+        "offset" => 5
+      })
+
+      assert_push("response:records", %{ref: "k3", records: records, offset: 5}, @reply_timeout)
+      assert Enum.map(records, & &1["id"]) == [6, 7]
+    end
+
+    test "an empty page names no position", %{socket: socket, session: session} do
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      push(channel, "request:records", %{
+        "table" => "ch_keyed",
+        "ref" => "k4",
+        "after" => %{"id" => "7"}
+      })
+
+      assert_push("response:records", %{ref: "k4", records: []} = reply, @reply_timeout)
+      refute Map.has_key?(reply, :next_after)
+    end
+
+    test "a position that does not fit the key is an error reply", %{
+      socket: socket,
+      session: session
+    } do
+      {:ok, _reply, channel} =
+        subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
+
+      for {ref, position} <- [{"b1", "3"}, {"b2", %{"nope" => "3"}}, {"b3", %{"id" => "x"}}] do
+        push(channel, "request:records", %{
+          "table" => "ch_keyed",
+          "ref" => ref,
+          "after" => position
+        })
+
+        assert_push("response:error", %{ref: ^ref, error: error}, @reply_timeout)
+        assert error =~ "invalid_cursor"
+      end
+    end
+  end
+
   describe "request:records — malformed payload (DoS hardening)" do
     # Pre-fix sync_channel.ex used Map.fetch! on the "table" and "ref"
     # keys; missing keys crashed the channel and triggered a reconnect
@@ -278,7 +368,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
       {:ok, _reply, channel} =
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
-      ref = push(channel, "request:records", %{"table" => "phoenix_kit_sync_connections"})
+      ref = push(channel, "request:records", %{"table" => "phoenix_kit_staff_skills"})
       assert_reply(ref, :error, %{reason: "missing_fields"})
       assert Process.alive?(channel.channel_pid)
     end

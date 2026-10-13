@@ -38,16 +38,14 @@ defmodule PhoenixKitSync.Web.ReceiverPagingTest do
 
   # Sends a batch and waits until the LiveView has handled it, so the
   # mailbox checks below need no timeout.
-  defp batch(view, table, records, has_more, echo \\ 0) do
-    send(
-      view.pid,
-      {:sync_client, {:records, table, %{records: records, has_more: has_more, offset: echo}}}
-    )
+  defp batch(view, table, records, has_more, echo \\ 0, extra \\ %{}) do
+    result = Map.merge(%{records: records, has_more: has_more, offset: echo}, extra)
+    send(view.pid, {:sync_client, {:records, table, result}})
 
     _ = :sys.get_state(view.pid)
   end
 
-  defp rows(n), do: Enum.map(1..n, &%{"id" => &1})
+  defp rows(n, from \\ 1), do: Enum.map(from..(from + n - 1), &%{"id" => &1})
 
   defp mount_transfer(conn) do
     conn = put_test_scope(conn, fake_scope())
@@ -66,6 +64,44 @@ defmodule PhoenixKitSync.Web.ReceiverPagingTest do
     assert opts[:offset] == 3
   end
 
+  test "a sender's position goes back with the next request, beside the offset", %{conn: conn} do
+    view = mount_transfer(conn)
+
+    batch(view, "rx_table", rows(3), true, 0, %{next_after: %{"id" => "3"}})
+
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", opts}}
+    assert opts[:after] == %{"id" => "3"}
+    assert opts[:offset] == 3
+  end
+
+  test "a sender that answers no position is followed by offset alone", %{conn: conn} do
+    view = mount_transfer(conn)
+
+    # A reply from before positions has no such key at all; a current
+    # sender with a key that has no cursor answers nil.
+    batch(view, "rx_table", rows(3), true)
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", first}}
+    assert first[:after] == nil
+    assert first[:offset] == 3
+
+    batch(view, "rx_table", rows(3, 4), true, 0, %{next_after: nil})
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", second}}
+    assert second[:after] == nil
+    assert second[:offset] == 6
+  end
+
+  test "the position of one page is not carried past a page without one", %{conn: conn} do
+    view = mount_transfer(conn)
+
+    batch(view, "rx_table", rows(3), true, 0, %{next_after: %{"id" => "3"}})
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", _first}}
+
+    batch(view, "rx_table", rows(3, 4), true)
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", second}}
+    assert second[:after] == nil
+    assert second[:offset] == 6
+  end
+
   test "an empty batch ends the table", %{conn: conn} do
     view = mount_transfer(conn)
 
@@ -82,7 +118,7 @@ defmodule PhoenixKitSync.Web.ReceiverPagingTest do
     assert_received {:"$websockex_cast", {:request_records, "rx_table", first}}
     assert first[:offset] == 500
 
-    batch(view, "rx_table", rows(500), true, 0)
+    batch(view, "rx_table", rows(500, 501), true, 0)
     assert_received {:"$websockex_cast", {:request_records, "rx_table", second}}
     assert second[:offset] == 1_000
 
@@ -106,5 +142,24 @@ defmodule PhoenixKitSync.Web.ReceiverPagingTest do
     batch(view, "rx_table", [], false)
     refute_received {:"$websockex_cast", {:request_records, _table, _opts}}
     assert :sys.get_state(view.pid).socket.assigns.transfer_progress.status == :completed
+  end
+
+  test "a sender that answers the same page again ends the table instead of looping", %{
+    conn: conn
+  } do
+    view = mount_transfer(conn)
+
+    batch(view, "rx_table", rows(500), true)
+    assert_received {:"$websockex_cast", {:request_records, "rx_table", first}}
+    assert first[:offset] == 500
+
+    # The offset was ignored: the page that came for 500 is the page for 0.
+    batch(view, "rx_table", rows(500), true)
+
+    refute_received {:"$websockex_cast", {:request_records, _table, _opts}}
+    progress = :sys.get_state(view.pid).socket.assigns.transfer_progress
+    assert progress.status == :completed
+    # The repeated page is not imported a second time.
+    assert progress.jobs_queued == 1
   end
 end

@@ -46,6 +46,19 @@ defmodule PhoenixKitSync.Test.StubRemote do
   def put_raw(table, status, body),
     do: update(&put_in(&1, [Access.key(:raw, %{}), table], {status, body}))
 
+  @doc """
+  Makes `pull-data` for `table` page like a sender with cursors: at most
+  `size` records by `"id"`, after the request's `"after"`, with
+  `"truncated"`, `"has_more"`, `"next_after"` and `"cursor"` while records
+  are left.
+  """
+  def put_page_size(table, size),
+    do: update(&put_in(&1, [Access.key(:page_sizes, %{}), table], size))
+
+  @doc "Every `pull-data` request body for `table` since `reset/0`, oldest first."
+  def pull_bodies(table),
+    do: state() |> get_in([Access.key(:all_bodies, %{}), table]) |> List.wrap() |> Enum.reverse()
+
   @doc "The body of the last `pull-data` request for `table`, or nil."
   def last_pull_body(table), do: get_in(state(), [Access.key(:bodies, %{}), table])
 
@@ -72,13 +85,24 @@ defmodule PhoenixKitSync.Test.StubRemote do
   def call(conn, _opts) do
     table = conn.body_params["table_name"]
 
-    if List.last(conn.path_info) == "pull-data",
-      do: update(&put_in(&1, [Access.key(:bodies, %{}), table], conn.body_params))
+    if List.last(conn.path_info) == "pull-data" do
+      update(&put_in(&1, [Access.key(:bodies, %{}), table], conn.body_params))
+
+      update(fn state ->
+        all = Map.get(state, :all_bodies, %{})
+
+        Map.put(
+          state,
+          :all_bodies,
+          Map.update(all, table, [conn.body_params], &[conn.body_params | &1])
+        )
+      end)
+    end
 
     {status, body} =
       case get_in(state(), [Access.key(:raw, %{}), table]) do
         {status, body} when status != 200 -> {status, body}
-        _ -> {200, respond(List.last(conn.path_info), table)}
+        _ -> {200, respond(List.last(conn.path_info), table, conn.body_params)}
       end
 
     conn
@@ -86,9 +110,9 @@ defmodule PhoenixKitSync.Test.StubRemote do
     |> send_resp(status, Jason.encode!(body))
   end
 
-  defp respond("list-tables", _table), do: %{success: true, tables: state().tables}
+  defp respond("list-tables", _table, _body), do: %{success: true, tables: state().tables}
 
-  defp respond("pull-data", table) do
+  defp respond("pull-data", table, body) do
     count_pull(table)
 
     case Map.fetch(state().data, table) do
@@ -97,19 +121,43 @@ defmodule PhoenixKitSync.Test.StubRemote do
 
       {:ok, records} ->
         extra = get_in(state(), [Access.key(:extras, %{}), table]) || %{}
-        Map.merge(%{success: true, table: table, data: records}, extra)
+        size = get_in(state(), [Access.key(:page_sizes, %{}), table])
+        Map.merge(page(table, records, size, body["after"]), extra)
 
       :error ->
         %{success: false, error: "Table not found"}
     end
   end
 
-  defp respond("table-schema", table) do
+  defp respond("table-schema", table, _body) do
     case Map.fetch(Map.get(state(), :schemas, %{}), table) do
       {:ok, schema} -> %{success: true, schema: schema}
       :error -> %{success: false, error: "Table not found"}
     end
   end
 
-  defp respond(_endpoint, _table), do: %{success: false, error: "Not stubbed"}
+  defp respond(_endpoint, _table, _body), do: %{success: false, error: "Not stubbed"}
+
+  defp page(table, records, nil, _after), do: %{success: true, table: table, data: records}
+
+  defp page(table, records, size, after_values) do
+    rest =
+      case after_values do
+        %{"id" => id} -> Enum.drop_while(records, &(&1["id"] <= String.to_integer(id)))
+        _ -> records
+      end
+
+    {data, left} = Enum.split(rest, size)
+    answer = %{success: true, table: table, data: data, has_more: left != []}
+
+    if left == [] do
+      answer
+    else
+      Map.merge(answer, %{
+        truncated: true,
+        next_after: %{"id" => Integer.to_string(List.last(data)["id"])},
+        cursor: "stub-cursor"
+      })
+    end
+  end
 end

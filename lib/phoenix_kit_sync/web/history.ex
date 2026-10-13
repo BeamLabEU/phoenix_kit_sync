@@ -6,7 +6,7 @@ defmodule PhoenixKitSync.Web.History do
   """
 
   use PhoenixKitWeb, :live_view
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitSync.Gettext
 
   require Logger
 
@@ -14,11 +14,14 @@ defmodule PhoenixKitSync.Web.History do
   alias PhoenixKit.Utils.Pagination
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitSync
+  alias PhoenixKitSync.Connections
+  alias PhoenixKitSync.Errors
   alias PhoenixKitSync.Params
   alias PhoenixKitSync.Transfers
   alias PhoenixKitWeb.Actor
 
   @per_page 20
+  @statuses ~w(pending pending_approval approved denied in_progress completed failed cancelled expired)
   # Transfers are never pruned (a WebSocket pull writes a row per batch),
   # so the cap sits far beyond any real history; it only keeps a forged
   # page from producing an offset out of the database's range. A page past
@@ -30,6 +33,10 @@ defmodule PhoenixKitSync.Web.History do
     locale = params["locale"] || "en"
     project_title = Settings.get_project_title()
     config = PhoenixKitSync.get_config()
+
+    # Subscribed before the first read, so a change that lands between the
+    # read and the subscription is not lost.
+    if connected?(socket), do: subscribe()
 
     socket =
       socket
@@ -45,9 +52,21 @@ defmodule PhoenixKitSync.Web.History do
       |> assign(:status_filter, nil)
       |> assign(:show_approval_modal, false)
       |> assign(:selected_transfer, nil)
+      |> assign(:statuses, @statuses)
       |> maybe_load_transfers()
 
     {:ok, socket}
+  end
+
+  defp subscribe do
+    case PhoenixKit.Config.pubsub_server() do
+      nil ->
+        :ok
+
+      pubsub ->
+        Phoenix.PubSub.subscribe(pubsub, Transfers.pubsub_topic())
+        Phoenix.PubSub.subscribe(pubsub, Connections.pubsub_topic())
+    end
   end
 
   defp maybe_load_transfers(socket) do
@@ -74,7 +93,26 @@ defmodule PhoenixKitSync.Web.History do
       |> assign(:status_filter, status_filter)
       |> load_transfers()
 
-    {:noreply, socket}
+    # A page past the last one was clamped: the address follows, so the URL
+    # names the page that is shown (and a reload or a shared link lands on it).
+    if connected?(socket) and socket.assigns.page != page do
+      {:noreply, push_patch(socket, to: history_path(socket, socket.assigns.page), replace: true)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp history_path(socket, page) do
+    query =
+      [
+        {"page", page},
+        {"direction", socket.assigns.direction_filter},
+        {"status", socket.assigns.status_filter}
+      ]
+      |> Enum.reject(fn {_key, value} -> is_nil(value) or value == "" end)
+      |> URI.encode_query()
+
+    Routes.path("/admin/sync/history") <> "?" <> query
   end
 
   defp load_transfers(socket) do
@@ -201,26 +239,27 @@ defmodule PhoenixKitSync.Web.History do
   end
 
   def handle_event("page", %{"page" => page}, socket) do
-    query_params = %{"page" => page}
+    {:noreply, push_patch(socket, to: history_path(socket, page))}
+  end
 
-    query_params =
-      if socket.assigns.direction_filter,
-        do: Map.put(query_params, "direction", socket.assigns.direction_filter),
-        else: query_params
+  # A transfer was written, or a connection (whose name each row shows)
+  # changed: the page is read again where it stands.
+  @impl true
+  def handle_info({:transfer_changed, _uuid}, socket) do
+    {:noreply, load_transfers(socket)}
+  end
 
-    query_params =
-      if socket.assigns.status_filter,
-        do: Map.put(query_params, "status", socket.assigns.status_filter),
-        else: query_params
+  def handle_info({event, _uuid}, socket)
+      when event in [:connection_created, :connection_updated, :connection_deleted] do
+    {:noreply, load_transfers(socket)}
+  end
 
-    base_path = Routes.path("/admin/sync/history")
-    path = base_path <> "?" <> URI.encode_query(query_params)
-    {:noreply, push_patch(socket, to: path)}
+  def handle_info({:connection_status_changed, _uuid, _status}, socket) do
+    {:noreply, load_transfers(socket)}
   end
 
   # Catch-all so a stray PubSub message or an internal monitor signal can't
   # crash the LV. Mirrors the defensive clause on ConnectionsLive.
-  @impl true
   def handle_info(msg, socket) do
     Logger.debug("[Sync.History] unhandled message | msg=#{inspect(msg)}")
     {:noreply, socket}
@@ -241,9 +280,11 @@ defmodule PhoenixKitSync.Web.History do
           </.link>
 
           <div class="text-center">
-            <h1 class="text-4xl font-bold text-base-content mb-3">Transfer History</h1>
+            <h1 class="text-4xl font-bold text-base-content mb-3">
+              {gettext("Transfer History")}
+            </h1>
             <p class="text-lg text-base-content">
-              View and manage data transfers
+              {gettext("View and manage data transfers")}
             </p>
           </div>
         </header>
@@ -251,7 +292,7 @@ defmodule PhoenixKitSync.Web.History do
         <%= if not @config.enabled do %>
           <div class="alert alert-warning mb-6">
             <.icon name="hero-exclamation-triangle" class="w-5 h-5" />
-            <span>DB Sync module is disabled.</span>
+            <span>{gettext("The DB Sync module is disabled.")}</span>
           </div>
         <% end %>
 
@@ -260,7 +301,11 @@ defmodule PhoenixKitSync.Web.History do
           <div class="alert alert-info mb-6">
             <.icon name="hero-clock" class="w-5 h-5" />
             <span>
-              <strong>{@pending_approval_count}</strong> transfer(s) pending approval
+              {ngettext(
+                "%{count} transfer pending approval",
+                "%{count} transfers pending approval",
+                @pending_approval_count
+              )}
             </span>
             <button
               type="button"
@@ -269,7 +314,7 @@ defmodule PhoenixKitSync.Web.History do
               phx-value-status="pending_approval"
               class="btn btn-sm btn-primary"
             >
-              View Pending
+              {gettext("View Pending")}
             </button>
           </div>
         <% end %>
@@ -278,52 +323,46 @@ defmodule PhoenixKitSync.Web.History do
         <div class="card bg-base-100 shadow mb-6">
           <div class="card-body py-4">
             <div class="flex flex-wrap gap-4 items-end">
-              <div class="fieldset">
-                <label class="label">
-                  <span class="fieldset-legend">Direction</span>
-                </label>
-                <label class="select select-sm">
-                  <select
-                    phx-change="filter"
-                    name="direction"
-                  >
-                    <option value="" selected={@direction_filter == nil}>All</option>
-                    <option value="send" selected={@direction_filter == "send"}>Sent</option>
-                    <option value="receive" selected={@direction_filter == "receive"}>Received</option>
-                  </select>
-                </label>
-              </div>
+              <%!-- One form around both selects: a select's phx-change only
+                   reaches the server from inside a form, and the event
+                   carries both fields --%>
+              <form id="history-filters" phx-change="filter" class="flex flex-wrap gap-4 items-end">
+                <div class="fieldset">
+                  <label class="label" for="history-filter-direction">
+                    <span class="fieldset-legend">{gettext("Direction")}</span>
+                  </label>
+                  <label class="select select-sm">
+                    <select id="history-filter-direction" name="direction">
+                      <option value="" selected={@direction_filter == nil}>{gettext("All")}</option>
+                      <option
+                        :for={direction <- ~w(send receive)}
+                        value={direction}
+                        selected={@direction_filter == direction}
+                      >
+                        {direction_label(direction)}
+                      </option>
+                    </select>
+                  </label>
+                </div>
 
-              <div class="fieldset">
-                <label class="label">
-                  <span class="fieldset-legend">Status</span>
-                </label>
-                <label class="select select-sm">
-                  <select
-                    phx-change="filter"
-                    name="status"
-                  >
-                    <option value="" selected={@status_filter == nil}>All</option>
-                    <option value="pending" selected={@status_filter == "pending"}>Pending</option>
-                    <option value="pending_approval" selected={@status_filter == "pending_approval"}>
-                      Pending Approval
-                    </option>
-                    <option value="approved" selected={@status_filter == "approved"}>Approved</option>
-                    <option value="denied" selected={@status_filter == "denied"}>Denied</option>
-                    <option value="in_progress" selected={@status_filter == "in_progress"}>
-                      In Progress
-                    </option>
-                    <option value="completed" selected={@status_filter == "completed"}>
-                      Completed
-                    </option>
-                    <option value="failed" selected={@status_filter == "failed"}>Failed</option>
-                    <option value="cancelled" selected={@status_filter == "cancelled"}>
-                      Cancelled
-                    </option>
-                    <option value="expired" selected={@status_filter == "expired"}>Expired</option>
-                  </select>
-                </label>
-              </div>
+                <div class="fieldset">
+                  <label class="label" for="history-filter-status">
+                    <span class="fieldset-legend">{gettext("Status")}</span>
+                  </label>
+                  <label class="select select-sm">
+                    <select id="history-filter-status" name="status">
+                      <option value="" selected={@status_filter == nil}>{gettext("All")}</option>
+                      <option
+                        :for={status <- @statuses}
+                        value={status}
+                        selected={@status_filter == status}
+                      >
+                        {status_label(status)}
+                      </option>
+                    </select>
+                  </label>
+                </div>
+              </form>
 
               <%= if @direction_filter || @status_filter do %>
                 <button
@@ -331,12 +370,12 @@ defmodule PhoenixKitSync.Web.History do
                   phx-click="clear_filters"
                   class="btn btn-ghost btn-sm"
                 >
-                  Clear Filters
+                  {gettext("Clear Filters")}
                 </button>
               <% end %>
 
               <div class="ml-auto text-sm text-base-content/70">
-                {@total_count} transfer(s) found
+                {ngettext("%{count} transfer found", "%{count} transfers found", @total_count)}
               </div>
             </div>
           </div>
@@ -348,20 +387,20 @@ defmodule PhoenixKitSync.Web.History do
             <table class="table table-zebra">
               <thead>
                 <tr>
-                  <th>Direction</th>
-                  <th>Table</th>
-                  <th>Records</th>
-                  <th>Status</th>
-                  <th>Connection</th>
-                  <th>Date</th>
-                  <th>Actions</th>
+                  <th>{gettext("Direction")}</th>
+                  <th>{gettext("Table")}</th>
+                  <th>{gettext("Records")}</th>
+                  <th>{gettext("Status")}</th>
+                  <th>{gettext("Connection")}</th>
+                  <th>{gettext("Date")}</th>
+                  <th>{gettext("Actions")}</th>
                 </tr>
               </thead>
               <tbody>
                 <%= if Enum.empty?(@transfers) do %>
                   <tr>
                     <td colspan="7" class="text-center text-base-content/70 py-8">
-                      No transfers found
+                      {gettext("No transfers found")}
                     </td>
                   </tr>
                 <% else %>
@@ -381,7 +420,7 @@ defmodule PhoenixKitSync.Web.History do
                         <%= if transfer.connection do %>
                           {transfer.connection.name}
                         <% else %>
-                          <span class="opacity-50">Session</span>
+                          <span class="opacity-50">{gettext("Session")}</span>
                         <% end %>
                       </td>
                       <td class="text-sm text-base-content/70">
@@ -437,7 +476,7 @@ defmodule PhoenixKitSync.Web.History do
                 «
               </button>
               <button class="join-item btn btn-sm">
-                Page {@page} of {@total_pages}
+                {gettext("Page %{page} of %{total}", page: @page, total: @total_pages)}
               </button>
               <button
                 type="button"
@@ -472,9 +511,9 @@ defmodule PhoenixKitSync.Web.History do
       if(@direction == "send", do: "badge-primary", else: "badge-secondary")
     ]}>
       <%= if @direction == "send" do %>
-        <.icon name="hero-arrow-up-tray" class="w-3 h-3 mr-1" /> Sent
+        <.icon name="hero-arrow-up-tray" class="w-3 h-3 mr-1" /> {direction_label("send")}
       <% else %>
-        <.icon name="hero-arrow-down-tray" class="w-3 h-3 mr-1" /> Received
+        <.icon name="hero-arrow-down-tray" class="w-3 h-3 mr-1" /> {direction_label("receive")}
       <% end %>
     </span>
     """
@@ -485,7 +524,7 @@ defmodule PhoenixKitSync.Web.History do
     <div class="text-sm">
       <%= if @transfer.records_transferred > 0 do %>
         <span class="font-semibold">{@transfer.records_transferred}</span>
-        <span class="text-base-content/50">transferred</span>
+        <span class="text-base-content/50">{gettext("transferred")}</span>
         <%= if @transfer.records_created > 0 do %>
           <span class="text-success">+{@transfer.records_created}</span>
         <% end %>
@@ -497,7 +536,7 @@ defmodule PhoenixKitSync.Web.History do
         <% end %>
       <% else %>
         <span class="text-base-content/50">
-          {@transfer.records_requested || 0} requested
+          {gettext("%{count} requested", count: @transfer.records_requested || 0)}
         </span>
       <% end %>
     </div>
@@ -517,20 +556,20 @@ defmodule PhoenixKitSync.Web.History do
         </button>
 
         <h3 class="font-bold text-lg mb-4">
-          Transfer Details <.status_badge status={@transfer.status} />
+          {gettext("Transfer Details")} <.status_badge status={@transfer.status} />
         </h3>
 
         <div class="grid gap-4">
           <%!-- Basic Info --%>
           <div class="grid grid-cols-2 gap-4">
             <div>
-              <label class="text-sm text-base-content/70">Direction</label>
+              <label class="text-sm text-base-content/70">{gettext("Direction")}</label>
               <p class="font-semibold">
                 <.direction_badge direction={@transfer.direction} />
               </p>
             </div>
             <div>
-              <label class="text-sm text-base-content/70">Table</label>
+              <label class="text-sm text-base-content/70">{gettext("Table")}</label>
               <p class="font-mono">{@transfer.table_name}</p>
             </div>
           </div>
@@ -538,34 +577,34 @@ defmodule PhoenixKitSync.Web.History do
           <%!-- Records Info --%>
           <div class="grid grid-cols-3 gap-4">
             <div>
-              <label class="text-sm text-base-content/70">Requested</label>
+              <label class="text-sm text-base-content/70">{gettext("Requested")}</label>
               <p class="font-semibold">{@transfer.records_requested || 0}</p>
             </div>
             <div>
-              <label class="text-sm text-base-content/70">Transferred</label>
+              <label class="text-sm text-base-content/70">{gettext("Transferred")}</label>
               <p class="font-semibold">{@transfer.records_transferred}</p>
             </div>
             <div>
-              <label class="text-sm text-base-content/70">Bytes</label>
+              <label class="text-sm text-base-content/70">{gettext("Bytes")}</label>
               <p class="font-semibold">{format_bytes(@transfer.bytes_transferred)}</p>
             </div>
           </div>
 
           <div class="grid grid-cols-4 gap-4">
             <div>
-              <label class="text-sm text-base-content/70">Created</label>
+              <label class="text-sm text-base-content/70">{gettext("Created")}</label>
               <p class="text-success font-semibold">{@transfer.records_created}</p>
             </div>
             <div>
-              <label class="text-sm text-base-content/70">Updated</label>
+              <label class="text-sm text-base-content/70">{gettext("Updated")}</label>
               <p class="text-info font-semibold">{@transfer.records_updated}</p>
             </div>
             <div>
-              <label class="text-sm text-base-content/70">Skipped</label>
+              <label class="text-sm text-base-content/70">{gettext("Skipped")}</label>
               <p class="text-warning font-semibold">{@transfer.records_skipped}</p>
             </div>
             <div>
-              <label class="text-sm text-base-content/70">Failed</label>
+              <label class="text-sm text-base-content/70">{gettext("Failed")}</label>
               <p class="text-error font-semibold">{@transfer.records_failed}</p>
             </div>
           </div>
@@ -574,7 +613,7 @@ defmodule PhoenixKitSync.Web.History do
           <%= if @transfer.connection do %>
             <div class="divider my-2"></div>
             <div>
-              <label class="text-sm text-base-content/70">Connection</label>
+              <label class="text-sm text-base-content/70">{gettext("Connection")}</label>
               <p>{@transfer.connection.name}</p>
               <p class="text-sm text-base-content/50">{@transfer.connection.site_url}</p>
             </div>
@@ -585,12 +624,12 @@ defmodule PhoenixKitSync.Web.History do
             <div class="divider my-2"></div>
             <div class="grid grid-cols-2 gap-4">
               <div>
-                <label class="text-sm text-base-content/70">Requester IP</label>
-                <p class="font-mono text-sm">{@transfer.requester_ip || "Unknown"}</p>
+                <label class="text-sm text-base-content/70">{gettext("Requester IP")}</label>
+                <p class="font-mono text-sm">{@transfer.requester_ip || gettext("Unknown")}</p>
               </div>
               <div>
-                <label class="text-sm text-base-content/70">Conflict Strategy</label>
-                <p>{@transfer.conflict_strategy || "default"}</p>
+                <label class="text-sm text-base-content/70">{gettext("Conflict Strategy")}</label>
+                <p>{@transfer.conflict_strategy || gettext("default")}</p>
               </div>
             </div>
           <% end %>
@@ -599,7 +638,7 @@ defmodule PhoenixKitSync.Web.History do
           <%= if @transfer.error_message do %>
             <div class="alert alert-error">
               <.icon name="hero-exclamation-circle" class="w-5 h-5" />
-              <span>{@transfer.error_message}</span>
+              <span>{Errors.transfer_error(@transfer.error_message)}</span>
             </div>
           <% end %>
 
@@ -607,7 +646,7 @@ defmodule PhoenixKitSync.Web.History do
           <%= if @transfer.denial_reason do %>
             <div class="alert alert-warning">
               <.icon name="hero-x-circle" class="w-5 h-5" />
-              <span>Denied: {@transfer.denial_reason}</span>
+              <span>{gettext("Denied: %{reason}", reason: @transfer.denial_reason)}</span>
             </div>
           <% end %>
 
@@ -615,18 +654,18 @@ defmodule PhoenixKitSync.Web.History do
           <div class="divider my-2"></div>
           <div class="grid grid-cols-2 gap-4 text-sm">
             <div>
-              <label class="text-base-content/70">Created</label>
+              <label class="text-base-content/70">{gettext("Created")}</label>
               <p>{Calendar.strftime(@transfer.inserted_at, "%Y-%m-%d %H:%M:%S")}</p>
             </div>
             <%= if @transfer.started_at do %>
               <div>
-                <label class="text-base-content/70">Started</label>
+                <label class="text-base-content/70">{gettext("Started")}</label>
                 <p>{Calendar.strftime(@transfer.started_at, "%Y-%m-%d %H:%M:%S")}</p>
               </div>
             <% end %>
             <%= if @transfer.completed_at do %>
               <div>
-                <label class="text-base-content/70">Completed</label>
+                <label class="text-base-content/70">{gettext("Completed")}</label>
                 <p>{Calendar.strftime(@transfer.completed_at, "%Y-%m-%d %H:%M:%S")}</p>
               </div>
             <% end %>
@@ -674,6 +713,27 @@ defmodule PhoenixKitSync.Web.History do
     </div>
     """
   end
+
+  @doc """
+  The label of a transfer status, in the reader's language. Unknown values
+  (a status from a newer version) show as stored.
+  """
+  @spec status_label(String.t() | nil) :: String.t()
+  def status_label("pending"), do: gettext("Pending")
+  def status_label("pending_approval"), do: gettext("Pending Approval")
+  def status_label("approved"), do: gettext("Approved")
+  def status_label("denied"), do: gettext("Denied")
+  def status_label("in_progress"), do: gettext("In Progress")
+  def status_label("completed"), do: gettext("Completed")
+  def status_label("failed"), do: gettext("Failed")
+  def status_label("cancelled"), do: gettext("Cancelled")
+  def status_label("expired"), do: gettext("Expired")
+  def status_label(nil), do: ""
+  def status_label(other) when is_binary(other), do: other
+
+  defp direction_label("send"), do: gettext("Sent")
+  defp direction_label("receive"), do: gettext("Received")
+  defp direction_label(other), do: other
 
   defp format_bytes(bytes) when is_nil(bytes) or bytes == 0, do: "0 B"
 

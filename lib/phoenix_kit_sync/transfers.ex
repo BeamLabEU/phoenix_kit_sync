@@ -108,7 +108,23 @@ defmodule PhoenixKitSync.Transfers do
   # Connections.log_sync_activity/4: core's log never raises, so a missing
   # phoenix_kit_activities table never crashes the operation. Metadata is deliberately limited to table_name, direction,
   # status, records_requested/transferred (numbers + strings, never PII).
+  @doc """
+  PubSub topic `Transfers` broadcasts `{:transfer_changed, uuid}` on when a
+  transfer is created or reaches a new state. The History page listens.
+  """
+  @spec pubsub_topic() :: String.t()
+  def pubsub_topic, do: "sync:transfers"
+
+  defp broadcast_changed(%Transfer{uuid: uuid}) do
+    case PhoenixKit.Config.pubsub_server() do
+      nil -> :ok
+      pubsub -> Phoenix.PubSub.broadcast(pubsub, pubsub_topic(), {:transfer_changed, uuid})
+    end
+  end
+
   defp tap_activity({:ok, %Transfer{} = transfer} = result, action, opts) do
+    broadcast_changed(transfer)
+
     PhoenixKit.Activity.log("sync", "sync.transfer.#{action}",
       actor_uuid: Keyword.get(opts, :actor_uuid),
       resource_type: "sync_transfer",
@@ -125,7 +141,67 @@ defmodule PhoenixKitSync.Transfers do
     result
   end
 
+  # The write failed: the attempt is still logged, marked `db_pending`,
+  # with what the row would have held. There is no row to point at when it
+  # was the insert that failed.
+  defp tap_activity(
+         {:error, %Ecto.Changeset{data: %Transfer{}} = changeset} = result,
+         action,
+         opts
+       ) do
+    transfer = Ecto.Changeset.apply_changes(changeset)
+
+    PhoenixKit.Activity.log("sync", "sync.transfer.#{action}",
+      actor_uuid: Keyword.get(opts, :actor_uuid),
+      resource_type: "sync_transfer",
+      resource_uuid: changeset.data.uuid,
+      metadata: %{
+        "table_name" => transfer.table_name,
+        "direction" => transfer.direction,
+        "status" => changeset.data.status,
+        "db_pending" => true
+      }
+    )
+
+    result
+  end
+
   defp tap_activity(result, _action, _opts), do: result
+
+  @doc """
+  Records a transfer that is already over, in one write.
+
+  For the sending side of a pull, where the whole transfer is one answer:
+  writing it in its final state leaves no window in which a failure between
+  two writes strands the row `in_progress`.
+
+  - `attrs` - As for `create_transfer/2`, plus the record counts
+  - `outcome` - `:completed`, or `{:failed, reason}` where `reason` is an
+    error atom; its name is stored as the `error_message` and shown through
+    `PhoenixKitSync.Errors.transfer_error/1`
+
+  ## Examples
+
+      {:ok, transfer} =
+        Transfers.record_finished(
+          %{direction: "send", table_name: "users", records_transferred: 500},
+          :completed
+        )
+  """
+  @spec record_finished(map(), :completed | {:failed, atom()}, keyword()) ::
+          {:ok, Transfer.t()} | {:error, Ecto.Changeset.t()}
+  def record_finished(attrs, outcome, opts \\ []) do
+    {status, error_message} =
+      case outcome do
+        :completed -> {"completed", nil}
+        {:failed, reason} when is_atom(reason) -> {"failed", Atom.to_string(reason)}
+      end
+
+    %Transfer{}
+    |> Transfer.finished_changeset(attrs, status, error_message)
+    |> RepoHelper.repo().insert()
+    |> tap_activity(status, opts)
+  end
 
   @doc """
   Gets a transfer by UUID.
@@ -133,7 +209,7 @@ defmodule PhoenixKitSync.Transfers do
   Accepts:
   - UUID string: `get_transfer("01234567-89ab-cdef-0123-456789abcdef")`
   """
-  @spec get_transfer(String.t() | any()) :: Transfer.t() | nil
+  @spec get_transfer(term()) :: Transfer.t() | nil
   def get_transfer(uuid) when is_binary(uuid) do
     repo = RepoHelper.repo()
 

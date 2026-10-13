@@ -22,10 +22,13 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.CreateTableTest do
       Connections.create_connection(%{
         "name" => "Stub sender #{System.unique_integer([:positive])}",
         "direction" => "receiver",
+        "status" => "active",
         "site_url" => StubRemote.url()
       })
 
-    {:ok, conn: put_test_scope(conn, fake_scope()), connection: connection}
+    {:ok,
+     conn: put_test_scope(conn, fake_scope(user_uuid: PhoenixKitSync.TestActor.uuid())),
+     connection: connection}
   end
 
   defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
@@ -85,6 +88,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive.CreateTableTest do
     assert SchemaInspector.table_exists?(@table)
     assert {:ok, ["code"]} = SchemaInspector.get_primary_key(@table)
     assert assigns(view).local_table_exists
+
+    # DDL on this site's database: logged under the admin who clicked.
+    assert_activity_logged("sync.table.created",
+      actor_uuid: assigns(view).phoenix_kit_current_scope.user.uuid,
+      metadata_has: %{"table_name" => @table}
+    )
   end
 
   test "an older sender's schema without primary_key is refused, saying why", %{

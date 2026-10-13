@@ -14,7 +14,7 @@ defmodule PhoenixKitSync.Web.Receiver do
   """
 
   use PhoenixKitWeb, :live_view
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitSync.Gettext
 
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth.Scope
@@ -85,15 +85,11 @@ defmodule PhoenixKitSync.Web.Receiver do
     {:noreply, socket}
   end
 
-  @impl true
-  def terminate(_reason, socket) do
-    # Clean up WebSocket client on unmount
-    if socket.assigns.ws_client do
-      WebSocketClient.disconnect(socket.assigns.ws_client)
-    end
-
-    :ok
-  end
+  # No terminate/2: the WebSocket client is started linked to this process
+  # (WebSocketClient.start_link/1 in handle_info(:start_websocket)), and a
+  # LiveView never stops with :normal, so the client goes with it on a
+  # closed tab, a crash and a kill alike. terminate/2 would only run on a
+  # graceful stop, since this process does not trap exits.
 
   # ===========================================
   # EVENT HANDLERS
@@ -738,6 +734,16 @@ defmodule PhoenixKitSync.Web.Receiver do
     # stuck at 0 would request the same batch forever.
     offset = requested_offset(progress, table)
 
+    # The loop below ends on an empty batch, so a sender that ignores the
+    # offset and answers the same batch again would keep it going for good.
+    # A batch that starts with the record the one before started with, or a
+    # table that runs past the paging cap, ends the table instead.
+    first_record = List.first(records)
+    stalled? = paging_stalled?(progress, table, first_record, offset)
+    records = if stalled?, do: [], else: records
+    progress = Map.put(progress, :last_first_record, {table, first_record})
+    socket = assign(socket, :transfer_progress, progress)
+
     strategy = socket.assigns.conflict_strategy
 
     # Get schema for this table (for auto-creation of missing tables)
@@ -746,7 +752,9 @@ defmodule PhoenixKitSync.Web.Receiver do
     # Queue import job for this batch
     socket =
       if records != [] do
-        case queue_import_job(table, records, strategy, offset, schema: table_schema) do
+        case queue_import_job(table, records, strategy, progress.jobs_queued,
+               schema: table_schema
+             ) do
           {:ok, _job} ->
             assign(socket, :transfer_progress, %{
               progress
@@ -772,8 +780,12 @@ defmodule PhoenixKitSync.Web.Receiver do
       if records != [] do
         new_offset = offset + length(records)
 
+        # A sender that answers a position continues from that key, so rows
+        # written during the transfer do not shift its pages; one that does
+        # not reads the offset.
         WebSocketClient.request_records(socket.assigns.ws_client, table,
           offset: new_offset,
+          after: Map.get(result, :next_after),
           limit: @batch_size
         )
 
@@ -812,7 +824,7 @@ defmodule PhoenixKitSync.Web.Receiver do
   @impl true
   def handle_info({:sync_client, {:request_error, {:records, table}, error}}, socket)
       when socket.assigns.transferring do
-    Logger.error("Sync.Receiver: Error fetching records for #{table}: #{error}")
+    Logger.error("Sync.Receiver: Error fetching records for #{table}: #{inspect(error)}")
 
     progress = socket.assigns.transfer_progress
     tables_pending = List.delete(progress.tables_pending, table)
@@ -829,7 +841,7 @@ defmodule PhoenixKitSync.Web.Receiver do
         :warning,
         gettext("Failed to fetch records from %{table}: %{error}",
           table: table,
-          error: to_string(error)
+          error: request_error_text(error)
         )
       )
 
@@ -1910,15 +1922,37 @@ defmodule PhoenixKitSync.Web.Receiver do
     end
   end
 
+  # The sender's own text, or this site's reading of a malformed answer.
+  defp request_error_text(error) when is_atom(error), do: Errors.message(error)
+  defp request_error_text(error), do: to_string(error)
+
   defp requested_offset(%{pending_fetch: {table, offset}}, table), do: offset
   defp requested_offset(_progress, _table), do: 0
 
+  defp paging_stalled?(_progress, _table, nil, _offset), do: false
+
+  defp paging_stalled?(progress, table, first_record, offset) do
+    stalled? =
+      Map.get(progress, :last_first_record) == {table, first_record} or
+        offset >= PhoenixKitSync.Params.max_offset()
+
+    if stalled? do
+      Logger.warning(
+        "Sync.Receiver: the sender's paging of #{table} did not advance; table ended"
+      )
+    end
+
+    stalled?
+  end
+
+  # `batch_index` counts the batches queued so far. It is not derived from
+  # the record offset: a sender may answer fewer records than asked.
   defp queue_import_job(table, records, strategy, batch_index, opts) do
     # Generate a simple session code for tracking
     session_code = "transfer_#{:os.system_time(:millisecond)}"
     schema = Keyword.get(opts, :schema)
 
-    job_opts = [batch_index: div(batch_index, @batch_size)]
+    job_opts = [batch_index: batch_index]
     job_opts = if schema, do: Keyword.put(job_opts, :schema, schema), else: job_opts
 
     ImportWorker.create_job(table, records, strategy, session_code, job_opts)

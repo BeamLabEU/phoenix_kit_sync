@@ -13,7 +13,7 @@ defmodule PhoenixKitSync.Web.Sender do
   """
 
   use PhoenixKitWeb, :live_view
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitSync.Gettext
 
   alias PhoenixKit.Settings
   alias PhoenixKit.Utils.Date, as: UtilsDate
@@ -54,15 +54,10 @@ defmodule PhoenixKitSync.Web.Sender do
     {:noreply, socket}
   end
 
-  @impl true
-  def terminate(_reason, socket) do
-    # Clean up session on unmount
-    if socket.assigns.session do
-      PhoenixKitSync.delete_session(socket.assigns.session.code)
-    end
-
-    :ok
-  end
+  # No terminate/2: the session is removed by SessionStore, which monitors
+  # this process as the session's owner (PhoenixKitSync.create_session/2),
+  # so it goes on a closed tab, a crash and a kill alike. terminate/2 would
+  # only run on a graceful stop, since this process does not trap exits.
 
   # ===========================================
   # EVENT HANDLERS
@@ -171,7 +166,7 @@ defmodule PhoenixKitSync.Web.Sender do
 
   @impl true
   def handle_info({:sync, {:receiver_joined, channel_pid, full_info}}, socket) do
-    Logger.info("Sync.Sender: Receiver connected - #{inspect(full_info)}")
+    Logger.info("Sync.Sender: Receiver connected")
 
     # Extract receiver_info and connection_info from the full_info map
     # Handle both new format (with :receiver_info/:connection_info keys) and old format
@@ -559,7 +554,7 @@ defmodule PhoenixKitSync.Web.Sender do
 
         <%!-- Expandable details --%>
         <%= if map_size(@connection_info) > 2 do %>
-          <details class="mt-3">
+          <details class="mt-3" phx-mounted={Phoenix.LiveView.JS.ignore_attributes(["open"])}>
             <summary class="text-xs text-base-content/60 cursor-pointer hover:text-base-content">
               More connection details...
             </summary>

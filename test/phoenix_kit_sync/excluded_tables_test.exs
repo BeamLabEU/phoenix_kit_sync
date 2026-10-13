@@ -13,7 +13,26 @@ defmodule PhoenixKitSync.ExcludedTablesTest do
     "oban_anything",
     "pg_class",
     "phoenix_kit_user_tokens",
-    "phoenix_kit_users_tokens"
+    "phoenix_kit_users_tokens",
+    # This module's own tables: auth_token_hash is the REST credential.
+    "phoenix_kit_sync_connections",
+    "phoenix_kit_sync_transfers",
+    # Settings hold the incoming password and every integration's keys.
+    "phoenix_kit_settings",
+    "phoenix_kit_user_oauth_providers",
+    "phoenix_kit_organization_invitations",
+    "phoenix_kit_ai_accounts",
+    "phoenix_kit_ai_endpoints",
+    "phoenix_kit_buckets",
+    "phoenix_kit_payment_provider_configs",
+    # Not listed anywhere: excluded by what their names say they hold.
+    "my_app_api_tokens",
+    "shop_webhook_secrets",
+    "partner_credentials",
+    "Legacy_Passwords",
+    "third_party_api_keys",
+    "my_oauth_grants",
+    "web_sessions"
   ]
 
   describe "SchemaInspector.excluded_table?/1" do
@@ -28,7 +47,7 @@ defmodule PhoenixKitSync.ExcludedTablesTest do
     end
 
     test "is false for other tables, phoenix_kit ones included" do
-      for name <- ["users", "orders", "phoenix_kit_users", "phoenix_kit_sync_connections"] do
+      for name <- ["users", "orders", "phoenix_kit_users", "phoenix_kit_posts"] do
         refute SchemaInspector.excluded_table?(name)
       end
     end

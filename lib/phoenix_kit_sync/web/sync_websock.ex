@@ -28,7 +28,11 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   - `request:tables` - List available tables
   - `request:schema` - Get table schema
   - `request:count` - Get record count
-  - `request:records` - Fetch records with pagination
+  - `request:records` - Fetch records with pagination: `table`, `limit`
+    and `offset`, or `after` (the `next_after` of the reply before) to
+    continue from that key instead of the offset. The reply carries
+    `records`, `offset`, `has_more` and, when the table's key has a cursor
+    (`PhoenixKitSync.PullCursor`), `next_after`
   """
 
   @behaviour WebSock
@@ -39,6 +43,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   alias PhoenixKitSync.Connections
   alias PhoenixKitSync.DataExporter
   alias PhoenixKitSync.Params
+  alias PhoenixKitSync.PullCursor
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Transfers
 
@@ -47,9 +52,14 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
     :code,
     :session,
     :db_connection,
+    :password,
+    :refused,
     :joined,
     :receiver_info,
-    :connection_info
+    :connection_info,
+    # Where each table's next page continues, as this socket answered it:
+    # `%{table => %{after: next_after | nil, offset: next_offset, at: ms}}`.
+    pages: %{}
   ]
 
   # ===========================================
@@ -67,7 +77,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
           code = Keyword.get(opts, :code)
           session = Keyword.get(opts, :session)
 
-          Logger.info("Sync.Websock: Session connection initialized for code #{code}")
+          Logger.info("Sync.Websock: Session connection initialized")
 
           %__MODULE__{
             auth_type: :session,
@@ -88,6 +98,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
             code: "conn:#{db_connection.uuid}",
             session: nil,
             db_connection: db_connection,
+            password: Keyword.get(opts, :password),
             joined: false,
             connection_info: connection_info
           }
@@ -99,8 +110,15 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   @impl WebSock
   def handle_in({text, [opcode: :text]}, state) do
     case Jason.decode(text) do
-      {:ok, [join_ref, ref, topic, event, payload]} ->
+      {:ok, [join_ref, ref, topic, event, payload]} when is_binary(topic) and is_binary(event) ->
+        state = authorize(state, continuation?(event, payload, state))
         handle_message(join_ref, ref, topic, event, payload, state)
+
+      # Valid JSON that is not a `[join_ref, ref, topic, event, payload]`
+      # frame: the peer's to get wrong, not this process's to crash on.
+      {:ok, _not_a_frame} ->
+        Logger.warning("Sync.Websock: Ignoring a message that is not a channel frame")
+        {:ok, state}
 
       {:error, reason} ->
         Logger.warning("Sync.Websock: Failed to decode message: #{inspect(reason)}")
@@ -127,7 +145,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
 
   @impl WebSock
   def terminate(reason, state) do
-    Logger.info("Sync.Websock: Terminated for code #{state.code}, reason: #{inspect(reason)}")
+    Logger.info("Sync.Websock: Terminated (#{state.auth_type}), reason: #{inspect(reason)}")
 
     # Notify sender's LiveView that receiver disconnected
     if state.session && state.session[:owner_pid] do
@@ -144,10 +162,14 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   # Handle join message
   defp handle_message(_join_ref, ref, "transfer:" <> code, "phx_join", payload, state) do
     if code == state.code do
-      Logger.info("Sync.Websock: Receiver joined for code #{code}")
+      Logger.info("Sync.Websock: Receiver joined")
 
       # Extract receiver info from join payload
-      receiver_info = get_in(payload, ["receiver_info"]) || %{}
+      receiver_info =
+        case payload do
+          %{"receiver_info" => %{} = info} -> info
+          _ -> %{}
+        end
 
       # Merge connection_info (from HTTP upgrade) with receiver_info (from join payload)
       full_connection_info = %{
@@ -177,7 +199,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
 
       {:push, {:text, reply}, state}
     else
-      Logger.warning("Sync.Websock: Code mismatch - expected #{state.code}, got #{code}")
+      Logger.warning("Sync.Websock: Join refused - topic does not match this socket")
 
       reply =
         encode_reply(ref, "transfer:#{code}", "phx_reply", %{
@@ -225,6 +247,27 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
     end
   end
 
+  # A permanent connection is authorized again for every request, against
+  # the row as it is now (see authorize/1): a refused one gets the reason
+  # and no data.
+  defp handle_message(
+         _join_ref,
+         _ref,
+         _topic,
+         "request:" <> _ = _event,
+         payload,
+         %{joined: true, refused: reason} = state
+       )
+       when not is_nil(reason) do
+    response =
+      encode_push("transfer:#{state.code}", "response:error", %{
+        "error" => "Access denied: #{reason}",
+        "ref" => if(is_map(payload), do: payload["ref"])
+      })
+
+    {:push, {:text, response}, state}
+  end
+
   # Handle tables request
   defp handle_message(_join_ref, _ref, _topic, "request:tables", %{"ref" => client_ref}, state) do
     if state.joined do
@@ -262,7 +305,8 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
          "request:schema",
          %{"table" => table, "ref" => client_ref},
          state
-       ) do
+       )
+       when is_binary(table) do
     if state.joined do
       Logger.debug("Sync.Websock: Schema requested for #{table}")
 
@@ -283,7 +327,8 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
          "request:count",
          %{"table" => table, "ref" => client_ref},
          state
-       ) do
+       )
+       when is_binary(table) do
     if state.joined do
       Logger.debug("Sync.Websock: Count requested for #{table}")
 
@@ -304,7 +349,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
       not state.joined ->
         {:ok, state}
 
-      not is_binary(payload["table"]) or not is_binary(payload["ref"]) ->
+      not is_map(payload) or not is_binary(payload["table"]) or not is_binary(payload["ref"]) ->
         Logger.warning(
           "Sync.Websock: request:records missing/invalid required fields | payload=#{inspect(payload, limit: 5)}"
         )
@@ -326,16 +371,27 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
           "Sync.Websock: Records requested for #{table} (offset: #{offset}, limit: #{effective_limit})"
         )
 
-        response = fetch_and_respond_records(table, offset, effective_limit, client_ref, state)
+        # A receiver that pages by key sends the position the page before
+        # answered; one that does not sends an offset alone.
+        page = [
+          offset: offset,
+          limit: effective_limit,
+          after: PullCursor.from_params(payload),
+          continuation: continuation?("request:records", payload, state)
+        ]
+
+        {response, state} = fetch_and_respond_records(table, page, client_ref, state)
 
         {:push, {:text, response}, state}
     end
   end
 
   # Catch-all for unknown messages
-  defp handle_message(_join_ref, _ref, topic, event, payload, state) do
+  # The topic is "transfer:" and the session code, so it is not logged.
+  defp handle_message(_join_ref, _ref, _topic, event, payload, state) do
     Logger.warning(
-      "Sync.Websock: Unknown message - topic: #{topic}, event: #{event}, payload: #{inspect(payload)}"
+      "Sync.Websock: Unknown message - event: #{inspect(event)}, " <>
+        "payload: #{inspect(payload, limit: 5)}"
     )
 
     {:ok, state}
@@ -403,40 +459,142 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   # RECORDS FETCHING HELPER
   # ===========================================
 
-  defp fetch_and_respond_records(table, offset, limit, client_ref, state) do
+  defp fetch_and_respond_records(table, page, client_ref, state) do
     if table_allowed?(table, state) do
-      fetch_records_for_table(table, offset, limit, client_ref, state)
+      fetch_records_for_table(table, page, client_ref, state)
     else
-      encode_push("transfer:#{state.code}", "response:error", %{
-        "error" => "Access denied to table: #{table}",
-        "ref" => client_ref
-      })
+      {encode_push("transfer:#{state.code}", "response:error", %{
+         "error" => "Access denied to table: #{table}",
+         "ref" => client_ref
+       }), state}
     end
   end
 
-  defp fetch_records_for_table(table, offset, limit, client_ref, state) do
-    case DataExporter.fetch_records(table, offset: offset, limit: limit) do
-      {:ok, records} ->
-        records_count = Enum.count(records)
+  # A permanent connection's page is read under a reservation
+  # (Connections.reserve_transfer/2), which is what holds max_downloads and
+  # max_records_total: the page is cut to what was granted, and a page that
+  # sent nothing gives the reservation back.
+  defp fetch_records_for_table(table, page, client_ref, state) do
+    with {:ok, position} <- page[:after],
+         {:ok, reservation} <- reserve(state, page),
+         page = Keyword.put(page, :limit, granted(reservation, page)),
+         {:ok, %{records: records, next_after: next_after}} <-
+           reserved(
+             reservation,
+             DataExporter.fetch_page(table, Keyword.put(page, :after, position))
+           ) do
+      records_count = Enum.count(records)
 
-        # Track transfer for permanent connections
-        if state.auth_type == :connection && records_count > 0 do
-          track_transfer(state.db_connection, table, records_count, state.connection_info)
-        end
+      settle(reservation, records_count, table, state)
 
-        encode_push("transfer:#{state.code}", "response:records", %{
-          "records" => records,
-          "offset" => offset,
-          "has_more" => records_count == limit,
-          "ref" => client_ref
-        })
+      response =
+        encode_push(
+          "transfer:#{state.code}",
+          "response:records",
+          records_reply(records, records_count, next_after, page, client_ref)
+        )
+
+      {response, remember_page(state, table, records_count, next_after, page)}
+    else
+      {:error, reason} when reason in [:download_limit_reached, :record_limit_reached] ->
+        {encode_push("transfer:#{state.code}", "response:error", %{
+           "error" => "Access denied: #{reason}",
+           "ref" => client_ref
+         }), state}
 
       {:error, reason} ->
-        encode_push("transfer:#{state.code}", "response:error", %{
-          "error" => "Failed to fetch records: #{inspect(reason)}",
-          "ref" => client_ref
-        })
+        {encode_push("transfer:#{state.code}", "response:error", %{
+           "error" => "Failed to fetch records: #{inspect(reason)}",
+           "ref" => client_ref
+         }), state}
     end
+  end
+
+  defp reserve(%{auth_type: :connection, db_connection: connection}, page) do
+    Connections.reserve_transfer(connection, %{
+      downloads: if(page[:continuation], do: 0, else: 1),
+      records: page[:limit]
+    })
+  end
+
+  defp reserve(_session_state, _page), do: {:ok, nil}
+
+  defp granted(nil, page), do: page[:limit]
+  defp granted(reservation, _page), do: reservation.records
+
+  defp reserved(nil, result), do: result
+  defp reserved(_reservation, {:ok, _} = result), do: result
+
+  defp reserved(reservation, error) do
+    Connections.cancel_transfer(reservation)
+    error
+  end
+
+  defp settle(nil, _records_count, _table, _state), do: :ok
+  defp settle(reservation, 0, _table, _state), do: Connections.cancel_transfer(reservation)
+
+  defp settle(reservation, records_count, table, state) do
+    Connections.settle_transfer(reservation, records_count)
+    track_transfer(state.db_connection, table, records_count, state.connection_info)
+  end
+
+  # A paged read of a table is one download however many requests it
+  # takes. Which request continues one is decided from what this socket
+  # itself answered, never from what the peer says about its request: the
+  # page for a table is a continuation when it asks for exactly the
+  # position (or, from a peer that pages by offset, the offset) the page
+  # before ended on, within the time a REST cursor is good for. Its records
+  # count like any page's.
+  @continuation_ms 600_000
+
+  defp continuation?("request:records", %{"table" => table} = payload, %{pages: pages})
+       when is_map_key(pages, table) do
+    expected = pages[table]
+
+    fresh? = System.monotonic_time(:millisecond) - expected.at <= @continuation_ms
+
+    case PullCursor.from_params(payload) do
+      {:ok, nil} ->
+        fresh? and
+          Params.bounded_int(payload["offset"], 0, 0, Params.max_offset()) == expected.offset
+
+      {:ok, position} ->
+        fresh? and position == expected.after
+
+      {:error, _reason} ->
+        false
+    end
+  end
+
+  defp continuation?(_event, _payload, _state), do: false
+
+  # A page with rows may be followed by another, and a receiver reads on
+  # until an empty one, so the position is kept whether or not the page was
+  # full. The empty page ends the read: what comes after it is a new one.
+  defp remember_page(state, table, 0, _next_after, _page),
+    do: %{state | pages: Map.delete(state.pages, table)}
+
+  defp remember_page(state, table, records_count, next_after, page) do
+    next = %{
+      after: next_after,
+      offset: page[:offset] + records_count,
+      at: System.monotonic_time(:millisecond)
+    }
+
+    %{state | pages: Map.put(state.pages, table, next)}
+  end
+
+  # "next_after" is only added, never nil: a receiver from before it reads
+  # "records" and "offset" and pages by offset as it always did.
+  defp records_reply(records, records_count, next_after, page, client_ref) do
+    reply = %{
+      "records" => records,
+      "offset" => page[:offset],
+      "has_more" => records_count == page[:limit],
+      "ref" => client_ref
+    }
+
+    if next_after, do: Map.put(reply, "next_after", next_after), else: reply
   end
 
   # ===========================================
@@ -473,16 +631,47 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   end
 
   # Get the effective limit considering connection's max_records_per_request
+  # and what is left of its max_records_total
   defp get_effective_limit(requested_limit, %{auth_type: :session}), do: requested_limit
 
   defp get_effective_limit(requested_limit, %{auth_type: :connection, db_connection: conn}) do
     max_per_request = conn.max_records_per_request || 10_000
-    min(requested_limit, max_per_request)
+
+    case Connections.remaining_records(conn) do
+      :unlimited -> min(requested_limit, max_per_request)
+      remaining -> Enum.min([requested_limit, max_per_request, max(remaining, 1)])
+    end
   end
+
+  # The socket outlives the moment it was authorized: the admin may revoke
+  # or narrow the connection, a limit may be reached, the allowed hours may
+  # end. So a permanent connection is loaded again and passed through
+  # Connections.authorize_request/3 (what the upgrade and the REST actions
+  # use) before every message; the state carries the fresh row, or the
+  # reason it is refused.
+  defp authorize(
+         %__MODULE__{auth_type: :connection, db_connection: snapshot} = state,
+         continuation
+       ) do
+    with %Connection{} = connection <- Connections.get_connection(snapshot.uuid),
+         :ok <-
+           Connections.authorize_request(
+             connection,
+             Map.get(state.connection_info || %{}, :remote_ip),
+             password: state.password,
+             continuation: continuation
+           ) do
+      %{state | db_connection: connection, refused: nil}
+    else
+      nil -> %{state | refused: :connection_not_active}
+      {:error, reason} -> %{state | refused: reason}
+    end
+  end
+
+  defp authorize(state, _continuation), do: state
 
   # Track transfer for permanent connections
   defp track_transfer(db_connection, table_name, records_count, connection_info) do
-    # Create a transfer record
     attrs = %{
       direction: "send",
       connection_uuid: db_connection.uuid,
@@ -490,27 +679,20 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
       records_requested: records_count,
       records_transferred: records_count,
       records_created: records_count,
-      status: "completed",
       requester_ip: Map.get(connection_info, :remote_ip),
-      requester_user_agent: Map.get(connection_info, :user_agent)
+      requester_user_agent: truncate(Map.get(connection_info, :user_agent))
     }
 
-    case Transfers.create_transfer(attrs) do
-      {:ok, transfer} ->
-        # Update the transfer to completed immediately (single batch transfer)
-        Transfers.complete_transfer(transfer, %{
-          records_transferred: records_count,
-          records_created: records_count
-        })
-
-        # Update connection statistics
-        Connections.record_transfer(db_connection, %{
-          records_count: records_count,
-          bytes_count: 0
-        })
+    case Transfers.record_finished(attrs, :completed) do
+      {:ok, _transfer} ->
+        :ok
 
       {:error, _changeset} ->
         Logger.warning("Sync.Websock: Failed to track transfer for #{table_name}")
     end
   end
+
+  # The user agent is the client's to choose; the column holds 255 characters.
+  defp truncate(value) when is_binary(value), do: String.slice(value, 0, 255)
+  defp truncate(_value), do: nil
 end

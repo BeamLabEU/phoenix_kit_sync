@@ -34,7 +34,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   alias Ecto.Adapters.SQL
   alias PhoenixKit.Settings
   alias PhoenixKit.Utils.Date, as: UtilsDate
+  alias PhoenixKitSync.ConnectionNotifier.Prepare
   alias PhoenixKitSync.Connections
+  alias PhoenixKitSync.ExtensionTypes
   alias PhoenixKitSync.PullFilter
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Transfers
@@ -50,6 +52,48 @@ defmodule PhoenixKitSync.ConnectionNotifier do
           http_status: integer() | nil,
           error: String.t() | nil
         }
+
+  @typedoc """
+  A connection as these functions read it: the `Connection` struct, or any
+  map with `site_url` and `auth_token_hash` under atom or string keys.
+  """
+  @type connection_ref :: PhoenixKitSync.Connection.t() | map()
+
+  @typedoc """
+  What a pull imported: record counts, `unknown_columns` when records
+  carried columns the local table lacks, and `truncated: true` when the
+  sender stopped short and the pull could not continue, with
+  `unsupported_key_type` when the sender named the key type it has no
+  cursor for.
+  """
+  @type pull_result :: %{
+          required(:imported) => non_neg_integer(),
+          required(:skipped) => non_neg_integer(),
+          required(:errors) => non_neg_integer(),
+          optional(:unknown_columns) => [String.t()],
+          optional(:truncated) => true,
+          optional(:unsupported_key_type) => String.t()
+        }
+
+  @typedoc "Sender key to local key, per table: `%{{table, sender_key} => local_key}`."
+  @type uuid_remap :: %{optional({String.t(), String.t()}) => term()}
+
+  # A sender's reasons for refusing a request under a connection, by the
+  # error_code of its 403.
+  @connection_refusals %{
+    "connection_not_active" => :connection_not_active,
+    "connection_expired" => :connection_expired,
+    "download_limit_reached" => :download_limit_reached,
+    "record_limit_reached" => :record_limit_reached,
+    "ip_not_allowed" => :ip_not_allowed,
+    "outside_allowed_hours" => :outside_allowed_hours,
+    "invalid_password" => :invalid_password
+  }
+
+  @pull_refusals Map.merge(@connection_refusals, %{
+                   "invalid_cursor" => :invalid_cursor,
+                   "no_primary_key" => :source_without_primary_key
+                 })
 
   @doc """
   Notifies a remote site about a new sender connection.
@@ -206,6 +250,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:ok, :offline}` - Remote site is offline (will self-heal later)
   - `{:error, reason}` - Failed to notify
   """
+  @spec notify_delete(connection_ref(), keyword()) ::
+          {:ok, :deleted | :not_found | :offline} | {:error, term()}
   def notify_delete(connection, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
     site_url = Map.get(connection, :site_url) || Map.get(connection, "site_url")
@@ -276,10 +322,13 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   ## Returns
 
   - `{:ok, :updated}` - Remote site updated the status
+  - `{:ok, :skipped}` - A `"receiver"` connection: nothing is sent
   - `{:ok, :not_found}` - Connection not found on remote
   - `{:ok, :offline}` - Remote site is offline
   - `{:error, reason}` - Failed to notify
   """
+  @spec notify_status_change(connection_ref(), String.t(), keyword()) ::
+          {:ok, :updated | :skipped | :not_found | :offline} | {:error, term()}
   def notify_status_change(connection, new_status, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
     site_url = Map.get(connection, :site_url) || Map.get(connection, "site_url")
@@ -287,10 +336,17 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     auth_token_hash =
       Map.get(connection, :auth_token_hash) || Map.get(connection, "auth_token_hash")
 
-    if is_nil(site_url) or is_nil(auth_token_hash) do
-      {:error, :missing_connection_info}
-    else
-      do_notify_status_change(site_url, auth_token_hash, new_status, timeout)
+    cond do
+      # Only the sender reports a status: the receiver mirrors it, and a
+      # sender takes no status from its receiver (update-status refuses it).
+      Map.get(connection, :direction) == "receiver" ->
+        {:ok, :skipped}
+
+      is_nil(site_url) or is_nil(auth_token_hash) ->
+        {:error, :missing_connection_info}
+
+      true ->
+        do_notify_status_change(site_url, auth_token_hash, new_status, timeout)
     end
   end
 
@@ -354,6 +410,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:ok, :not_found}` - Connection not found on sender
   - `{:error, reason}` - Failed to query
   """
+  @spec query_sender_status(connection_ref(), keyword()) ::
+          {:ok, String.t() | :offline | :not_found} | {:error, term()}
   def query_sender_status(connection, opts \\ []) do
     with {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
       do_query_sender_status(site_url, auth_token_hash, opts)
@@ -404,6 +462,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:ok, :offline}` - Remote site is offline
   - `{:error, reason}` - Failed to verify
   """
+  @spec verify_connection(connection_ref(), keyword()) ::
+          {:ok, :exists | :not_found | :offline} | {:error, term()}
   def verify_connection(connection, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
     site_url = Map.get(connection, :site_url) || Map.get(connection, "site_url")
@@ -463,6 +523,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:error, :offline}` - Sender is offline
   - `{:error, reason}` - Failed to fetch
   """
+  @spec fetch_sender_tables(connection_ref(), keyword()) :: {:ok, [map()]} | {:error, term()}
   def fetch_sender_tables(connection, opts \\ []) do
     with {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
       do_fetch_sender_tables(site_url, auth_token_hash, opts)
@@ -472,7 +533,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   defp do_fetch_sender_tables(site_url, auth_token_hash, opts) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
     api_url = build_list_tables_url(site_url)
-    body = %{"auth_token_hash" => auth_token_hash}
+    body = put_password(%{"auth_token_hash" => auth_token_hash}, opts)
 
     Logger.debug("Sync: Fetching tables from sender", %{sender_url: site_url})
 
@@ -487,8 +548,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp parse_tables_response(resp_body) do
     case Jason.decode(resp_body) do
-      {:ok, %{"success" => true, "tables" => tables}} ->
-        {:ok, convert_tables_to_structs(tables)}
+      {:ok, %{"success" => true, "tables" => tables}} when is_list(tables) ->
+        convert_tables_to_structs(tables)
 
       {:ok, %{"success" => false, "error" => error}} ->
         {:error, error}
@@ -498,17 +559,30 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
+  # The list is the sender's: an entry that is not an object with a name is
+  # a malformed answer, and a field of the wrong type reads as absent.
   defp convert_tables_to_structs(tables) do
-    Enum.map(tables, fn t ->
-      %{
-        name: t["name"],
-        row_count: t["row_count"] || 0,
-        size_bytes: t["size_bytes"] || 0,
-        checksum: t["checksum"],
-        depends_on: t["depends_on"] || []
-      }
-    end)
+    if Enum.all?(tables, &match?(%{"name" => name} when is_binary(name), &1)) do
+      {:ok,
+       Enum.map(tables, fn t ->
+         %{
+           name: t["name"],
+           row_count: integer_or(t["row_count"], 0),
+           size_bytes: integer_or(t["size_bytes"], 0),
+           checksum: if(is_binary(t["checksum"]), do: t["checksum"]),
+           depends_on: string_list(t["depends_on"])
+         }
+       end)}
+    else
+      {:error, :invalid_response}
+    end
   end
+
+  defp integer_or(value, _default) when is_integer(value), do: value
+  defp integer_or(_value, default), do: default
+
+  defp string_list(list) when is_list(list), do: Enum.filter(list, &is_binary/1)
+  defp string_list(_other), do: []
 
   @doc """
   Pulls data for a specific table from the sender.
@@ -525,6 +599,13 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     - `:ids` - Only the rows with these key values (1 to 1000)
     - `:id_range` - `{start, end}`: only the rows of an integer key range;
       one bound may be nil, not both
+    - `:actor_uuid` - The user who started the pull; recorded on the
+      transfer (`initiated_by_uuid`) and its activity row
+    - `:password` - The sender connection's download password, when it has one
+
+  A table larger than the sender's `max_records_per_request` comes in pages:
+  the sender's answer says where the next one starts, and the pull follows
+  until the table ends. Each timeout is per page.
 
   A filter goes to the sender with the request; an answer that does not
   carry `"filtered": true` (a sender from before filters) is not imported.
@@ -534,8 +615,11 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:ok, result}` - Map with `:imported`, `:skipped`, `:errors`, plus
     `:unknown_columns` when some records carried columns the local table
     lacks (those records count as errors), and `truncated: true` when the
-    sender stopped at its max_records_per_request limit: the rows that came
-    are imported, but the transfer is recorded as failed
+    sender stopped at its max_records_per_request limit and gave no cursor
+    to continue from (a sender from before cursors, a key type without one,
+    or one that did not honour its own cursor): the rows that came are
+    imported, but the transfer is recorded as failed. `:unsupported_key_type`
+    names the key type when the sender said that is why
   - `{:error, :offline}` - Sender is offline
   - `{:error, :invalid_table_name}` - The name is not a plain identifier;
     nothing is recorded or requested
@@ -555,6 +639,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     transfer is marked failed and the details are in the log
   - `{:error, reason}` - Failed to pull
   """
+  @spec pull_table_data(connection_ref(), String.t(), keyword()) ::
+          {:ok, pull_result()} | {:error, term()}
   def pull_table_data(connection, table_name, opts \\ []) do
     with :ok <- check_table_name(table_name),
          {:ok, filter_body} <- PullFilter.body(opts),
@@ -576,6 +662,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   Returns {:ok, import_result, updated_remap} or {:error, reason, unchanged_remap},
   with the same error reasons as `pull_table_data/3`.
   """
+  @spec pull_table_data_with_remap(connection_ref(), String.t(), uuid_remap(), keyword()) ::
+          {:ok, pull_result(), uuid_remap()} | {:error, term(), uuid_remap()}
   def pull_table_data_with_remap(connection, table_name, uuid_remap, opts \\ []) do
     with :ok <- check_table_name(table_name),
          {:ok, filter_body} <- PullFilter.body(opts) do
@@ -634,37 +722,22 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          table_name,
          opts
        ) do
-    timeout = Keyword.get(opts, :timeout, 60_000)
-    conflict_strategy = Keyword.get(opts, :conflict_strategy, "skip")
+    import_page = fn data, conflict_strategy, target, remap ->
+      {import_table_data(table_name, data, conflict_strategy, target), remap}
+    end
 
-    Logger.info("Sync: Pulling data for table #{table_name}", %{sender_url: site_url})
-
-    {:ok, transfer} =
-      create_pull_transfer(
-        connection_uuid,
-        table_name,
-        site_url,
-        conflict_strategy
-      )
-
-    api_url = build_pull_data_url(site_url)
-
-    filter_body = Keyword.get(opts, :filter_body, %{})
-
-    body =
-      Map.merge(filter_body, %{
-        "auth_token_hash" => auth_token_hash,
-        "table_name" => table_name,
-        "conflict_strategy" => conflict_strategy
-      })
-
-    guard_transfer(transfer, table_name, &{:error, &1}, fn ->
-      with {:ok, target} <- check_local_table(transfer, table_name) do
-        result = make_http_request(api_url, body, timeout)
-        import_spec = {conflict_strategy, target, filter_body != %{}}
-        handle_pull_response(result, transfer, table_name, import_spec)
-      end
-    end)
+    case run_pull(
+           site_url,
+           auth_token_hash,
+           connection_uuid,
+           table_name,
+           %{},
+           opts,
+           import_page
+         ) do
+      {:ok, result, _remap} -> {:ok, result}
+      {:error, reason, _remap} -> {:error, reason}
+    end
   end
 
   defp do_pull_table_data_with_remap(
@@ -675,8 +748,40 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          uuid_remap,
          opts
        ) do
-    timeout = Keyword.get(opts, :timeout, 60_000)
+    import_page = fn data, conflict_strategy, target, remap ->
+      import_table_data_with_remap(table_name, data, conflict_strategy, remap, target)
+    end
+
+    run_pull(
+      site_url,
+      auth_token_hash,
+      connection_uuid,
+      table_name,
+      uuid_remap,
+      opts,
+      import_page
+    )
+  end
+
+  # The most pages one pull follows. At the default page size that is far
+  # more rows than any synced table holds; it is here so that a sender
+  # handing out cursors forever cannot keep a pull running forever.
+  @max_pull_pages 10_000
+
+  # One pull of one table: a transfer row, then page after page until the
+  # sender has no more. Returns `{:ok, result, remap}` or
+  # `{:error, reason, remap}`.
+  defp run_pull(
+         site_url,
+         auth_token_hash,
+         connection_uuid,
+         table_name,
+         uuid_remap,
+         opts,
+         import_page
+       ) do
     conflict_strategy = Keyword.get(opts, :conflict_strategy, "skip")
+    filter_body = Keyword.get(opts, :filter_body, %{})
 
     Logger.info("Sync: Pulling data for table #{table_name}", %{sender_url: site_url})
 
@@ -685,190 +790,307 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         connection_uuid,
         table_name,
         site_url,
-        conflict_strategy
+        conflict_strategy,
+        Keyword.get(opts, :actor_uuid)
       )
 
-    api_url = build_pull_data_url(site_url)
-
-    filter_body = Keyword.get(opts, :filter_body, %{})
-
+    # "paged" tells the sender this receiver follows "next_after", so a
+    # page that stops at its limit is not the end of the send.
     body =
-      Map.merge(filter_body, %{
+      filter_body
+      |> Map.merge(%{
         "auth_token_hash" => auth_token_hash,
         "table_name" => table_name,
-        "conflict_strategy" => conflict_strategy
+        "conflict_strategy" => conflict_strategy,
+        "paged" => true
       })
+      |> put_password(opts)
+
+    pull = %{
+      api_url: build_pull_data_url(site_url),
+      timeout: Keyword.get(opts, :timeout, 60_000),
+      table_name: table_name,
+      transfer: transfer,
+      conflict_strategy: conflict_strategy,
+      filtered?: filter_body != %{},
+      body: body,
+      import_page: import_page
+    }
+
+    progress = %{
+      remap: uuid_remap,
+      after: nil,
+      cursor: nil,
+      page: 0,
+      prev_first: nil,
+      records: 0,
+      result: %{imported: 0, skipped: 0, errors: 0}
+    }
 
     guard_transfer(transfer, table_name, &{:error, &1, uuid_remap}, fn ->
       case check_local_table(transfer, table_name) do
-        {:ok, target} ->
-          result = make_http_request(api_url, body, timeout)
-          import_spec = {conflict_strategy, target, filter_body != %{}}
-          handle_pull_response_with_remap(result, transfer, table_name, import_spec, uuid_remap)
-
-        {:error, reason} ->
-          {:error, reason, uuid_remap}
+        {:ok, target} -> pull_pages(Map.put(pull, :target, target), progress)
+        {:error, reason} -> {:error, reason, uuid_remap}
       end
     end)
   end
+
+  # The sender connection's download password, when the caller has one. It
+  # goes in the request body the sender reads it from and nowhere else: not
+  # into a log line, a transfer row or activity metadata.
+  defp put_password(body, opts) do
+    case Keyword.get(opts, :password) do
+      password when is_binary(password) and password != "" ->
+        Map.put(body, "password", password)
+
+      _ ->
+        body
+    end
+  end
+
+  # Why the sender refused a table request under this connection (403 with
+  # an error_code): the atom for a code this module knows, else nil.
+  defp connection_refusal(%{status: 403, body: body}) when is_binary(body) do
+    case Jason.decode(body) do
+      {:ok, %{"error_code" => code}} when is_binary(code) -> @connection_refusals[code]
+      _ -> nil
+    end
+  end
+
+  defp connection_refusal(_response), do: nil
 
   defp create_pull_transfer(
          connection_uuid,
          table_name,
          site_url,
-         conflict_strategy
+         conflict_strategy,
+         actor_uuid
        ) do
-    Transfers.create_transfer(%{
-      direction: "receive",
-      connection_uuid: connection_uuid,
-      table_name: table_name,
-      remote_site_url: site_url,
-      conflict_strategy: conflict_strategy,
-      status: "in_progress",
-      started_at: UtilsDate.utc_now()
-    })
+    Transfers.create_transfer(
+      %{
+        direction: "receive",
+        connection_uuid: connection_uuid,
+        table_name: table_name,
+        remote_site_url: site_url,
+        conflict_strategy: conflict_strategy,
+        status: "in_progress",
+        started_at: UtilsDate.utc_now(),
+        initiated_by_uuid: actor_uuid
+      },
+      actor_uuid: actor_uuid
+    )
   end
 
-  defp handle_pull_response(
-         {:ok, %{status: 200, body: resp_body}},
-         transfer,
-         table_name,
-         import_spec
-       ) do
-    case Jason.decode(resp_body) do
-      {:ok, %{"success" => true, "data" => data} = response} ->
-        if filter_ignored?(import_spec, response),
-          do: fail_ignored_filter(transfer),
-          else:
-            complete_pull_transfer(transfer, table_name, data, import_spec, truncated?(response))
+  defp pull_pages(pull, progress) do
+    body =
+      case progress do
+        %{after: nil} ->
+          pull.body
 
-      {:ok, %{"success" => false, "error" => error}} when is_binary(error) ->
-        Logger.error("Sync: Pull failed - remote error: #{error}")
-        Transfers.fail_transfer(transfer, error)
-        {:error, error}
+        %{after: after_values, cursor: nil} ->
+          Map.put(pull.body, "after", after_values)
 
-      {:ok, %{"success" => false}} ->
-        fail_unreadable_remote_error(transfer)
-
-      other ->
-        Logger.error("Sync: Pull failed - invalid response format: #{inspect(other)}")
-        Transfers.fail_transfer(transfer, "Invalid response from remote site")
-        {:error, :invalid_response}
-    end
-  end
-
-  # A sender that knows filters answers a filter it cannot apply (a range
-  # on a non-integer key, a composite key) with 400.
-  defp handle_pull_response(
-         {:ok, %{status: 400, body: body}},
-         transfer,
-         _table_name,
-         {_, _, true}
-       ) do
-    reason =
-      case Jason.decode(body) do
-        {:ok, %{"error_code" => "unsupported_key_type"}} -> :unsupported_key_type
-        {:ok, %{"error_code" => "filter_needs_single_key"}} -> :filter_needs_single_key
-        # "invalid_filter", or a sender that predates error_code.
-        _ -> :invalid_filter
+        %{after: after_values, cursor: cursor} ->
+          Map.merge(pull.body, %{"after" => after_values, "cursor" => cursor})
       end
 
-    Logger.error("Sync: Pull failed - the sender refused the record filter (#{reason})")
-    Transfers.fail_transfer(transfer, "The sender refused the record filter")
-    {:error, reason}
-  end
+    case fetch_pull_page(pull, body) do
+      {:ok, response, data} ->
+        handle_pull_page(pull, progress, response, data)
 
-  defp handle_pull_response({:ok, %{status: 401}}, transfer, _table_name, _import_spec) do
-    Logger.error("Sync: Pull failed - unauthorized (401)")
-    Transfers.fail_transfer(transfer, "Unauthorized")
-    {:error, :unauthorized}
-  end
-
-  defp handle_pull_response({:ok, %{status: 404}}, transfer, _table_name, _import_spec) do
-    Logger.error("Sync: Pull failed - table not found (404)")
-    Transfers.fail_transfer(transfer, "Table not found")
-    {:error, :table_not_found}
-  end
-
-  defp handle_pull_response({:ok, %{status: status}}, transfer, _table_name, _import_spec) do
-    Logger.error("Sync: Pull failed - HTTP error #{status}")
-    Transfers.fail_transfer(transfer, "HTTP error #{status}")
-    {:error, :unexpected_response}
-  end
-
-  defp handle_pull_response({:error, %{reason: reason}}, transfer, _table_name, _import_spec)
-       when reason in [:econnrefused, :timeout, :nxdomain] do
-    Logger.error("Sync: Pull failed - sender offline (#{reason})")
-    Transfers.fail_transfer(transfer, "Sender offline")
-    {:error, :offline}
-  end
-
-  defp handle_pull_response({:error, reason}, transfer, _table_name, _import_spec) do
-    Logger.error("Sync: Pull failed - #{inspect(reason)}")
-    Transfers.fail_transfer(transfer, inspect(reason))
-    {:error, reason}
-  end
-
-  # Remap-aware versions that thread uuid_remap through
-  defp handle_pull_response_with_remap(
-         {:ok, %{status: 200, body: resp_body}},
-         transfer,
-         table_name,
-         import_spec,
-         uuid_remap
-       ) do
-    case Jason.decode(resp_body) do
-      {:ok, %{"success" => true, "data" => data} = response} ->
-        if filter_ignored?(import_spec, response) do
-          {:error, reason} = fail_ignored_filter(transfer)
-          {:error, reason, uuid_remap}
-        else
-          complete_pull_transfer_with_remap(
-            transfer,
-            table_name,
-            data,
-            import_spec,
-            uuid_remap,
-            truncated?(response)
-          )
-        end
-
-      {:ok, %{"success" => false, "error" => error}} when is_binary(error) ->
-        Logger.error("Sync: Pull failed - remote error: #{error}")
-        Transfers.fail_transfer(transfer, error)
-        {:error, error, uuid_remap}
-
-      {:ok, %{"success" => false}} ->
-        {:error, reason} = fail_unreadable_remote_error(transfer)
-        {:error, reason, uuid_remap}
-
-      other ->
-        Logger.error("Sync: Pull failed - invalid response format: #{inspect(other)}")
-        Transfers.fail_transfer(transfer, "Invalid response from remote site")
-        {:error, :invalid_response, uuid_remap}
+      {:error, reason, message} ->
+        Transfers.fail_transfer(pull.transfer, message, pull_stats(progress))
+        {:error, reason, progress.remap}
     end
   end
 
-  defp handle_pull_response_with_remap(result, transfer, table_name, import_spec, uuid_remap) do
-    case handle_pull_response(result, transfer, table_name, import_spec) do
-      {:ok, import_result} -> {:ok, import_result, uuid_remap}
-      {:error, reason} -> {:error, reason, uuid_remap}
+  defp handle_pull_page(pull, progress, response, data) do
+    cond do
+      # Asked for some rows, got an answer without "filtered": true. A
+      # sender that predates filters ignores them and sends the whole table,
+      # so the answer is not imported at all.
+      pull.filtered? and response["filtered"] != true ->
+        {:error, reason} = fail_ignored_filter(pull.transfer)
+        {:error, reason, progress.remap}
+
+      # Asked for the rows after a key, got the page that was already
+      # imported: this sender does not page. What came stays, and the table
+      # is reported as cut.
+      progress.page > 0 and data != [] and List.first(data) == progress.prev_first ->
+        Logger.warning("Sync: the sender repeated a page of #{pull.table_name}; pull stopped")
+        {:ok, finish_pull_transfer(pull.transfer, progress, {:truncated, nil}), progress.remap}
+
+      true ->
+        import_pull_page(pull, progress, response, data)
     end
+  end
+
+  defp import_pull_page(pull, progress, response, data) do
+    case check_record_keys(pull.transfer, data) do
+      :ok ->
+        {page_result, remap} =
+          pull.import_page.(data, pull.conflict_strategy, pull.target, progress.remap)
+
+        progress = %{
+          progress
+          | remap: remap,
+            records: progress.records + length(data),
+            result: merge_import_results(progress.result, page_result)
+        }
+
+        continue_pull(pull, progress, response, List.first(data))
+
+      {:error, reason} ->
+        {:error, reason, progress.remap}
+    end
+  end
+
+  # A sender that stopped at its max_records_per_request says "truncated".
+  # One that pages also says where to continue ("next_after"); one from
+  # before cursors, or a key with no cursor, does not, and the pull ends
+  # there, cut.
+  defp continue_pull(pull, progress, response, first_record) do
+    next_after = response["next_after"]
+
+    cond do
+      response["truncated"] != true ->
+        {:ok, finish_pull_transfer(pull.transfer, progress, false), progress.remap}
+
+      is_map(next_after) and map_size(next_after) > 0 and next_after != progress.after and
+          progress.page + 1 < @max_pull_pages ->
+        cursor = if is_binary(response["cursor"]), do: response["cursor"]
+
+        pull_pages(pull, %{
+          progress
+          | after: next_after,
+            cursor: cursor,
+            page: progress.page + 1,
+            prev_first: first_record
+        })
+
+      true ->
+        cut = {:truncated, unsupported_key_type(response)}
+        {:ok, finish_pull_transfer(pull.transfer, progress, cut), progress.remap}
+    end
+  end
+
+  # The key type a sender names when it cut the answer because that type
+  # has no cursor. It is the peer's text and ends up on the admin's page:
+  # only a short printable name is kept.
+  defp unsupported_key_type(%{"unsupported_key_type" => type}) when is_binary(type) do
+    if byte_size(type) in 1..200 and String.printable?(type), do: type
+  end
+
+  defp unsupported_key_type(_response), do: nil
+
+  defp merge_import_results(total, page) do
+    merged = %{
+      total
+      | imported: total.imported + page.imported,
+        skipped: total.skipped + page.skipped,
+        errors: total.errors + page.errors
+    }
+
+    case Enum.uniq(Map.get(total, :unknown_columns, []) ++ Map.get(page, :unknown_columns, [])) do
+      [] -> merged
+      columns -> Map.put(merged, :unknown_columns, Enum.sort(columns))
+    end
+  end
+
+  defp pull_stats(progress) do
+    %{
+      records_transferred: progress.records,
+      records_created: progress.result.imported,
+      records_skipped: progress.result.skipped,
+      records_failed: progress.result.errors
+    }
+  end
+
+  # One request of a pull: `{:ok, response, data}` for a page of rows, or
+  # `{:error, reason, message}` with the text the transfer row records.
+  defp fetch_pull_page(pull, body) do
+    case make_http_request(pull.api_url, body, pull.timeout) do
+      {:ok, %{status: 200, body: resp_body}} ->
+        read_pull_page(Jason.decode(resp_body))
+
+      {:ok, %{status: status, body: resp_body}} when status in [400, 403] ->
+        refused_pull_page(status, resp_body, pull.filtered?)
+
+      {:ok, %{status: 401}} ->
+        Logger.error("Sync: Pull failed - unauthorized (401)")
+        {:error, :unauthorized, "Unauthorized"}
+
+      {:ok, %{status: 404}} ->
+        Logger.error("Sync: Pull failed - table not found (404)")
+        {:error, :table_not_found, "Table not found"}
+
+      {:ok, %{status: status}} ->
+        Logger.error("Sync: Pull failed - HTTP error #{status}")
+        {:error, :unexpected_response, "HTTP error #{status}"}
+
+      {:error, %{reason: reason}} when reason in [:econnrefused, :timeout, :nxdomain] ->
+        Logger.error("Sync: Pull failed - sender offline (#{reason})")
+        {:error, :offline, "Sender offline"}
+
+      {:error, reason} ->
+        Logger.error("Sync: Pull failed - #{inspect(reason)}")
+        {:error, reason, inspect(reason)}
+    end
+  end
+
+  defp read_pull_page({:ok, %{"success" => true, "data" => data} = response}) when is_list(data),
+    do: {:ok, response, data}
+
+  defp read_pull_page({:ok, %{"success" => false, "error" => error}}) when is_binary(error) do
+    Logger.error("Sync: Pull failed - remote error: #{error}")
+    {:error, error, error}
   end
 
   # A remote error that is not a string (a map, a list) is not shown or
   # stored: it is the sender's payload, and interpolating it would raise.
-  defp fail_unreadable_remote_error(transfer) do
+  defp read_pull_page({:ok, %{"success" => false}}) do
     Logger.error("Sync: Pull failed - remote sent an error that is not a string")
-    Transfers.fail_transfer(transfer, "Invalid response from remote site")
-    {:error, :invalid_response}
+    {:error, :invalid_response, "Invalid response from remote site"}
   end
 
-  # Asked for some rows, got an answer without "filtered": true. A sender
-  # that predates filters ignores them and sends the whole table, so the
-  # answer is not imported at all.
-  defp filter_ignored?({_strategy, _target, true}, response), do: response["filtered"] != true
-  defp filter_ignored?(_import_spec, _response), do: false
+  defp read_pull_page(other) do
+    Logger.error("Sync: Pull failed - invalid response format: #{inspect(other, limit: 5)}")
+    {:error, :invalid_response, "Invalid response from remote site"}
+  end
+
+  # What a sender refuses a pull with, by its "error_code". A sender that
+  # knows filters answers one it cannot apply (a range on a non-integer key,
+  # a composite key) with 400; one that enforces a connection's limits
+  # answers 403 with the limit that stopped it.
+  @filter_refusals %{
+    "unsupported_key_type" => :unsupported_key_type,
+    "filter_needs_single_key" => :filter_needs_single_key,
+    "invalid_filter" => :invalid_filter
+  }
+
+  defp refused_pull_page(status, resp_body, filtered?) do
+    code =
+      case Jason.decode(resp_body) do
+        {:ok, %{"error_code" => code}} when is_binary(code) -> code
+        _ -> nil
+      end
+
+    cond do
+      reason = @pull_refusals[code] ->
+        Logger.error("Sync: Pull refused by the sender (#{reason})")
+        {:error, reason, "The sender refused the pull (#{reason})"}
+
+      status == 400 and filtered? ->
+        # "invalid_filter", or a sender that predates error_code.
+        reason = Map.get(@filter_refusals, code, :invalid_filter)
+        Logger.error("Sync: Pull failed - the sender refused the record filter (#{reason})")
+        {:error, reason, "The sender refused the record filter"}
+
+      true ->
+        Logger.error("Sync: Pull failed - HTTP error #{status}")
+        {:error, :unexpected_response, "HTTP error #{status}"}
+    end
+  end
 
   defp fail_ignored_filter(transfer) do
     Logger.error("Sync: Pull refused - the sender ignored the record filter")
@@ -876,72 +1098,45 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     {:error, :sender_ignores_filters}
   end
 
-  # A sender that stopped at its max_records_per_request says so; one from
-  # before the mark cannot, and its cut answer still reads as whole.
-  defp truncated?(response), do: response["truncated"] == true
-
-  defp complete_pull_transfer(
-         transfer,
-         table_name,
-         data,
-         {conflict_strategy, target, _filtered},
-         truncated
-       ) do
-    with :ok <- check_record_keys(transfer, data) do
-      import_result = import_table_data(table_name, data, conflict_strategy, target)
-      {:ok, finish_pull_transfer(transfer, data, import_result, truncated)}
-    end
-  end
-
-  defp complete_pull_transfer_with_remap(
-         transfer,
-         table_name,
-         data,
-         {conflict_strategy, target, _filtered},
-         uuid_remap,
-         truncated
-       ) do
-    case check_record_keys(transfer, data) do
-      :ok ->
-        {import_result, updated_remap} =
-          import_table_data_with_remap(table_name, data, conflict_strategy, uuid_remap, target)
-
-        {:ok, finish_pull_transfer(transfer, data, import_result, truncated), updated_remap}
-
-      {:error, reason} ->
-        {:error, reason, uuid_remap}
-    end
-  end
-
   # The rows of a cut answer are imported, and the uuid remap they built
   # holds for the tables after it, but the table is not whole: the transfer
   # fails with the reason and the counts, and the result carries
   # `truncated: true` for the caller to show.
-  defp finish_pull_transfer(transfer, data, import_result, truncated) do
-    stats = %{
-      records_transferred: length(data),
-      records_created: import_result.imported,
-      records_skipped: import_result.skipped,
-      records_failed: import_result.errors
-    }
+  defp finish_pull_transfer(transfer, progress, false) do
+    Transfers.complete_transfer(transfer, pull_stats(progress))
+    progress.result
+  end
 
-    if truncated do
-      Logger.warning("Sync: Pull stopped at the sender's max_records_per_request limit")
+  defp finish_pull_transfer(transfer, progress, {:truncated, nil}) do
+    Logger.warning("Sync: Pull stopped at the sender's max_records_per_request limit")
 
-      Transfers.fail_transfer(
-        transfer,
-        "The sender stopped at its max_records_per_request limit; " <>
-          "only the first #{length(data)} records were pulled. The sender's admin " <>
-          "can raise that limit for this connection (it is not in the connection " <>
-          "form), or pull the rest with Precise Transfer by ID range (single integer key)",
-        stats
-      )
+    Transfers.fail_transfer(
+      transfer,
+      "The sender stopped at its max_records_per_request limit and gave no way to " <>
+        "continue; only the first #{progress.records} records were pulled. Update the " <>
+        "sync module on the source site, or have its admin raise that limit for this " <>
+        "connection",
+      pull_stats(progress)
+    )
 
-      Map.put(import_result, :truncated, true)
-    else
-      Transfers.complete_transfer(transfer, stats)
-      import_result
-    end
+    Map.put(progress.result, :truncated, true)
+  end
+
+  # The sender is current; it is the table's key it cannot continue from.
+  # Updating the source site would not help, so the reason names the type.
+  defp finish_pull_transfer(transfer, progress, {:truncated, key_type}) do
+    Logger.warning("Sync: Pull stopped - the sender has no cursor for a #{key_type} key")
+
+    Transfers.fail_transfer(
+      transfer,
+      "The sender stopped at its max_records_per_request limit and cannot continue past " <>
+        "it: the table's key is of type #{key_type}; only the first #{progress.records} " <>
+        "records were pulled. Have the source site's admin raise that limit for this " <>
+        "connection",
+      pull_stats(progress)
+    )
+
+    Map.merge(progress.result, %{truncated: true, unsupported_key_type: key_type})
   end
 
   # Checked before the request, so a table that cannot be imported here does
@@ -960,7 +1155,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
          %{
            pk_cols: pk_cols,
            columns: MapSet.new(columns, & &1.name),
-           column_types: Map.new(columns, &{&1.name, &1.type}),
+           column_types: Map.new(columns, &{&1.name, column_type(&1)}),
            not_null: for(col <- columns, col.nullable == false, into: MapSet.new(), do: col.name)
          }}
 
@@ -1049,6 +1244,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:error, :offline}` - Sender is offline
   - `{:error, reason}` - Failed to fetch schema
   """
+  @spec fetch_table_schema(connection_ref(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
   def fetch_table_schema(connection, table_name, opts \\ []) do
     with {:ok, site_url, auth_token_hash} <- extract_connection_info(connection) do
       do_fetch_table_schema(site_url, auth_token_hash, table_name, opts)
@@ -1058,7 +1255,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   defp do_fetch_table_schema(site_url, auth_token_hash, table_name, opts) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     api_url = build_schema_url(site_url)
-    body = %{"auth_token_hash" => auth_token_hash, "table_name" => table_name}
+
+    body =
+      put_password(%{"auth_token_hash" => auth_token_hash, "table_name" => table_name}, opts)
 
     case make_http_request(api_url, body, timeout) do
       {:ok, %{status: 200, body: resp_body}} ->
@@ -1099,6 +1298,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   - `{:error, :offline}` - Sender is offline
   - `{:error, reason}` - Failed to fetch records
   """
+  @spec fetch_table_records(connection_ref(), String.t(), keyword()) ::
+          {:ok, [map()]} | {:error, term()}
   def fetch_table_records(connection, table_name, opts \\ []) do
     # The same filter rules as the pull, so a preview and a transfer of the
     # same input agree (an empty ID list is refused by both).
@@ -1111,7 +1312,11 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   defp do_fetch_table_records(site_url, auth_token_hash, table_name, filter_body, opts) do
     timeout = Keyword.get(opts, :timeout, 30_000)
     api_url = build_records_url(site_url)
-    body = Map.merge(filter_body, build_records_request_body(auth_token_hash, table_name, opts))
+
+    body =
+      filter_body
+      |> Map.merge(build_records_request_body(auth_token_hash, table_name, opts))
+      |> put_password(opts)
 
     case make_http_request(api_url, body, timeout) do
       {:ok, %{status: 200, body: resp_body}} ->
@@ -1133,9 +1338,14 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp parse_records_response(resp_body) do
     case Jason.decode(resp_body) do
-      {:ok, %{"success" => true, "records" => records}} -> {:ok, records}
-      {:ok, %{"success" => false, "error" => error}} -> {:error, error}
-      _ -> {:error, :invalid_response}
+      {:ok, %{"success" => true, "records" => records}} when is_list(records) ->
+        if Enum.all?(records, &is_map/1), do: {:ok, records}, else: {:error, :invalid_response}
+
+      {:ok, %{"success" => false, "error" => error}} ->
+        {:error, error}
+
+      _ ->
+        {:error, :invalid_response}
     end
   end
 
@@ -1167,7 +1377,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp handle_api_http_result({:ok, %{status: 401}}), do: {:error, :unauthorized}
   defp handle_api_http_result({:ok, %{status: 404}}), do: {:error, :not_found}
-  defp handle_api_http_result({:ok, %{status: _status}}), do: {:error, :unexpected_response}
+
+  defp handle_api_http_result({:ok, response}),
+    do: {:error, connection_refusal(response) || :unexpected_response}
 
   defp handle_api_http_result({:error, %{reason: reason}})
        when reason in [:econnrefused, :timeout, :nxdomain] do
@@ -1190,7 +1402,8 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     end
   end
 
-  defp handle_table_http_result({:ok, %{status: _status}}), do: {:error, :unexpected_response}
+  defp handle_table_http_result({:ok, response}),
+    do: {:error, connection_refusal(response) || :unexpected_response}
 
   defp handle_table_http_result({:error, %{reason: reason}})
        when reason in [:econnrefused, :timeout, :nxdomain] do
@@ -1281,6 +1494,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   Resolves this site's own URL from Settings, config, or dynamic detection.
   Used to identify ourselves when communicating with remote sites.
   """
+  @spec get_our_site_url() :: String.t()
   def get_our_site_url do
     case Settings.get_setting("site_url", nil) do
       nil ->
@@ -1323,9 +1537,6 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   end
 
   defp make_http_request(url, body, timeout) do
-    # Check if Finch is available
-    finch_name = get_finch_name()
-
     headers = [
       {"content-type", "application/json"},
       {"accept", "application/json"},
@@ -1334,18 +1545,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     case Jason.encode(body) do
       {:ok, json_body} ->
-        request = Finch.build(:post, url, headers, json_body)
-
-        case Finch.request(request, finch_name,
-               receive_timeout: timeout,
-               pool_timeout: @connect_timeout
-             ) do
-          {:ok, %Finch.Response{status: status, body: response_body}} ->
-            {:ok, %{status: status, body: response_body}}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
+        :post
+        |> Finch.build(url, headers, json_body)
+        |> request_capped(timeout, max_response_bytes(url))
 
       {:error, reason} ->
         {:error, {:json_encode_error, reason}}
@@ -1356,28 +1558,86 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   end
 
   defp make_get_request(url, timeout) do
-    finch_name = get_finch_name()
-
     headers = [
       {"accept", "application/json"},
       {"user-agent", "PhoenixKit-Sync/1.0"}
     ]
 
-    request = Finch.build(:get, url, headers)
-
-    case Finch.request(request, finch_name,
-           receive_timeout: timeout,
-           pool_timeout: @connect_timeout
-         ) do
-      {:ok, %Finch.Response{status: status, body: response_body}} ->
-        {:ok, %{status: status, body: response_body}}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    :get
+    |> Finch.build(url, headers)
+    |> request_capped(timeout, max_response_bytes(url))
   rescue
     e ->
       {:error, {:exception, Exception.message(e)}}
+  end
+
+  # The remote site decides how much it answers, and an answer is held in
+  # memory whole. Every request reads at most `max_bytes` of body and then
+  # drops the connection with `{:error, :response_too_large}`. Three sizes:
+  # a page of records is allowed far more than the rest, and a host that
+  # moves bigger pages raises it with
+  # `config :phoenix_kit_sync, max_response_bytes:` (bytes); a table list or
+  # a table's schema grows with the database (some 300 bytes a table or a
+  # column), so it gets room for tens of thousands of them and no more
+  # (never more than the host allows a page of records); and every other
+  # answer is a few fields.
+  @control_max_response_bytes 1_048_576
+  @schema_max_response_bytes 16_777_216
+  @default_max_response_bytes 268_435_456
+  @record_endpoints ["/pull-data", "/table-records"]
+  @schema_endpoints ["/list-tables", "/table-schema"]
+
+  defp max_response_bytes(url) do
+    records_max =
+      Application.get_env(:phoenix_kit_sync, :max_response_bytes, @default_max_response_bytes)
+
+    cond do
+      Enum.any?(@record_endpoints, &String.ends_with?(url, &1)) ->
+        records_max
+
+      Enum.any?(@schema_endpoints, &String.ends_with?(url, &1)) ->
+        min(@schema_max_response_bytes, records_max)
+
+      true ->
+        @control_max_response_bytes
+    end
+  end
+
+  defp request_capped(request, timeout, max_bytes) do
+    acc = %{status: nil, size: 0, chunks: []}
+
+    collect = fn
+      {:status, status}, acc ->
+        {:cont, %{acc | status: status}}
+
+      {:headers, _headers}, acc ->
+        {:cont, acc}
+
+      {:data, chunk}, acc ->
+        size = acc.size + byte_size(chunk)
+
+        if size > max_bytes,
+          do: {:halt, %{acc | size: size, chunks: :too_large}},
+          else: {:cont, %{acc | size: size, chunks: [chunk | acc.chunks]}}
+
+      _trailers_or_other, acc ->
+        {:cont, acc}
+    end
+
+    case Finch.stream_while(request, get_finch_name(), acc, collect,
+           receive_timeout: timeout,
+           pool_timeout: @connect_timeout
+         ) do
+      {:ok, %{chunks: :too_large}} ->
+        Logger.warning("Sync: dropped a response larger than #{max_bytes} bytes")
+        {:error, :response_too_large}
+
+      {:ok, %{status: status, chunks: chunks}} ->
+        {:ok, %{status: status, body: chunks |> Enum.reverse() |> IO.iodata_to_binary()}}
+
+      {:error, reason, _acc} ->
+        {:error, reason}
+    end
   end
 
   defp get_finch_name do
@@ -1748,10 +2008,12 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     record_pk = get_record_field(record, pk_col)
     updates? = ctx.conflict_strategy in ["overwrite", "merge"]
 
-    if check_pk_exists(repo, table_name, pk_col, record_pk) do
+    column_types = ctx.target.column_types
+
+    if check_pk_exists(repo, table_name, pk_col, record_pk, Map.get(column_types, pk_col)) do
       if updates?, do: {:import, remap}, else: {:skip_matched, remap}
     else
-      case find_match_by_unique(repo, table_name, pk_col, record, unique_sets) do
+      case find_match_by_unique(repo, table_name, pk_col, record, unique_sets, column_types) do
         {:ok, local_pk} ->
           Logger.info("Sync: Matched a #{table_name} record by unique columns")
           key_type = Map.get(ctx.target.column_types, pk_col)
@@ -1800,12 +2062,12 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   defp remap_key(value, _type) when is_integer(value), do: Integer.to_string(value)
   defp remap_key(_value, _type), do: nil
 
-  defp check_pk_exists(repo, table_name, pk_col, pk_value) do
+  defp check_pk_exists(repo, table_name, pk_col, pk_value, key_type) do
     if SchemaInspector.valid_identifier?(table_name) and
          SchemaInspector.valid_identifier?(pk_col) do
       sql = ~s[SELECT 1 FROM "#{table_name}" WHERE "#{pk_col}" = $1 LIMIT 1]
 
-      case SQL.query(repo, sql, [prepare_value(pk_value)]) do
+      case SQL.query(repo, sql, [Prepare.key_value(pk_value, key_type)]) do
         {:ok, %{num_rows: 1}} -> true
         _ -> false
       end
@@ -1816,9 +2078,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     _ -> false
   end
 
-  defp find_match_by_unique(_repo, _table_name, _pk_col, _record, []), do: :no_match
+  defp find_match_by_unique(_repo, _table_name, _pk_col, _record, [], _column_types),
+    do: :no_match
 
-  defp find_match_by_unique(repo, table_name, pk_col, record, [unique_cols | rest]) do
+  defp find_match_by_unique(repo, table_name, pk_col, record, [unique_cols | rest], column_types) do
     all_idents = [table_name, pk_col | unique_cols]
 
     # Defense-in-depth: even though pk_col and unique_cols come from
@@ -1829,13 +2092,21 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     # to the next unique-constraint candidate, matching the existing
     # rescue semantics.
     if Enum.all?(all_idents, &SchemaInspector.valid_identifier?/1) do
-      do_find_match_by_unique(repo, table_name, pk_col, record, unique_cols, rest)
+      do_find_match_by_unique(repo, table_name, pk_col, record, unique_cols, rest, column_types)
     else
-      find_match_by_unique(repo, table_name, pk_col, record, rest)
+      find_match_by_unique(repo, table_name, pk_col, record, rest, column_types)
     end
   end
 
-  defp do_find_match_by_unique(repo, table_name, pk_col, record, unique_cols, rest) do
+  defp do_find_match_by_unique(
+         repo,
+         table_name,
+         pk_col,
+         record,
+         unique_cols,
+         rest,
+         column_types
+       ) do
     # Get values for this unique constraint's columns
     col_values =
       Enum.map(unique_cols, fn col ->
@@ -1844,24 +2115,27 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     # Skip if any value is nil (can't match on nil)
     if Enum.any?(col_values, fn {_col, val} -> is_nil(val) end) do
-      find_match_by_unique(repo, table_name, pk_col, record, rest)
+      find_match_by_unique(repo, table_name, pk_col, record, rest, column_types)
     else
       where_clauses =
         col_values
         |> Enum.with_index(1)
         |> Enum.map_join(" AND ", fn {{col, _val}, idx} -> ~s["#{col}" = $#{idx}] end)
 
-      values = Enum.map(col_values, fn {_col, val} -> prepare_value(val) end)
+      values =
+        Enum.map(col_values, fn {col, val} ->
+          Prepare.key_value(val, Map.get(column_types, col))
+        end)
 
       sql = ~s[SELECT "#{pk_col}" FROM "#{table_name}" WHERE #{where_clauses} LIMIT 1]
 
       case SQL.query(repo, sql, values) do
         {:ok, %{rows: [[local_pk]]}} -> {:ok, local_pk}
-        _ -> find_match_by_unique(repo, table_name, pk_col, record, rest)
+        _ -> find_match_by_unique(repo, table_name, pk_col, record, rest, column_types)
       end
     end
   rescue
-    _ -> find_match_by_unique(repo, table_name, pk_col, record, rest)
+    _ -> find_match_by_unique(repo, table_name, pk_col, record, rest, column_types)
   end
 
   # Apply FK remaps to a record before inserting
@@ -1889,6 +2163,11 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         end
     end
   end
+
+  # An array column is named by its element type, which its values are
+  # read by (Prepare.value/4).
+  defp column_type(%{type: "ARRAY", element_type: element_type}), do: {:array, element_type}
+  defp column_type(%{type: type}), do: type
 
   defp new_import_acc,
     do: %{imported: 0, skipped: 0, errors: 0, error_sample: nil, unknown_columns: MapSet.new()}
@@ -1943,8 +2222,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     # Only names of this table's own columns reach the SQL. check_record_keys
     # already refused non-identifiers; a valid name the local table lacks
     # (schema drift) fails this record without a round trip.
-    case Enum.reject(columns, &MapSet.member?(local_columns, &1)) do
-      [] ->
+    case {Enum.reject(columns, &MapSet.member?(local_columns, &1)),
+          unsupported_value(record, target.column_types)} do
+      {[], nil} ->
         do_insert_record(
           repo,
           table_name,
@@ -1955,7 +2235,10 @@ defmodule PhoenixKitSync.ConnectionNotifier do
           target
         )
 
-      unknown ->
+      {[], {column, type}} ->
+        {:error, "column #{column} holds a #{type}, a type sync does not carry"}
+
+      {unknown, _unsupported} ->
         {:error, {:unknown_columns, unknown}}
     end
   rescue
@@ -1964,6 +2247,18 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   end
 
   defp insert_record(_repo, _table_name, _record, _strategy, _numeric_cols, _target), do: :error
+
+  # The first value the sender marked as a type it cannot send
+  # (ExtensionTypes), as `{column, type}`. In a json column the same shape
+  # is just an object.
+  defp unsupported_value(record, column_types) do
+    Enum.find_value(record, fn {column, value} ->
+      type = ExtensionTypes.unsupported(value)
+
+      if type && Map.get(column_types, column) not in ["json", "jsonb"],
+        do: {column, type}
+    end)
+  end
 
   defp do_insert_record(
          repo,
@@ -1976,7 +2271,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
        ) do
     values =
       Enum.map(columns, fn col ->
-        prepare_value(Map.get(record, col), col, numeric_cols)
+        Prepare.value(Map.get(record, col), col, numeric_cols, target.column_types)
       end)
 
     placeholders =
@@ -2086,13 +2381,6 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   end
 
   # Value / record-transformation helpers live in ConnectionNotifier.Prepare.
-  # Local aliases keep the call-site shape unchanged.
-  alias PhoenixKitSync.ConnectionNotifier.Prepare
-
-  defp prepare_value(value, column, numeric_cols),
-    do: Prepare.value(value, column, numeric_cols)
-
-  defp prepare_value(value), do: Prepare.value(value)
   defp fetch_numeric_columns(table_name), do: Prepare.numeric_column_types(table_name)
 
   defp get_record_field(record, field), do: Prepare.get_field(record, field)

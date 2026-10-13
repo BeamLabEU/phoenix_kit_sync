@@ -27,13 +27,18 @@ defmodule PhoenixKitSync.Web.SyncSocket do
   channel "transfer:*", PhoenixKitSync.Web.SyncChannel
 
   @impl true
-  def connect(%{"code" => code}, socket, _connect_info) do
+  def connect(%{"code" => code}, socket, _connect_info) when is_binary(code) do
     # Check if DB Sync is enabled
     if PhoenixKitSync.enabled?() do
       # Validate the connection code
       case PhoenixKitSync.validate_code(code) do
+        # Only a `:send` session serves rows (see SocketPlug).
+        {:ok, %{direction: direction}} when direction != :send ->
+          Logger.warning("Sync: Session code of a session that does not send")
+          {:error, :invalid_code}
+
         {:ok, session} ->
-          Logger.info("Sync: Sender connected with code #{code}")
+          Logger.info("Sync: Sender connected with a session code")
 
           socket =
             socket
@@ -44,11 +49,11 @@ defmodule PhoenixKitSync.Web.SyncSocket do
           {:ok, socket}
 
         {:error, :invalid_code} ->
-          Logger.warning("Sync: Invalid code attempt: #{code}")
+          Logger.warning("Sync: Invalid session code attempt")
           {:error, :invalid_code}
 
         {:error, :already_used} ->
-          Logger.warning("Sync: Code already used: #{code}")
+          Logger.warning("Sync: Session code already used")
           {:error, :already_used}
       end
     else
