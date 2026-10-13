@@ -6,6 +6,13 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
   alias PhoenixKitSync.Web.SyncChannel
   alias PhoenixKitSync.Web.SyncSocket
 
+  # Replies can be served by a live Postgres introspection query (the table
+  # list counts the rows of every table), so the default 100 ms deadline of
+  # assert_push/assert_reply loses the race on a loaded machine and reports an
+  # empty mailbox as a protocol failure. The deadline is only how long a
+  # missing reply takes to fail: a reply that arrives ends the wait at once.
+  @reply_timeout 15_000
+
   setup do
     PhoenixKitSync.enable_system()
     {:ok, session} = PhoenixKitSync.create_session(:send)
@@ -34,18 +41,11 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
       ref = "cap-1"
       push(channel, "request:capabilities", %{"ref" => ref})
 
-      assert_push("response:capabilities", %{capabilities: caps, ref: ^ref})
+      assert_push("response:capabilities", %{capabilities: caps, ref: ^ref}, @reply_timeout)
       assert is_binary(caps.version)
       assert "list_tables" in caps.features
     end
   end
-
-  # These replies are served by live Postgres queries (the table list counts
-  # the rows of every table), so the default 100 ms assert_push deadline
-  # loses the race on a loaded machine and reports an empty mailbox as a
-  # protocol failure. The deadline is only how long a missing reply takes to
-  # fail: a reply that arrives ends the wait at once.
-  @reply_timeout 15_000
 
   test "a session cannot request token-table schema, counts, or records", %{
     socket: socket,
@@ -402,7 +402,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       ref = push(channel, "request:records", %{"ref" => "missing-table-1"})
-      assert_reply(ref, :error, %{reason: "missing_fields"})
+      assert_reply(ref, :error, %{reason: "missing_fields"}, @reply_timeout)
       assert Process.alive?(channel.channel_pid)
     end
 
@@ -414,7 +414,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       ref = push(channel, "request:records", %{"table" => "phoenix_kit_staff_skills"})
-      assert_reply(ref, :error, %{reason: "missing_fields"})
+      assert_reply(ref, :error, %{reason: "missing_fields"}, @reply_timeout)
       assert Process.alive?(channel.channel_pid)
     end
 
@@ -426,7 +426,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       ref = push(channel, "request:records", %{"table" => 12_345, "ref" => "bad-type"})
-      assert_reply(ref, :error, %{reason: "missing_fields"})
+      assert_reply(ref, :error, %{reason: "missing_fields"}, @reply_timeout)
       assert Process.alive?(channel.channel_pid)
     end
 
@@ -435,7 +435,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       ref = push(channel, "request:records", %{})
-      assert_reply(ref, :error, %{reason: "missing_fields"})
+      assert_reply(ref, :error, %{reason: "missing_fields"}, @reply_timeout)
       assert Process.alive?(channel.channel_pid)
     end
   end
@@ -446,7 +446,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       ref = push(channel, "request:made_up", %{})
-      assert_reply(ref, :error, %{message: msg})
+      assert_reply(ref, :error, %{message: msg}, @reply_timeout)
       assert msg =~ "Unknown event"
     end
   end
