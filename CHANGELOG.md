@@ -1,3 +1,49 @@
+## 0.2.5 - 2026-10-13
+
+Quality sweep (#28) and four follow-ups (#29 to #32), with the review fixes
+on top.
+
+### Fixed
+
+- **Remote authorization.** One `Connections.authorize_request/3` decides
+  every table-reading REST action, the socket upgrade and every message on an
+  open socket; download and record limits are held by an atomic reservation,
+  so concurrent requests cannot take the last download. Tables that carry
+  credentials are never synced, whatever the case of their name.
+- **Status changes are serialised.** Local and remote status writes reload
+  the row under `FOR UPDATE`: a stale tab or a late peer request can no longer
+  reopen a revoked connection or lift an admin's suspension. Registration
+  writes its audit row and event after the insert commits.
+- **Credentials stay out of logs.** Token and token-hash prefixes, whole
+  records and driver messages are no longer logged; credential fields are
+  `redact: true` and their queries run with logging off.
+- **Large pulls page by key.** `pull-data` continues by a signed keyset cursor
+  and the WebSocket by position; a keyless table moves over the socket only
+  when it fits in one page (#29).
+- **Values follow the column type** on both import paths: arrays, `numeric`,
+  `uuid`, `bytea`, intervals, network types, `NaN` and infinities; a tuple or
+  `bit(n)` value fails its own record instead of the whole page.
+- **Malformed peers no longer crash a page or a batch:** non-text status or
+  error, non-map records, unreadable keys, bad table and schema shapes, and a
+  sender that dribbles bytes past the response deadline.
+- **Auto-created tables** accept array columns from an allowlist of element
+  types and refuse user-defined types before any DDL (#32).
+- A pull's `conflict_strategy` outside the four known values is read as
+  `skip`; an empty REST answer no longer costs a download; a socket whose code
+  session is gone stops serving; late replies of a closed sync no longer reach
+  a new one.
+
+### Changed
+
+- **Regenerate Token is gone from the connection page.** It replaced the
+  credential without telling the peer; replace a token by deleting and
+  recreating the connection. `Connections.regenerate_token/2` remains for
+  callers that coordinate both sites.
+- Failures of a pull are stored as classified reasons and translated in
+  History; the module ships its own `et` and `ru` catalogue.
+- `decimal >= 3.1.2` is now a requirement, so Hex consumers get the fix for
+  the unbounded-allocation advisory (#30).
+
 ## 0.2.4 - 2026-10-09
 
 Ten PRs (#18 to #27) and their review fixes. **Upgrade receivers before
