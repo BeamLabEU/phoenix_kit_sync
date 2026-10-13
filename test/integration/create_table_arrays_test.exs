@@ -16,7 +16,11 @@ defmodule PhoenixKitSync.Integration.CreateTableArraysTest do
   grid int[][],
   docs jsonb[],
   stamps timestamp with time zone[],
-  codes character(3)[]
+  codes character(3)[],
+  flags bit varying(8)[],
+  spans int4range[],
+  periods daterange[],
+  words tsvector[]
   """
 
   setup do
@@ -82,6 +86,35 @@ defmodule PhoenixKitSync.Integration.CreateTableArraysTest do
     assert rows("ct_target") == rows("ct_source")
   end
 
+  test "an element type off the allowlist never reaches the DDL" do
+    # After the identifier checks, element_type is the only sender string
+    # spelled into the DDL. valid_column_type?/1 guards its syntax; the
+    # allowlist is what keeps it to the types a table can be created with.
+    repo().query!("CREATE TABLE ct_victim (id int)")
+    schema = wire_schema("ct_source")
+    hostile = "text[], x text); DROP TABLE ct_victim; --"
+
+    columns =
+      Enum.map(schema["columns"], fn
+        %{"name" => "tags"} = col -> %{col | "element_type" => hostile}
+        col -> col
+      end)
+
+    assert {:error, :unsupported_column_type} =
+             SchemaInspector.create_table("ct_target", %{schema | "columns" => columns})
+
+    assert SchemaInspector.table_exists?("ct_victim")
+    refute SchemaInspector.table_exists?("ct_target")
+  end
+
+  test "a bad table name is refused as such before any column is looked at" do
+    schema = wire_schema("ct_source")
+    columns = Enum.map(schema["columns"], &Map.delete(&1, "element_type"))
+
+    assert {:error, :invalid_table_name} =
+             SchemaInspector.create_table("ct target", %{schema | "columns" => columns})
+  end
+
   test "an array column without a known element type is refused, not sent as DDL" do
     # Senders before element types report only "ARRAY".
     schema = wire_schema("ct_source")
@@ -95,8 +128,7 @@ defmodule PhoenixKitSync.Integration.CreateTableArraysTest do
 
   test "a user-defined column type is refused, not sent as DDL" do
     repo().query!("CREATE TYPE ct_mood AS ENUM ('calm', 'busy')")
-    repo().query!("CREATE TABLE ct_moods (uuid uuid PRIMARY KEY, mood ct_mood, moods ct_mood[])")
-
+    repo().query!("CREATE TABLE ct_moods (uuid uuid PRIMARY KEY, mood ct_mood)")
     repo().query!("CREATE TABLE ct_mood_lists (uuid uuid PRIMARY KEY, moods ct_mood[])")
 
     assert {:error, :unsupported_column_type} =
@@ -107,5 +139,55 @@ defmodule PhoenixKitSync.Integration.CreateTableArraysTest do
              SchemaInspector.create_table("ct_target", wire_schema("ct_mood_lists"))
 
     refute SchemaInspector.table_exists?("ct_target")
+  end
+
+  test "an array of a type off the allowlist is refused, even a plain name" do
+    # Each is a valid type name: valid_column_type?/1 passes it, so only the
+    # allowlist stops the table.
+    for element <- ~w(oid name point tsquery pg_class) do
+      assert {:error, :unsupported_column_type} =
+               SchemaInspector.create_table("ct_target", %{
+                 "columns" => [
+                   %{"name" => "id", "type" => "bigint", "nullable" => false},
+                   %{"name" => "xs", "type" => "#{element}[]", "nullable" => true}
+                 ],
+                 "primary_key" => ["id"]
+               }),
+             "#{element}[] was not refused"
+    end
+
+    refute SchemaInspector.table_exists?("ct_target")
+  end
+
+  test "a column type that is no string is refused as an invalid type, not a crash" do
+    # JSON null, a number, a list and an object all reach create_table from
+    # a sender's answer.
+    for type <- [nil, 5, ["text"], %{"a" => 1}] do
+      assert {:error, :invalid_column_type} =
+               SchemaInspector.create_table("ct_target", %{
+                 "columns" => [%{"name" => "xs", "type" => type, "nullable" => true}],
+                 "primary_key" => []
+               }),
+             "#{inspect(type)} was not refused"
+    end
+
+    refute SchemaInspector.table_exists?("ct_target")
+  end
+
+  test "a long run of array brackets is refused in linear time" do
+    # One shape puts the run before the last character, one makes it the
+    # type's whole tail, which the check peels bracket by bracket.
+    for type <- [String.duplicate("[]", 20_000) <> "x", "x" <> String.duplicate("[]", 20_000)] do
+      {microseconds, result} =
+        :timer.tc(fn ->
+          SchemaInspector.create_table("ct_target", %{
+            "columns" => [%{"name" => "xs", "type" => type, "nullable" => true}],
+            "primary_key" => []
+          })
+        end)
+
+      assert {:error, _reason} = result
+      assert microseconds < 100_000, "took #{microseconds} microseconds"
+    end
   end
 end
