@@ -102,8 +102,10 @@ clamps each wait to `rate_limit_max_wait_seconds` (default 60) and gives
 up on a request after `rate_limit_wait_budget_seconds` (default 300) of
 waiting, which fails that table with `rate_limited`.
 
-Connections saved before the limit was enforced hold 60, the old default
-that nothing read: raise it (`Connections.update_connection/2`) for a
+Connections saved before the limit was enforced hold 60, the old column
+default that nothing read. Core's migration V218 raises every row still at
+60 to 600 and makes 600 the column default; on a host whose core predates
+V218, raise it by hand (`Connections.update_connection/2`) for a
 connection that syncs many tables at once, or its syncs wait out the
 minute every 60 requests.
 
