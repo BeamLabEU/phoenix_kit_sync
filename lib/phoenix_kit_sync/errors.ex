@@ -66,6 +66,7 @@ defmodule PhoenixKitSync.Errors do
           | :paging_stalled
           | :password_required
           | :pull_failed
+          | :rate_limited
           | :record_limit_reached
           | :response_too_large
           | :schema_without_primary_key
@@ -87,6 +88,10 @@ defmodule PhoenixKitSync.Errors do
   @doc false
   @spec public_message(term()) :: String.t()
   def public_message(reason) when is_atom(reason), do: message(reason)
+
+  def public_message({:rate_limited, seconds} = reason) when is_integer(seconds),
+    do: message(reason)
+
   def public_message(_reason), do: message(:unexpected_response)
 
   @doc """
@@ -176,6 +181,9 @@ defmodule PhoenixKitSync.Errors do
   def message(:pull_failed),
     do: gettext("Pulling this table failed; see the server log for details")
 
+  def message(:rate_limited),
+    do: gettext("Too many requests to the sending site; it asked to wait and the wait ran out")
+
   def message(:record_limit_reached), do: gettext("Record limit reached")
 
   def message(:sent_truncated),
@@ -233,6 +241,9 @@ defmodule PhoenixKitSync.Errors do
 
   # The sender is current and named the key type it has no cursor for:
   # updating it would not help, raising the limit does.
+  def message({:rate_limited, seconds}) when is_integer(seconds),
+    do: gettext("Too many requests; try again in %{seconds} s", seconds: seconds)
+
   def message({:truncated_key_type, type}) when is_binary(type),
     do:
       gettext(

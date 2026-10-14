@@ -13,9 +13,9 @@ defmodule PhoenixKitSync.Connections do
 
   ## Approval Modes (Sender-side)
 
-  Stored, and answered for by `requires_approval?/2`, but not applied to
-  pulls: no transfer is held for approval, so every mode behaves as
-  `"auto_approve"`.
+  Stored and read by nothing: no transfer is held for approval, so every
+  mode behaves as `"auto_approve"`. A new connection itself is `"pending"`
+  until an admin of this site approves it (`approve_connection/2`).
 
   - `"auto_approve"` - All transfers are automatically approved
   - `"require_approval"` - Each transfer needs manual approval
@@ -25,13 +25,10 @@ defmodule PhoenixKitSync.Connections do
 
   ```
   pending → active → suspended → revoked
-                  ↘
-                  expired (set by `Connections.expire_connections/0`)
   ```
 
-  A connection past `expires_at` or its limits is refused whatever its
-  stored status (`Connections.authorize_request/3`); nothing in this module
-  schedules `expire_connections/0`.
+  A connection past `expires_at` or its limits is refused on every request
+  (`Connections.authorize_request/3`); no sweep rewrites its stored status.
 
   ## Usage Examples
 
@@ -64,6 +61,7 @@ defmodule PhoenixKitSync.Connections do
   alias PhoenixKit.Utils.UUID, as: UUIDUtils
   alias PhoenixKitSync.Connection
   alias PhoenixKitSync.ConnectionNotifier
+  alias PhoenixKitSync.RateLimit
 
   @typedoc """
   What `reserve_transfer/2` took from a connection's limits: `records` is
@@ -808,6 +806,7 @@ defmodule PhoenixKitSync.Connections do
     - `:ip_not_allowed` - Client IP not in whitelist
     - `:outside_allowed_hours` - Current time outside allowed hours
     - `:invalid_password` - Download password missing or wrong
+    - `{:rate_limited, seconds}` - Over the connection's requests per minute
 
   ## Examples
 
@@ -818,7 +817,7 @@ defmodule PhoenixKitSync.Connections do
       end
   """
   @spec validate_connection(String.t(), String.t() | nil, keyword()) ::
-          {:ok, Connection.t()} | {:error, atom()}
+          {:ok, Connection.t()} | {:error, atom() | {:rate_limited, pos_integer()}}
   def validate_connection(token, client_ip \\ nil, opts \\ []) do
     with {:ok, connection} <- find_sender_by_token(token),
          :ok <- authorize_request(connection, client_ip, opts) do
@@ -834,13 +833,16 @@ defmodule PhoenixKitSync.Connections do
       {:error, reason} = error ->
         Logger.warning(
           "[Sync.Connections] Token validation failed " <>
-            "| reason=#{reason} " <>
+            "| reason=#{refusal_name(reason)} " <>
             "| client_ip=#{client_ip}"
         )
 
         error
     end
   end
+
+  defp refusal_name({:rate_limited, _seconds}), do: "rate_limited"
+  defp refusal_name(reason), do: reason
 
   @doc """
   Decides whether a request made under `connection` may proceed.
@@ -854,8 +856,10 @@ defmodule PhoenixKitSync.Connections do
   site's own pass to the peer's data and gives the peer nothing here),
   status is `"active"`, not past `expires_at`, within
   `max_downloads` and `max_records_total`, the client IP is in the
-  whitelist (when one is set), the hour is within the allowed hours, and
-  the download password matches (when one is set).
+  whitelist (when one is set), the hour is within the allowed hours, the
+  request is within `rate_limit_requests_per_minute`
+  (`PhoenixKitSync.RateLimit`; every call that gets this far counts one),
+  and the download password matches (when one is set).
 
   The two limits are read here from the row as loaded, which refuses a
   connection that has used them up before any work is done. It does not
@@ -871,15 +875,18 @@ defmodule PhoenixKitSync.Connections do
     - `:password` - The download password the client supplied
     - `:continuation` - `true` for a further page of a download already
       counted, which is not held to `max_downloads` again
+    - `:rate_limit` - `false` for a socket frame that is not a request (the
+      join, a heartbeat), which is not counted against the minute
 
   ## Returns
 
   `:ok`, or `{:error, reason}` with `:unauthorized`, `:connection_not_active`,
   `:connection_expired`, `:download_limit_reached`, `:record_limit_reached`,
-  `:ip_not_allowed`, `:outside_allowed_hours` or `:invalid_password`.
+  `:ip_not_allowed`, `:outside_allowed_hours`, `{:rate_limited, seconds}`
+  (the seconds until the minute frees) or `:invalid_password`.
   """
   @spec authorize_request(Connection.t(), String.t() | nil, keyword()) ::
-          :ok | {:error, atom()}
+          :ok | {:error, atom() | {:rate_limited, pos_integer()}}
   def authorize_request(%Connection{} = connection, client_ip, opts \\ []) do
     with :ok <- check_direction(connection),
          :ok <- check_status(connection),
@@ -887,10 +894,17 @@ defmodule PhoenixKitSync.Connections do
          :ok <- check_download_limits(connection, Keyword.get(opts, :continuation, false)),
          :ok <- check_record_limits(connection),
          :ok <- check_ip_whitelist(connection, client_ip),
-         :ok <- check_allowed_hours(connection) do
+         :ok <- check_allowed_hours(connection),
+         :ok <- check_rate_limit(connection, Keyword.get(opts, :rate_limit, true)) do
       validate_download_password(connection, Keyword.get(opts, :password))
     end
   end
+
+  # Counted after every check a stranger fails (an address off the
+  # whitelist cannot spend the peer's minute) and before the password, so
+  # guessing it is bounded by the limit too.
+  defp check_rate_limit(_connection, false = _count), do: :ok
+  defp check_rate_limit(connection, _count), do: RateLimit.check(connection)
 
   @doc """
   Validates a download password for a connection.
@@ -1314,21 +1328,6 @@ defmodule PhoenixKitSync.Connections do
   end
 
   @doc """
-  Checks if a table requires approval for this connection.
-
-  ## Examples
-
-      Connections.requires_approval?(conn, "users")
-      # => true (for require_approval mode)
-      # => false (for auto_approve mode)
-      # => depends on auto_approve_tables (for per_table mode)
-  """
-  @spec requires_approval?(Connection.t(), String.t()) :: boolean()
-  def requires_approval?(%Connection{} = connection, table_name) do
-    Connection.requires_approval?(connection, table_name)
-  end
-
-  @doc """
   Gets the remaining download allowance for a connection.
 
   Returns `:unlimited` if no limit is set.
@@ -1367,38 +1366,6 @@ defmodule PhoenixKitSync.Connections do
   # ===========================================
   # EXPIRATION & CLEANUP
   # ===========================================
-
-  @doc """
-  Finds and marks expired connections.
-
-  A connection is expired if:
-  - `expires_at` is in the past, OR
-  - `max_downloads` is exceeded, OR
-  - `max_records_total` is exceeded
-
-  Returns the number of connections marked as expired.
-
-  ## Examples
-
-      {count, nil} = Connections.expire_connections()
-      # `count` is the number of connections marked as expired.
-  """
-  @spec expire_connections() :: {non_neg_integer(), nil | term()}
-  def expire_connections do
-    repo = RepoHelper.repo()
-    now = UtilsDate.utc_now()
-
-    # Find connections to expire
-    query =
-      from c in Connection,
-        where: c.status == "active",
-        where:
-          (not is_nil(c.expires_at) and c.expires_at < ^now) or
-            (not is_nil(c.max_downloads) and c.downloads_used >= c.max_downloads) or
-            (not is_nil(c.max_records_total) and c.records_downloaded >= c.max_records_total)
-
-    repo.update_all(query, set: [status: "expired", updated_at: now])
-  end
 
   @doc """
   Gets connections expiring soon (within given hours).

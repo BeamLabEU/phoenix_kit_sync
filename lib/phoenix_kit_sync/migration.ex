@@ -91,7 +91,7 @@ defmodule PhoenixKitSync.Migration do
 
       # Per-request limits
       add(:max_records_per_request, :integer, null: false, default: 10_000)
-      add(:rate_limit_requests_per_minute, :integer, null: false, default: 60)
+      add(:rate_limit_requests_per_minute, :integer, null: false, default: 600)
 
       # Additional security
       add(:download_password_hash, :string)

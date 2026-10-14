@@ -27,6 +27,15 @@ defmodule PhoenixKitSync.WebSocketClient do
       # Request records
       WebSocketClient.request_records(pid, "users", offset: 0, limit: 100)
       # Receive: {:sync_client, {:records, "users", result}}
+
+  ## Rate limiting
+
+  A sender that refuses a request with `"error_code": "rate_limited"` (the
+  connection is over its requests per minute) gets the same request again
+  after its `"retry_after"`, clamped and within a total budget
+  (`PhoenixKitSync.RateLimit`). Before each wait the caller receives
+  `{:sync_client, {:rate_limited, request_type, seconds}}`; past the budget
+  the request ends as `{:request_error, request_type, :rate_limited}`.
   """
 
   use WebSockex
@@ -34,6 +43,7 @@ defmodule PhoenixKitSync.WebSocketClient do
 
   alias PhoenixKitSync.PeerData
   alias PhoenixKitSync.PullCursor
+  alias PhoenixKitSync.RateLimit
 
   @heartbeat_interval 30_000
   @join_timeout 10_000
@@ -46,7 +56,10 @@ defmodule PhoenixKitSync.WebSocketClient do
     :ref_counter,
     :pending_refs,
     :joined,
-    :heartbeat_ref
+    :heartbeat_ref,
+    # The frame each pending request was sent as and the seconds it has
+    # waited on a rate-limited sender: `%{ref => %{msg: text, waited: s}}`.
+    requests: %{}
   ]
 
   # ===========================================
@@ -194,7 +207,7 @@ defmodule PhoenixKitSync.WebSocketClient do
     if state.joined do
       {ref, state} = next_ref(state)
       msg = encode_message("transfer:#{state.code}", "request:capabilities", %{ref: ref}, ref)
-      state = track_request(state, ref, :capabilities)
+      state = track_request(state, ref, :capabilities, msg)
       {:reply, {:text, msg}, state}
     else
       Logger.warning("Sync.WebSocketClient: Cannot send request - not joined")
@@ -206,7 +219,7 @@ defmodule PhoenixKitSync.WebSocketClient do
     if state.joined do
       {ref, state} = next_ref(state)
       msg = encode_message("transfer:#{state.code}", "request:tables", %{ref: ref}, ref)
-      state = track_request(state, ref, :tables)
+      state = track_request(state, ref, :tables, msg)
       {:reply, {:text, msg}, state}
     else
       Logger.warning("Sync.WebSocketClient: Cannot send request - not joined")
@@ -221,7 +234,7 @@ defmodule PhoenixKitSync.WebSocketClient do
       msg =
         encode_message("transfer:#{state.code}", "request:schema", %{table: table, ref: ref}, ref)
 
-      state = track_request(state, ref, {:schema, table})
+      state = track_request(state, ref, {:schema, table}, msg)
       {:reply, {:text, msg}, state}
     else
       Logger.warning("Sync.WebSocketClient: Cannot send request - not joined")
@@ -236,7 +249,7 @@ defmodule PhoenixKitSync.WebSocketClient do
       msg =
         encode_message("transfer:#{state.code}", "request:count", %{table: table, ref: ref}, ref)
 
-      state = track_request(state, ref, {:count, table})
+      state = track_request(state, ref, {:count, table}, msg)
       {:reply, {:text, msg}, state}
     else
       Logger.warning("Sync.WebSocketClient: Cannot send request - not joined")
@@ -260,7 +273,7 @@ defmodule PhoenixKitSync.WebSocketClient do
 
       msg = encode_message("transfer:#{state.code}", "request:records", payload, ref)
 
-      state = track_request(state, ref, {:records, table})
+      state = track_request(state, ref, {:records, table}, msg)
       {:reply, {:text, msg}, state}
     else
       Logger.warning("Sync.WebSocketClient: Cannot send request - not joined")
@@ -288,6 +301,15 @@ defmodule PhoenixKitSync.WebSocketClient do
       Logger.warning("Sync.WebSocketClient: Join timeout")
       notify_caller(state, {:error, :join_timeout})
       {:close, state}
+    end
+  end
+
+  # A rate-limited request whose wait is over goes out again as it was
+  # sent, under the same ref.
+  def handle_info({:retry_request, ref}, state) do
+    case state.requests do
+      %{^ref => %{msg: msg}} -> {:reply, {:text, msg}, state}
+      _gone -> {:ok, state}
     end
   end
 
@@ -472,6 +494,33 @@ defmodule PhoenixKitSync.WebSocketClient do
     {:ok, state}
   end
 
+  # Over the connection's requests per minute: the request is sent again
+  # once the sender's wait is over, unless its waits would pass the budget.
+  defp handle_phoenix_message(
+         _topic,
+         "response:error",
+         %{"error_code" => "rate_limited", "ref" => ref} = payload,
+         _msg_ref,
+         %{requests: %{} = requests} = state
+       )
+       when is_map_key(requests, ref) do
+    request = Map.fetch!(requests, ref)
+
+    case RateLimit.next_wait(payload["retry_after"], request.waited) do
+      {:wait, seconds} ->
+        Logger.info("Sync.WebSocketClient: The sender is rate limiting; waiting #{seconds} s")
+        notify_caller(state, {:rate_limited, state.pending_refs[ref], seconds})
+        Process.send_after(self(), {:retry_request, ref}, seconds * 1000)
+        requests = Map.put(state.requests, ref, %{request | waited: request.waited + seconds})
+        {:ok, %{state | requests: requests}}
+
+      :give_up ->
+        {request_type, state} = pop_request(state, ref)
+        notify_caller(state, {:request_error, request_type, :rate_limited})
+        {:ok, state}
+    end
+  end
+
   defp handle_phoenix_message(
          _topic,
          "response:error",
@@ -558,14 +607,17 @@ defmodule PhoenixKitSync.WebSocketClient do
     to_string(counter + 1)
   end
 
-  defp track_request(state, ref, request_type) do
+  defp track_request(state, ref, request_type, msg) do
     pending = Map.put(state.pending_refs, ref, request_type)
-    %{state | pending_refs: pending}
+    requests = Map.put(state.requests || %{}, ref, %{msg: msg, waited: 0})
+    %{state | pending_refs: pending, requests: requests}
   end
 
   defp pop_request(state, ref) do
     {request_type, pending} = Map.pop(state.pending_refs, ref)
-    {request_type, %{state | pending_refs: pending}}
+
+    {request_type,
+     %{state | pending_refs: pending, requests: Map.delete(state.requests || %{}, ref)}}
   end
 
   defp schedule_heartbeat do

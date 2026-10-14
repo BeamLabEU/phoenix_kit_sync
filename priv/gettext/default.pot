@@ -11,7 +11,7 @@
 msgid ""
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2655
+#: lib/phoenix_kit_sync/web/connections_live.ex:2720
 #, elixir-autogen, elixir-format
 msgid "%{count} diff"
 msgstr ""
@@ -21,7 +21,7 @@ msgstr ""
 msgid "%{count} requested"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2691
+#: lib/phoenix_kit_sync/web/connections_live.ex:2756
 #, elixir-autogen, elixir-format
 msgid "%{count} table selected"
 msgid_plural "%{count} tables selected"
@@ -42,22 +42,22 @@ msgid_plural "%{count} transfers pending approval"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2513
+#: lib/phoenix_kit_sync/web/connections_live.ex:2578
 #, elixir-autogen, elixir-format
 msgid "%{selected} of %{total} selected"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2824
+#: lib/phoenix_kit_sync/web/connections_live.ex:2889
 #, elixir-autogen, elixir-format
 msgid "%{table} (%{count} records)"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2818
+#: lib/phoenix_kit_sync/web/connections_live.ex:2883
 #, elixir-autogen, elixir-format
 msgid "-- Select a table --"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:102
+#: lib/phoenix_kit_sync/errors.ex:104
 #, elixir-autogen, elixir-format
 msgid "A connection already exists"
 msgstr ""
@@ -68,15 +68,15 @@ msgstr ""
 msgid "A receiver disconnected"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1727
-#: lib/phoenix_kit_sync/web/connections_live.ex:1772
-#: lib/phoenix_kit_sync/web/connections_live.ex:2192
+#: lib/phoenix_kit_sync/web/connections_live.ex:1782
+#: lib/phoenix_kit_sync/web/connections_live.ex:1827
+#: lib/phoenix_kit_sync/web/connections_live.ex:2247
 #: lib/phoenix_kit_sync/web/history.ex:398
 #, elixir-autogen, elixir-format
 msgid "Actions"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1814
+#: lib/phoenix_kit_sync/web/connections_live.ex:1869
 #, elixir-autogen, elixir-format
 msgid "Active"
 msgstr ""
@@ -87,7 +87,7 @@ msgstr ""
 msgid "All"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1690
+#: lib/phoenix_kit_sync/web/connections_live.ex:1745
 #, elixir-autogen, elixir-format
 msgid "All Connections"
 msgstr ""
@@ -97,22 +97,22 @@ msgstr ""
 msgid "All connections use token-based authentication."
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2948
+#: lib/phoenix_kit_sync/web/connections_live.ex:3013
 #, elixir-autogen, elixir-format
 msgid "All records"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2000
+#: lib/phoenix_kit_sync/web/connections_live.ex:2055
 #, elixir-autogen, elixir-format
 msgid "Allow remote site to pull data from here"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:99
+#: lib/phoenix_kit_sync/errors.ex:101
 #, elixir-autogen, elixir-format
 msgid "Already exists"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:100
+#: lib/phoenix_kit_sync/errors.ex:102
 #, elixir-autogen, elixir-format
 msgid "Already used"
 msgstr ""
@@ -122,7 +122,7 @@ msgstr ""
 msgid "Another site creates a connection to you"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1832
+#: lib/phoenix_kit_sync/web/connections_live.ex:1887
 #, elixir-autogen, elixir-format
 msgid "Append"
 msgstr ""
@@ -132,8 +132,8 @@ msgstr ""
 msgid "Append (new IDs)"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1917
-#: lib/phoenix_kit_sync/web/connections_live.ex:1920
+#: lib/phoenix_kit_sync/web/connections_live.ex:1972
+#: lib/phoenix_kit_sync/web/connections_live.ex:1975
 #: lib/phoenix_kit_sync/web/history.ex:705
 #, elixir-autogen, elixir-format
 msgid "Approve"
@@ -149,23 +149,23 @@ msgstr ""
 msgid "Approved"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1915
+#: lib/phoenix_kit_sync/web/connections_live.ex:1970
 #: lib/phoenix_kit_sync/web/history.ex:702
 #, elixir-autogen, elixir-format
 msgid "Approving…"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2242
+#: lib/phoenix_kit_sync/web/connections_live.ex:2297
 #, elixir-autogen, elixir-format
 msgid "Are you sure you want to delete this connection?"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1897
+#: lib/phoenix_kit_sync/web/connections_live.ex:1952
 #, elixir-autogen, elixir-format
 msgid "Are you sure you want to delete this connection? You will need to set it up again."
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2230
+#: lib/phoenix_kit_sync/web/connections_live.ex:2285
 #, elixir-autogen, elixir-format
 msgid "Are you sure you want to revoke this connection?"
 msgstr ""
@@ -180,14 +180,14 @@ msgstr ""
 msgid "As a Sender"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2366
+#: lib/phoenix_kit_sync/web/connections_live.ex:2431
 #, elixir-autogen, elixir-format
 msgid "Auto-retried %{count} time to resolve dependencies"
 msgid_plural "Auto-retried %{count} times to resolve dependencies"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2251
+#: lib/phoenix_kit_sync/web/connections_live.ex:2306
 #, elixir-autogen, elixir-format
 msgid "Back to List"
 msgstr ""
@@ -197,12 +197,12 @@ msgstr ""
 msgid "Bytes"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2163
+#: lib/phoenix_kit_sync/web/connections_live.ex:2218
 #, elixir-autogen, elixir-format
 msgid "Bytes Transferred"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2089
+#: lib/phoenix_kit_sync/web/connections_live.ex:2144
 #, elixir-autogen, elixir-format
 msgid "Cancel"
 msgstr ""
@@ -212,12 +212,12 @@ msgstr ""
 msgid "Cancelled"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:101
+#: lib/phoenix_kit_sync/errors.ex:103
 #, elixir-autogen, elixir-format
 msgid "Cannot start"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2560
+#: lib/phoenix_kit_sync/web/connections_live.ex:2625
 #, elixir-autogen, elixir-format
 msgid "Checksum"
 msgstr ""
@@ -232,18 +232,18 @@ msgstr ""
 msgid "Clear Filters"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2277
+#: lib/phoenix_kit_sync/web/connections_live.ex:2332
 #: lib/phoenix_kit_sync/web/history.ex:709
 #, elixir-autogen, elixir-format
 msgid "Close"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2874
+#: lib/phoenix_kit_sync/web/connections_live.ex:2939
 #, elixir-autogen, elixir-format
 msgid "Column"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1269
+#: lib/phoenix_kit_sync/web/connections_live.ex:1308
 #, elixir-autogen, elixir-format
 msgid "Columns not in the local table: %{columns}"
 msgstr ""
@@ -254,14 +254,14 @@ msgstr ""
 msgid "Completed"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2145
-#: lib/phoenix_kit_sync/web/connections_live.ex:3069
+#: lib/phoenix_kit_sync/web/connections_live.ex:2200
+#: lib/phoenix_kit_sync/web/connections_live.ex:3142
 #: lib/phoenix_kit_sync/web/history.ex:633
 #, elixir-autogen, elixir-format
 msgid "Conflict Strategy"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2524
+#: lib/phoenix_kit_sync/web/connections_live.ex:2589
 #, elixir-autogen, elixir-format
 msgid "Conflict:"
 msgstr ""
@@ -282,12 +282,12 @@ msgstr ""
 msgid "Connection"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1165
+#: lib/phoenix_kit_sync/web/connections_live.ex:1200
 #, elixir-autogen, elixir-format
 msgid "Connection '%{name}' suspended — remote site reports it no longer exists. You can delete it or reactivate and re-verify."
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:326
+#: lib/phoenix_kit_sync/web/connections_live.ex:327
 #, elixir-autogen, elixir-format
 msgid "Connection approved"
 msgstr ""
@@ -297,12 +297,12 @@ msgstr ""
 msgid "Connection closed"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1557
+#: lib/phoenix_kit_sync/web/connections_live.ex:1627
 #, elixir-autogen, elixir-format
 msgid "Connection created successfully"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:427
+#: lib/phoenix_kit_sync/web/connections_live.ex:428
 #, elixir-autogen, elixir-format
 msgid "Connection deleted"
 msgstr ""
@@ -312,12 +312,12 @@ msgstr ""
 msgid "Connection failed: %{reason}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:103
+#: lib/phoenix_kit_sync/errors.ex:105
 #, elixir-autogen, elixir-format
 msgid "Connection has expired"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:104
+#: lib/phoenix_kit_sync/errors.ex:106
 #, elixir-autogen, elixir-format
 msgid "Connection is not active"
 msgstr ""
@@ -328,32 +328,32 @@ msgstr ""
 msgid "Connection not found"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:370
+#: lib/phoenix_kit_sync/web/connections_live.ex:371
 #, elixir-autogen, elixir-format
 msgid "Connection reactivated"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:395
+#: lib/phoenix_kit_sync/web/connections_live.ex:396
 #, elixir-autogen, elixir-format
 msgid "Connection revoked"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:426
+#: lib/phoenix_kit_sync/web/connections_live.ex:427
 #, elixir-autogen, elixir-format
 msgid "Connection severed"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:348
+#: lib/phoenix_kit_sync/web/connections_live.ex:349
 #, elixir-autogen, elixir-format
 msgid "Connection suspended"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:105
+#: lib/phoenix_kit_sync/errors.ex:107
 #, elixir-autogen, elixir-format
 msgid "Connection timed out"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:155
+#: lib/phoenix_kit_sync/errors.ex:157
 #, elixir-autogen, elixir-format
 msgid "Connection timed out while joining"
 msgstr ""
@@ -368,15 +368,15 @@ msgstr ""
 msgid "Connection timed out. Please try again."
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1586
+#: lib/phoenix_kit_sync/web/connections_live.ex:1640
 #, elixir-autogen, elixir-format
 msgid "Connection updated successfully"
 msgstr ""
 
 #: lib/phoenix_kit_sync.ex:266
-#: lib/phoenix_kit_sync/web/connections_live.ex:1612
-#: lib/phoenix_kit_sync/web/connections_live.ex:3161
-#: lib/phoenix_kit_sync/web/connections_live.ex:3203
+#: lib/phoenix_kit_sync/web/connections_live.ex:1666
+#: lib/phoenix_kit_sync/web/connections_live.ex:3234
+#: lib/phoenix_kit_sync/web/connections_live.ex:3276
 #, elixir-autogen, elixir-format
 msgid "Connections"
 msgstr ""
@@ -386,7 +386,7 @@ msgstr ""
 msgid "Could not connect to sender. Please check the URL."
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:108
+#: lib/phoenix_kit_sync/errors.ex:110
 #, elixir-autogen, elixir-format
 msgid "Could not connect to the remote site"
 msgstr ""
@@ -401,17 +401,17 @@ msgstr ""
 msgid "Could not get schema for %{table}, table won't be auto-created"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:167
+#: lib/phoenix_kit_sync/errors.ex:169
 #, elixir-autogen, elixir-format
 msgid "Could not resolve the remote site's domain"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2092
+#: lib/phoenix_kit_sync/web/connections_live.ex:2147
 #, elixir-autogen, elixir-format
 msgid "Create Connection"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2929
+#: lib/phoenix_kit_sync/web/connections_live.ex:2994
 #, elixir-autogen, elixir-format
 msgid "Create Table"
 msgstr ""
@@ -432,7 +432,7 @@ msgstr ""
 msgid "Created"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2927
+#: lib/phoenix_kit_sync/web/connections_live.ex:2992
 #, elixir-autogen, elixir-format
 msgid "Creating…"
 msgstr ""
@@ -442,7 +442,7 @@ msgstr ""
 msgid "DB Sync"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1622
+#: lib/phoenix_kit_sync/web/connections_live.ex:1676
 #, elixir-autogen, elixir-format
 msgid "DB Sync module is disabled."
 msgstr ""
@@ -452,29 +452,29 @@ msgstr ""
 msgid "Date"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2877
+#: lib/phoenix_kit_sync/web/connections_live.ex:2942
 #, elixir-autogen, elixir-format
 msgid "Default"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2052
+#: lib/phoenix_kit_sync/web/connections_live.ex:2107
 #, elixir-autogen, elixir-format
 msgid "Default Conflict Strategy"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2244
+#: lib/phoenix_kit_sync/web/connections_live.ex:2299
 #, elixir-autogen, elixir-format
 msgid "Delete"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1895
-#: lib/phoenix_kit_sync/web/connections_live.ex:1904
+#: lib/phoenix_kit_sync/web/connections_live.ex:1950
+#: lib/phoenix_kit_sync/web/connections_live.ex:1959
 #, elixir-autogen, elixir-format
 msgid "Delete connection"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1890
-#: lib/phoenix_kit_sync/web/connections_live.ex:2240
+#: lib/phoenix_kit_sync/web/connections_live.ex:1945
+#: lib/phoenix_kit_sync/web/connections_live.ex:2295
 #, elixir-autogen, elixir-format
 msgid "Deleting…"
 msgstr ""
@@ -499,7 +499,7 @@ msgstr ""
 msgid "Denying…"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2503
+#: lib/phoenix_kit_sync/web/connections_live.ex:2568
 #, elixir-autogen, elixir-format
 msgid "Deselect All"
 msgstr ""
@@ -510,13 +510,13 @@ msgstr ""
 msgid "Details"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2677
+#: lib/phoenix_kit_sync/web/connections_live.ex:2742
 #, elixir-autogen, elixir-format
 msgid "Different"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1994
-#: lib/phoenix_kit_sync/web/connections_live.ex:2131
+#: lib/phoenix_kit_sync/web/connections_live.ex:2049
+#: lib/phoenix_kit_sync/web/connections_live.ex:2186
 #: lib/phoenix_kit_sync/web/history.ex:334
 #: lib/phoenix_kit_sync/web/history.ex:392
 #: lib/phoenix_kit_sync/web/history.ex:568
@@ -529,7 +529,7 @@ msgstr ""
 msgid "Disconnect this receiver"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:106
+#: lib/phoenix_kit_sync/errors.ex:108
 #, elixir-autogen, elixir-format
 msgid "Disconnected"
 msgstr ""
@@ -546,26 +546,26 @@ msgstr ""
 msgid "Disconnecting…"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2438
-#: lib/phoenix_kit_sync/web/connections_live.ex:2807
+#: lib/phoenix_kit_sync/web/connections_live.ex:2503
+#: lib/phoenix_kit_sync/web/connections_live.ex:2872
 #, elixir-autogen, elixir-format
 msgid "Done"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:107
+#: lib/phoenix_kit_sync/errors.ex:109
 #, elixir-autogen, elixir-format
 msgid "Download limit reached"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1880
-#: lib/phoenix_kit_sync/web/connections_live.ex:1883
-#: lib/phoenix_kit_sync/web/connections_live.ex:2121
-#: lib/phoenix_kit_sync/web/connections_live.ex:3183
+#: lib/phoenix_kit_sync/web/connections_live.ex:1935
+#: lib/phoenix_kit_sync/web/connections_live.ex:1938
+#: lib/phoenix_kit_sync/web/connections_live.ex:2176
+#: lib/phoenix_kit_sync/web/connections_live.ex:3256
 #, elixir-autogen, elixir-format
 msgid "Edit"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1973
+#: lib/phoenix_kit_sync/web/connections_live.ex:2028
 #, elixir-autogen, elixir-format
 msgid "Edit Connection"
 msgstr ""
@@ -580,7 +580,7 @@ msgstr ""
 msgid "End All Sessions"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2977
+#: lib/phoenix_kit_sync/web/connections_live.ex:3042
 #, elixir-autogen, elixir-format
 msgid "Enter IDs (e.g., 1,2,3)"
 msgstr ""
@@ -590,18 +590,18 @@ msgstr ""
 msgid "Enter the remote site's URL"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1821
+#: lib/phoenix_kit_sync/web/connections_live.ex:1876
 #, elixir-autogen, elixir-format
 msgid "Error"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2382
-#: lib/phoenix_kit_sync/web/connections_live.ex:2752
+#: lib/phoenix_kit_sync/web/connections_live.ex:2447
+#: lib/phoenix_kit_sync/web/connections_live.ex:2817
 #, elixir-autogen, elixir-format
 msgid "Errors"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1817
+#: lib/phoenix_kit_sync/web/connections_live.ex:1872
 #: lib/phoenix_kit_sync/web/history.ex:732
 #, elixir-autogen, elixir-format
 msgid "Expired"
@@ -613,7 +613,7 @@ msgstr ""
 msgid "Failed"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:332
+#: lib/phoenix_kit_sync/web/connections_live.ex:333
 #, elixir-autogen, elixir-format
 msgid "Failed to approve connection"
 msgstr ""
@@ -623,13 +623,13 @@ msgstr ""
 msgid "Failed to approve transfer"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:700
+#: lib/phoenix_kit_sync/web/connections_live.ex:701
 #: lib/phoenix_kit_sync/web/receiver.ex:410
 #, elixir-autogen, elixir-format
 msgid "Failed to create table: %{reason}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:438
+#: lib/phoenix_kit_sync/web/connections_live.ex:439
 #, elixir-autogen, elixir-format
 msgid "Failed to delete connection"
 msgstr ""
@@ -644,7 +644,7 @@ msgstr ""
 msgid "Failed to fetch records from %{table}: %{error}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:802
+#: lib/phoenix_kit_sync/web/connections_live.ex:807
 #, elixir-autogen, elixir-format
 msgid "Failed to fetch tables: %{reason}"
 msgstr ""
@@ -655,7 +655,7 @@ msgstr ""
 msgid "Failed to generate code: %{reason}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:900
+#: lib/phoenix_kit_sync/web/connections_live.ex:914
 #, elixir-autogen, elixir-format
 msgid "Failed to load preview: %{reason}"
 msgstr ""
@@ -665,7 +665,7 @@ msgstr ""
 msgid "Failed to load schema for %{table}: %{error}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:845
+#: lib/phoenix_kit_sync/web/connections_live.ex:854
 #, elixir-autogen, elixir-format
 msgid "Failed to load schema: %{reason}"
 msgstr ""
@@ -675,37 +675,37 @@ msgstr ""
 msgid "Failed to load tables: %{error}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:376
+#: lib/phoenix_kit_sync/web/connections_live.ex:377
 #, elixir-autogen, elixir-format
 msgid "Failed to reactivate connection"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:401
+#: lib/phoenix_kit_sync/web/connections_live.ex:402
 #, elixir-autogen, elixir-format
 msgid "Failed to revoke connection"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:354
+#: lib/phoenix_kit_sync/web/connections_live.ex:355
 #, elixir-autogen, elixir-format
 msgid "Failed to suspend connection"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:110
+#: lib/phoenix_kit_sync/errors.ex:112
 #, elixir-autogen, elixir-format
 msgid "Fetch failed"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2348
+#: lib/phoenix_kit_sync/web/connections_live.ex:2413
 #, elixir-autogen, elixir-format
 msgid "Fetching available tables…"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2937
+#: lib/phoenix_kit_sync/web/connections_live.ex:3002
 #, elixir-autogen, elixir-format
 msgid "Filter Records"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2987
+#: lib/phoenix_kit_sync/web/connections_live.ex:3052
 #, elixir-autogen, elixir-format
 msgid "From"
 msgstr ""
@@ -731,29 +731,29 @@ msgstr ""
 msgid "How Cross-Site Connections Work"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2968
+#: lib/phoenix_kit_sync/web/connections_live.ex:3033
 #, elixir-autogen, elixir-format
 msgid "ID Range"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:153
+#: lib/phoenix_kit_sync/errors.ex:155
 #, elixir-autogen, elixir-format
 msgid "IP address not in whitelist"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2049
-#: lib/phoenix_kit_sync/web/connections_live.ex:2142
+#: lib/phoenix_kit_sync/web/connections_live.ex:2104
+#: lib/phoenix_kit_sync/web/connections_live.ex:2197
 #, elixir-autogen, elixir-format
 msgid "Import Settings"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2380
-#: lib/phoenix_kit_sync/web/connections_live.ex:2750
+#: lib/phoenix_kit_sync/web/connections_live.ex:2445
+#: lib/phoenix_kit_sync/web/connections_live.ex:2815
 #, elixir-autogen, elixir-format
 msgid "Imported"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:119
+#: lib/phoenix_kit_sync/errors.ex:121
 #, elixir-autogen, elixir-format
 msgid "Importing this table failed; see the server log for details"
 msgstr ""
@@ -763,105 +763,106 @@ msgstr ""
 msgid "In Progress"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1693
+#: lib/phoenix_kit_sync/web/connections_live.ex:1748
 #, elixir-autogen, elixir-format
 msgid "Incoming Only"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2004
+#: lib/phoenix_kit_sync/web/connections_live.ex:2059
 #, elixir-autogen, elixir-format
 msgid "Incoming connections appear when a remote site connects"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:121
+#: lib/phoenix_kit_sync/errors.ex:123
 #, elixir-autogen, elixir-format
 msgid "Incoming connections are not allowed"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:146
+#: lib/phoenix_kit_sync/errors.ex:148
 #, elixir-autogen, elixir-format
 msgid "Invalid JSON"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:152
+#: lib/phoenix_kit_sync/errors.ex:154
 #, elixir-autogen, elixir-format
 msgid "Invalid auth token"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:125
+#: lib/phoenix_kit_sync/errors.ex:127
 #, elixir-autogen, elixir-format
 msgid "Invalid cursor: it does not name this table's primary key values"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:145
+#: lib/phoenix_kit_sync/errors.ex:147
 #, elixir-autogen, elixir-format
 msgid "Invalid identifier"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:147
+#: lib/phoenix_kit_sync/errors.ex:149
 #, elixir-autogen, elixir-format
 msgid "Invalid password"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:141
+#: lib/phoenix_kit_sync/errors.ex:143
 #, elixir-autogen, elixir-format
 msgid "Invalid record filter: enter at least one ID (up to 1000), or a range with at least one bound. An integer key takes only whole-number IDs, and a range needs an integer key"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:148
+#: lib/phoenix_kit_sync/errors.ex:150
 #, elixir-autogen, elixir-format
 msgid "Invalid response from remote site"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:122
+#: lib/phoenix_kit_sync/errors.ex:124
 #, elixir-autogen, elixir-format
 msgid "Invalid session code"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:150
+#: lib/phoenix_kit_sync/errors.ex:152
 #, elixir-autogen, elixir-format
 msgid "Invalid status"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:151
+#: lib/phoenix_kit_sync/errors.ex:153
 #, elixir-autogen, elixir-format
 msgid "Invalid table name"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2170
+#: lib/phoenix_kit_sync/web/connections_live.ex:2225
 #, elixir-autogen, elixir-format
 msgid "Last Connected"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2180
+#: lib/phoenix_kit_sync/web/connections_live.ex:2235
 #, elixir-autogen, elixir-format
 msgid "Last Transfer"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1818
+#: lib/phoenix_kit_sync/web/connections_live.ex:1873
 #, elixir-autogen, elixir-format
 msgid "Loading"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2838
+#: lib/phoenix_kit_sync/web/connections_live.ex:2903
 #, elixir-autogen, elixir-format
 msgid "Loading table schema…"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1857
-#: lib/phoenix_kit_sync/web/connections_live.ex:2306
-#: lib/phoenix_kit_sync/web/connections_live.ex:2333
+#: lib/phoenix_kit_sync/web/connections_live.ex:1912
+#: lib/phoenix_kit_sync/web/connections_live.ex:2371
+#: lib/phoenix_kit_sync/web/connections_live.ex:2398
+#: lib/phoenix_kit_sync/web/connections_live.ex:3075
 #, elixir-autogen, elixir-format
 msgid "Loading…"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2484
-#: lib/phoenix_kit_sync/web/connections_live.ex:2558
+#: lib/phoenix_kit_sync/web/connections_live.ex:2549
+#: lib/phoenix_kit_sync/web/connections_live.ex:2623
 #, elixir-autogen, elixir-format
 msgid "Local"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2855
+#: lib/phoenix_kit_sync/web/connections_live.ex:2920
 #, elixir-autogen, elixir-format
 msgid "Local:"
 msgstr ""
@@ -872,23 +873,23 @@ msgstr ""
 msgid "Manage Connections"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1614
+#: lib/phoenix_kit_sync/web/connections_live.ex:1668
 #, elixir-autogen, elixir-format
 msgid "Manage permanent connections for data sync"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2647
-#: lib/phoenix_kit_sync/web/connections_live.ex:2682
+#: lib/phoenix_kit_sync/web/connections_live.ex:2712
+#: lib/phoenix_kit_sync/web/connections_live.ex:2747
 #, elixir-autogen, elixir-format
 msgid "Match"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1831
+#: lib/phoenix_kit_sync/web/connections_live.ex:1886
 #, elixir-autogen, elixir-format
 msgid "Merge"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2079
+#: lib/phoenix_kit_sync/web/connections_live.ex:2134
 #, elixir-autogen, elixir-format
 msgid "Merge - Combine with existing records"
 msgstr ""
@@ -898,38 +899,38 @@ msgstr ""
 msgid "Merge data"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:157
+#: lib/phoenix_kit_sync/errors.ex:159
 #, elixir-autogen, elixir-format
 msgid "Missing connection info"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:154
+#: lib/phoenix_kit_sync/errors.ex:156
 #, elixir-autogen, elixir-format
 msgid "Missing required fields"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:156
+#: lib/phoenix_kit_sync/errors.ex:158
 #, elixir-autogen, elixir-format
 msgid "Missing session code"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2657
+#: lib/phoenix_kit_sync/web/connections_live.ex:2722
 #, elixir-autogen, elixir-format
 msgid "Modified"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1724
+#: lib/phoenix_kit_sync/web/connections_live.ex:1779
 #, elixir-autogen, elixir-format
 msgid "Name"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1987
+#: lib/phoenix_kit_sync/web/connections_live.ex:2042
 #, elixir-autogen, elixir-format
 msgid "Name *"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2175
-#: lib/phoenix_kit_sync/web/connections_live.ex:2185
+#: lib/phoenix_kit_sync/web/connections_live.ex:2230
+#: lib/phoenix_kit_sync/web/connections_live.ex:2240
 #, elixir-autogen, elixir-format
 msgid "Never"
 msgstr ""
@@ -939,38 +940,38 @@ msgstr ""
 msgid "New Code"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1699
-#: lib/phoenix_kit_sync/web/connections_live.ex:1971
+#: lib/phoenix_kit_sync/web/connections_live.ex:1754
+#: lib/phoenix_kit_sync/web/connections_live.ex:2026
 #, elixir-autogen, elixir-format
 msgid "New Connection"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3167
+#: lib/phoenix_kit_sync/web/connections_live.ex:3240
 #, elixir-autogen, elixir-format
 msgid "New connection"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2859
+#: lib/phoenix_kit_sync/web/connections_live.ex:2924
 #, elixir-autogen, elixir-format
 msgid "New table"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2672
+#: lib/phoenix_kit_sync/web/connections_live.ex:2737
 #, elixir-autogen, elixir-format
 msgid "New tables"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1763
+#: lib/phoenix_kit_sync/web/connections_live.ex:1818
 #, elixir-autogen, elixir-format
 msgid "No incoming connections configured"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1717
+#: lib/phoenix_kit_sync/web/connections_live.ex:1772
 #, elixir-autogen, elixir-format
 msgid "No outgoing connections configured"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3061
+#: lib/phoenix_kit_sync/web/connections_live.ex:3134
 #, elixir-autogen, elixir-format
 msgid "No records match your filter criteria."
 msgstr ""
@@ -980,7 +981,7 @@ msgstr ""
 msgid "No table selected or schema not loaded"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2473
+#: lib/phoenix_kit_sync/web/connections_live.ex:2538
 #, elixir-autogen, elixir-format
 msgid "No tables available for sync"
 msgstr ""
@@ -995,38 +996,38 @@ msgstr ""
 msgid "Not connected to sender"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:166
-#: lib/phoenix_kit_sync/web/connections_live.ex:1820
+#: lib/phoenix_kit_sync/errors.ex:168
+#: lib/phoenix_kit_sync/web/connections_live.ex:1875
 #, elixir-autogen, elixir-format
 msgid "Not found"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:204
+#: lib/phoenix_kit_sync/errors.ex:209
 #, elixir-autogen, elixir-format
 msgid "Not imported: the source site ignored the record filter. Update its sync module and try again"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:162
+#: lib/phoenix_kit_sync/errors.ex:164
 #, elixir-autogen, elixir-format
 msgid "Not pulled: the table has no primary key here, so repeat pulls would duplicate its rows"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:189
+#: lib/phoenix_kit_sync/errors.ex:194
 #, elixir-autogen, elixir-format
 msgid "Not pulled: the table has no primary key on the source site, so its rows have no order to page in"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:221
+#: lib/phoenix_kit_sync/errors.ex:226
 #, elixir-autogen, elixir-format
 msgid "Not pulled: this table does not exist on this site. Create it from the Precise Transfer tab first"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2876
+#: lib/phoenix_kit_sync/web/connections_live.ex:2941
 #, elixir-autogen, elixir-format
 msgid "Nullable"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1819
+#: lib/phoenix_kit_sync/web/connections_live.ex:1874
 #, elixir-autogen, elixir-format
 msgid "Offline"
 msgstr ""
@@ -1036,12 +1037,12 @@ msgstr ""
 msgid "Once it accepts, it can pull data from your tables"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1691
+#: lib/phoenix_kit_sync/web/connections_live.ex:1746
 #, elixir-autogen, elixir-format
 msgid "Outgoing Only"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:169
+#: lib/phoenix_kit_sync/errors.ex:171
 #, elixir-autogen, elixir-format
 msgid "Outside allowed connection hours"
 msgstr ""
@@ -1051,12 +1052,12 @@ msgstr ""
 msgid "Overview"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1830
+#: lib/phoenix_kit_sync/web/connections_live.ex:1885
 #, elixir-autogen, elixir-format
 msgid "Overwrite"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2071
+#: lib/phoenix_kit_sync/web/connections_live.ex:2126
 #, elixir-autogen, elixir-format
 msgid "Overwrite - Replace existing records"
 msgstr ""
@@ -1066,7 +1067,7 @@ msgstr ""
 msgid "Overwrite existing"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2886
+#: lib/phoenix_kit_sync/web/connections_live.ex:2951
 #, elixir-autogen, elixir-format
 msgid "PK"
 msgstr ""
@@ -1076,12 +1077,12 @@ msgstr ""
 msgid "Page %{page} of %{total}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:174
+#: lib/phoenix_kit_sync/errors.ex:176
 #, elixir-autogen, elixir-format
 msgid "Password required"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1813
+#: lib/phoenix_kit_sync/web/connections_live.ex:1868
 #: lib/phoenix_kit_sync/web/history.ex:724
 #, elixir-autogen, elixir-format
 msgid "Pending"
@@ -1097,65 +1098,60 @@ msgstr ""
 msgid "Please select a table first"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:576
+#: lib/phoenix_kit_sync/web/connections_live.ex:577
 #: lib/phoenix_kit_sync/web/receiver.ex:242
 #, elixir-autogen, elixir-format
 msgid "Please select at least one table"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2464
+#: lib/phoenix_kit_sync/web/connections_live.ex:2529
 #, elixir-autogen, elixir-format
 msgid "Preparing…"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3014
-#, elixir-autogen, elixir-format
-msgid "Preview"
-msgstr ""
-
-#: lib/phoenix_kit_sync/web/connections_live.ex:3022
+#: lib/phoenix_kit_sync/web/connections_live.ex:3095
 #, elixir-autogen, elixir-format
 msgid "Preview (%{count} matching record)"
 msgid_plural "Preview (%{count} matching records)"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2462
+#: lib/phoenix_kit_sync/web/connections_live.ex:2527
 #, elixir-autogen, elixir-format
 msgid "Processing:"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1988
+#: lib/phoenix_kit_sync/web/connections_live.ex:2043
 #, elixir-autogen, elixir-format
 msgid "Production Server"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2704
+#: lib/phoenix_kit_sync/web/connections_live.ex:2769
 #, elixir-autogen, elixir-format
 msgid "Pull %{count} Table"
 msgid_plural "Pull %{count} Tables"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2273
+#: lib/phoenix_kit_sync/web/connections_live.ex:2328
 #, elixir-autogen, elixir-format
 msgid "Pull data from"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:177
+#: lib/phoenix_kit_sync/errors.ex:179
 #, elixir-autogen, elixir-format
 msgid "Pulling this table failed; see the server log for details"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1945
-#: lib/phoenix_kit_sync/web/connections_live.ex:1948
-#: lib/phoenix_kit_sync/web/connections_live.ex:2217
+#: lib/phoenix_kit_sync/web/connections_live.ex:2000
+#: lib/phoenix_kit_sync/web/connections_live.ex:2003
+#: lib/phoenix_kit_sync/web/connections_live.ex:2272
 #, elixir-autogen, elixir-format
 msgid "Reactivate"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1943
-#: lib/phoenix_kit_sync/web/connections_live.ex:2214
+#: lib/phoenix_kit_sync/web/connections_live.ex:1998
+#: lib/phoenix_kit_sync/web/connections_live.ex:2269
 #, elixir-autogen, elixir-format
 msgid "Reactivating…"
 msgstr ""
@@ -1175,7 +1171,7 @@ msgstr ""
 msgid "Received"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1826
+#: lib/phoenix_kit_sync/web/connections_live.ex:1881
 #, elixir-autogen, elixir-format
 msgid "Receiver"
 msgstr ""
@@ -1185,12 +1181,12 @@ msgstr ""
 msgid "Receiver disconnected"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2479
+#: lib/phoenix_kit_sync/web/connections_live.ex:2544
 #, elixir-autogen, elixir-format
 msgid "Record counts:"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:179
+#: lib/phoenix_kit_sync/errors.ex:184
 #, elixir-autogen, elixir-format
 msgid "Record limit reached"
 msgstr ""
@@ -1200,7 +1196,7 @@ msgstr ""
 msgid "Records"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2159
+#: lib/phoenix_kit_sync/web/connections_live.ex:2214
 #, elixir-autogen, elixir-format
 msgid "Records Transferred"
 msgstr ""
@@ -1210,12 +1206,12 @@ msgstr ""
 msgid "Regenerating…"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:168
+#: lib/phoenix_kit_sync/errors.ex:170
 #, elixir-autogen, elixir-format
 msgid "Remote site is offline"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:226
+#: lib/phoenix_kit_sync/errors.ex:231
 #, elixir-autogen, elixir-format
 msgid "Request timed out"
 msgstr ""
@@ -1230,12 +1226,12 @@ msgstr ""
 msgid "Requester IP"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2309
+#: lib/phoenix_kit_sync/web/connections_live.ex:2374
 #, elixir-autogen, elixir-format
 msgid "Retry"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2448
+#: lib/phoenix_kit_sync/web/connections_live.ex:2513
 #, elixir-autogen, elixir-format
 msgid "Retry pass %{pass} — %{current}/%{total}"
 msgstr ""
@@ -1246,32 +1242,32 @@ msgstr ""
 msgid "Review"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2232
+#: lib/phoenix_kit_sync/web/connections_live.ex:2287
 #, elixir-autogen, elixir-format
 msgid "Revoke"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1816
+#: lib/phoenix_kit_sync/web/connections_live.ex:1871
 #, elixir-autogen, elixir-format
 msgid "Revoked"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:386
+#: lib/phoenix_kit_sync/web/connections_live.ex:387
 #, elixir-autogen, elixir-format
 msgid "Revoked by admin"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2228
+#: lib/phoenix_kit_sync/web/connections_live.ex:2283
 #, elixir-autogen, elixir-format
 msgid "Revoking…"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2092
+#: lib/phoenix_kit_sync/web/connections_live.ex:2147
 #, elixir-autogen, elixir-format
 msgid "Save Changes"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2091
+#: lib/phoenix_kit_sync/web/connections_live.ex:2146
 #, elixir-autogen, elixir-format
 msgid "Saving…"
 msgstr ""
@@ -1281,27 +1277,27 @@ msgstr ""
 msgid "Security:"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2496
+#: lib/phoenix_kit_sync/web/connections_live.ex:2561
 #, elixir-autogen, elixir-format
 msgid "Select All"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2510
+#: lib/phoenix_kit_sync/web/connections_live.ex:2575
 #, elixir-autogen, elixir-format
 msgid "Select Different"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2814
+#: lib/phoenix_kit_sync/web/connections_live.ex:2879
 #, elixir-autogen, elixir-format
 msgid "Select Table"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3105
+#: lib/phoenix_kit_sync/web/connections_live.ex:3178
 #, elixir-autogen, elixir-format
 msgid "Select a table above to view details and transfer options"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2715
+#: lib/phoenix_kit_sync/web/connections_live.ex:2780
 #, elixir-autogen, elixir-format
 msgid "Selected"
 msgstr ""
@@ -1311,9 +1307,9 @@ msgstr ""
 msgid "Send Data"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1825
-#: lib/phoenix_kit_sync/web/connections_live.ex:2481
-#: lib/phoenix_kit_sync/web/connections_live.ex:2557
+#: lib/phoenix_kit_sync/web/connections_live.ex:1880
+#: lib/phoenix_kit_sync/web/connections_live.ex:2546
+#: lib/phoenix_kit_sync/web/connections_live.ex:2622
 #, elixir-autogen, elixir-format
 msgid "Sender"
 msgstr ""
@@ -1323,17 +1319,17 @@ msgstr ""
 msgid "Sender closed the connection"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1281
+#: lib/phoenix_kit_sync/web/connections_live.ex:1320
 #, elixir-autogen, elixir-format
 msgid "Sender is offline"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:782
+#: lib/phoenix_kit_sync/web/connections_live.ex:787
 #, elixir-autogen, elixir-format
 msgid "Sender site is offline or unreachable"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2851
+#: lib/phoenix_kit_sync/web/connections_live.ex:2916
 #, elixir-autogen, elixir-format
 msgid "Sender:"
 msgstr ""
@@ -1348,50 +1344,50 @@ msgstr ""
 msgid "Session"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1894
-#: lib/phoenix_kit_sync/web/connections_live.ex:1902
+#: lib/phoenix_kit_sync/web/connections_live.ex:1949
+#: lib/phoenix_kit_sync/web/connections_live.ex:1957
 #, elixir-autogen, elixir-format
 msgid "Sever connection"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3053
+#: lib/phoenix_kit_sync/web/connections_live.ex:3126
 #, elixir-autogen, elixir-format
 msgid "Showing first 10 of %{total} records"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1725
-#: lib/phoenix_kit_sync/web/connections_live.ex:1770
-#: lib/phoenix_kit_sync/web/connections_live.ex:2135
+#: lib/phoenix_kit_sync/web/connections_live.ex:1780
+#: lib/phoenix_kit_sync/web/connections_live.ex:1825
+#: lib/phoenix_kit_sync/web/connections_live.ex:2190
 #, elixir-autogen, elixir-format
 msgid "Site URL"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2020
+#: lib/phoenix_kit_sync/web/connections_live.ex:2075
 #, elixir-autogen, elixir-format
 msgid "Site URL *"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1712
+#: lib/phoenix_kit_sync/web/connections_live.ex:1767
 #, elixir-autogen, elixir-format
 msgid "Sites that can pull data from this site"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1758
+#: lib/phoenix_kit_sync/web/connections_live.ex:1813
 #, elixir-autogen, elixir-format
 msgid "Sites this site can pull data from"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2559
+#: lib/phoenix_kit_sync/web/connections_live.ex:2624
 #, elixir-autogen, elixir-format
 msgid "Size"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1829
+#: lib/phoenix_kit_sync/web/connections_live.ex:1884
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2063
+#: lib/phoenix_kit_sync/web/connections_live.ex:2118
 #, elixir-autogen, elixir-format
 msgid "Skip - Don't overwrite existing records"
 msgstr ""
@@ -1401,14 +1397,14 @@ msgstr ""
 msgid "Skip existing"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2381
-#: lib/phoenix_kit_sync/web/connections_live.ex:2751
+#: lib/phoenix_kit_sync/web/connections_live.ex:2446
+#: lib/phoenix_kit_sync/web/connections_live.ex:2816
 #: lib/phoenix_kit_sync/web/history.ex:605
 #, elixir-autogen, elixir-format
 msgid "Skipped"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2958
+#: lib/phoenix_kit_sync/web/connections_live.ex:3023
 #, elixir-autogen, elixir-format
 msgid "Specific IDs"
 msgstr ""
@@ -1428,44 +1424,44 @@ msgstr ""
 msgid "Starting…"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2151
+#: lib/phoenix_kit_sync/web/connections_live.ex:2206
 #, elixir-autogen, elixir-format
 msgid "Statistics"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1726
-#: lib/phoenix_kit_sync/web/connections_live.ex:1771
-#: lib/phoenix_kit_sync/web/connections_live.ex:2561
+#: lib/phoenix_kit_sync/web/connections_live.ex:1781
+#: lib/phoenix_kit_sync/web/connections_live.ex:1826
+#: lib/phoenix_kit_sync/web/connections_live.ex:2626
 #: lib/phoenix_kit_sync/web/history.ex:352
 #: lib/phoenix_kit_sync/web/history.ex:395
 #, elixir-autogen, elixir-format
 msgid "Status"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:183
+#: lib/phoenix_kit_sync/errors.ex:188
 #, elixir-autogen, elixir-format
 msgid "Stopped at this connection's max_records_per_request limit; the rest of the table was not sent"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2722
+#: lib/phoenix_kit_sync/web/connections_live.ex:2787
 #, elixir-autogen, elixir-format
 msgid "Suggested"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1932
-#: lib/phoenix_kit_sync/web/connections_live.ex:1935
-#: lib/phoenix_kit_sync/web/connections_live.ex:2205
+#: lib/phoenix_kit_sync/web/connections_live.ex:1987
+#: lib/phoenix_kit_sync/web/connections_live.ex:1990
+#: lib/phoenix_kit_sync/web/connections_live.ex:2260
 #, elixir-autogen, elixir-format
 msgid "Suspend"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1815
+#: lib/phoenix_kit_sync/web/connections_live.ex:1870
 #, elixir-autogen, elixir-format
 msgid "Suspended"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1930
-#: lib/phoenix_kit_sync/web/connections_live.ex:2202
+#: lib/phoenix_kit_sync/web/connections_live.ex:1985
+#: lib/phoenix_kit_sync/web/connections_live.ex:2257
 #, elixir-autogen, elixir-format
 msgid "Suspending…"
 msgstr ""
@@ -1480,24 +1476,24 @@ msgstr ""
 msgid "Sync"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2361
+#: lib/phoenix_kit_sync/web/connections_live.ex:2426
 #, elixir-autogen, elixir-format
 msgid "Sync Complete!"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2358
+#: lib/phoenix_kit_sync/web/connections_live.ex:2423
 #, elixir-autogen, elixir-format
 msgid "Sync Completed with Errors"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2270
+#: lib/phoenix_kit_sync/web/connections_live.ex:2325
 #, elixir-autogen, elixir-format
 msgid "Sync Data"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1859
-#: lib/phoenix_kit_sync/web/connections_live.ex:1862
-#: lib/phoenix_kit_sync/web/connections_live.ex:3194
+#: lib/phoenix_kit_sync/web/connections_live.ex:1914
+#: lib/phoenix_kit_sync/web/connections_live.ex:1917
+#: lib/phoenix_kit_sync/web/connections_live.ex:3267
 #, elixir-autogen, elixir-format
 msgid "Sync data"
 msgstr ""
@@ -1507,31 +1503,31 @@ msgstr ""
 msgid "Sync data between sites"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1290
+#: lib/phoenix_kit_sync/web/connections_live.ex:1329
 #, elixir-autogen, elixir-format
 msgid "Sync failed: %{reason}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:158
+#: lib/phoenix_kit_sync/errors.ex:160
 #, elixir-autogen, elixir-format
 msgid "Sync module is disabled"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2454
+#: lib/phoenix_kit_sync/web/connections_live.ex:2519
 #, elixir-autogen, elixir-format
 msgid "Syncing %{current}/%{total}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2379
-#: lib/phoenix_kit_sync/web/connections_live.ex:2556
-#: lib/phoenix_kit_sync/web/connections_live.ex:2749
+#: lib/phoenix_kit_sync/web/connections_live.ex:2444
+#: lib/phoenix_kit_sync/web/connections_live.ex:2621
+#: lib/phoenix_kit_sync/web/connections_live.ex:2814
 #: lib/phoenix_kit_sync/web/history.ex:393
 #: lib/phoenix_kit_sync/web/history.ex:574
 #, elixir-autogen, elixir-format
 msgid "Table"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:690
+#: lib/phoenix_kit_sync/web/connections_live.ex:691
 #, elixir-autogen, elixir-format
 msgid "Table %{table} created successfully"
 msgstr ""
@@ -1541,27 +1537,27 @@ msgstr ""
 msgid "Table '%{table}' created successfully"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2869
+#: lib/phoenix_kit_sync/web/connections_live.ex:2934
 #, elixir-autogen, elixir-format
 msgid "Table Schema"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2912
+#: lib/phoenix_kit_sync/web/connections_live.ex:2977
 #, elixir-autogen, elixir-format
 msgid "Table doesn't exist locally"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:225
+#: lib/phoenix_kit_sync/errors.ex:230
 #, elixir-autogen, elixir-format
 msgid "Table not found"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1283
+#: lib/phoenix_kit_sync/web/connections_live.ex:1322
 #, elixir-autogen, elixir-format
 msgid "Table not found on sender"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:230
+#: lib/phoenix_kit_sync/errors.ex:235
 #, elixir-autogen, elixir-format
 msgid "Table only partly pulled: the sender stopped at its max_records_per_request limit and gave no way to continue. Update sync on the source site, or have its admin raise that limit"
 msgstr ""
@@ -1572,7 +1568,7 @@ msgstr ""
 msgid "The DB Sync module is disabled."
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2025
+#: lib/phoenix_kit_sync/web/connections_live.ex:2080
 #, elixir-autogen, elixir-format
 msgid "The URL of the remote site that will connect to pull data"
 msgstr ""
@@ -1582,7 +1578,7 @@ msgstr ""
 msgid "The connection appears on your end, pending your approval"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:128
+#: lib/phoenix_kit_sync/errors.ex:130
 #, elixir-autogen, elixir-format
 msgid "The connection request is not valid: check the site URL and the name"
 msgstr ""
@@ -1592,27 +1588,27 @@ msgstr ""
 msgid "The remote site is notified automatically"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:200
+#: lib/phoenix_kit_sync/errors.ex:205
 #, elixir-autogen, elixir-format
 msgid "The remote site's answer was larger than this site accepts"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:215
+#: lib/phoenix_kit_sync/errors.ex:220
 #, elixir-autogen, elixir-format
 msgid "The sender did not report a primary key for this table. Update sync on the source site, or create the table here by hand"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:131
+#: lib/phoenix_kit_sync/errors.ex:133
 #, elixir-autogen, elixir-format
 msgid "The sender sent a column name that is not a valid identifier"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:109
+#: lib/phoenix_kit_sync/errors.ex:111
 #, elixir-autogen, elixir-format
 msgid "The sender's schema lists no columns"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:114
+#: lib/phoenix_kit_sync/errors.ex:116
 #, elixir-autogen, elixir-format
 msgid "The source table has no single-column primary key (a view has none), so it takes no ID filter"
 msgstr ""
@@ -1622,53 +1618,53 @@ msgstr ""
 msgid "This connection is not active, so it cannot sync"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:211
+#: lib/phoenix_kit_sync/errors.ex:216
 #, elixir-autogen, elixir-format
 msgid "This connection is not authorised to access that table"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:208
+#: lib/phoenix_kit_sync/errors.ex:213
 #, elixir-autogen, elixir-format
 msgid "This table is never synced"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:249
+#: lib/phoenix_kit_sync/errors.ex:257
 #, elixir-autogen, elixir-format
 msgid "This table's key type does not take an ID filter (it takes integer, uuid or text keys)"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2995
+#: lib/phoenix_kit_sync/web/connections_live.ex:3060
 #, elixir-autogen, elixir-format
 msgid "To"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:197
+#: lib/phoenix_kit_sync/errors.ex:202
 #, elixir-autogen, elixir-format
 msgid "Too many connection requests are awaiting approval; try again later"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2422
-#: lib/phoenix_kit_sync/web/connections_live.ex:2791
+#: lib/phoenix_kit_sync/web/connections_live.ex:2487
+#: lib/phoenix_kit_sync/web/connections_live.ex:2856
 #, elixir-autogen, elixir-format
 msgid "Total"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2155
+#: lib/phoenix_kit_sync/web/connections_live.ex:2210
 #, elixir-autogen, elixir-format
 msgid "Total Transfers"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3097
+#: lib/phoenix_kit_sync/web/connections_live.ex:3170
 #, elixir-autogen, elixir-format
 msgid "Transfer %{table}"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2741
+#: lib/phoenix_kit_sync/web/connections_live.ex:2806
 #, elixir-autogen, elixir-format
 msgid "Transfer Complete!"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2738
+#: lib/phoenix_kit_sync/web/connections_live.ex:2803
 #, elixir-autogen, elixir-format
 msgid "Transfer Completed with Errors"
 msgstr ""
@@ -1694,7 +1690,7 @@ msgstr ""
 msgid "Transfer denied"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:172
+#: lib/phoenix_kit_sync/errors.ex:174
 #, elixir-autogen, elixir-format
 msgid "Transfer stopped: the sender kept answering the same page of the table"
 msgstr ""
@@ -1704,33 +1700,33 @@ msgstr ""
 msgid "Transferred"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3092
+#: lib/phoenix_kit_sync/web/connections_live.ex:3165
 #: lib/phoenix_kit_sync/web/receiver.ex:1673
 #, elixir-autogen, elixir-format
 msgid "Transferring…"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2875
+#: lib/phoenix_kit_sync/web/connections_live.ex:2940
 #, elixir-autogen, elixir-format
 msgid "Type"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:243
+#: lib/phoenix_kit_sync/errors.ex:251
 #, elixir-autogen, elixir-format
 msgid "Unauthorized"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1282
+#: lib/phoenix_kit_sync/web/connections_live.ex:1321
 #, elixir-autogen, elixir-format
 msgid "Unauthorized - check connection token"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:244
+#: lib/phoenix_kit_sync/errors.ex:252
 #, elixir-autogen, elixir-format
 msgid "Unavailable"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:245
+#: lib/phoenix_kit_sync/errors.ex:253
 #, elixir-autogen, elixir-format
 msgid "Unexpected response from remote site"
 msgstr ""
@@ -1740,7 +1736,7 @@ msgstr ""
 msgid "Unknown"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1247
+#: lib/phoenix_kit_sync/web/connections_live.ex:1286
 #, elixir-autogen, elixir-format
 msgid "Unknown error"
 msgstr ""
@@ -1750,7 +1746,7 @@ msgstr ""
 msgid "Updated"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2598
+#: lib/phoenix_kit_sync/web/connections_live.ex:2663
 #, elixir-autogen, elixir-format
 msgid "Used by selected tables — consider including"
 msgstr ""
@@ -1775,13 +1771,13 @@ msgstr ""
 msgid "View and manage data transfers"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1870
-#: lib/phoenix_kit_sync/web/connections_live.ex:1873
+#: lib/phoenix_kit_sync/web/connections_live.ex:1925
+#: lib/phoenix_kit_sync/web/connections_live.ex:1928
 #, elixir-autogen, elixir-format
 msgid "View details"
 msgstr ""
 
-#: lib/phoenix_kit_sync/connections.ex:182
+#: lib/phoenix_kit_sync/connections.ex:180
 #, elixir-autogen, elixir-format
 msgid "cannot create a connection to yourself"
 msgstr ""
@@ -1791,28 +1787,28 @@ msgstr ""
 msgid "default"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2487
+#: lib/phoenix_kit_sync/web/connections_live.ex:2552
 #, elixir-autogen, elixir-format
 msgid "differs"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2915
+#: lib/phoenix_kit_sync/web/connections_live.ex:2980
 #, elixir-autogen, elixir-format
 msgid "doesn't exist in your local database. Create it first to transfer data."
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2853
-#: lib/phoenix_kit_sync/web/connections_live.ex:2857
+#: lib/phoenix_kit_sync/web/connections_live.ex:2918
+#: lib/phoenix_kit_sync/web/connections_live.ex:2922
 #, elixir-autogen, elixir-format
 msgid "records"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2481
+#: lib/phoenix_kit_sync/web/connections_live.ex:2546
 #, elixir-autogen, elixir-format
 msgid "remote data"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2989
+#: lib/phoenix_kit_sync/web/connections_live.ex:3054
 #, elixir-autogen, elixir-format
 msgid "to"
 msgstr ""
@@ -1822,128 +1818,158 @@ msgstr ""
 msgid "transferred"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2484
+#: lib/phoenix_kit_sync/web/connections_live.ex:2549
 #, elixir-autogen, elixir-format
 msgid "your database"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2723
+#: lib/phoenix_kit_sync/web/connections_live.ex:2788
 #, elixir-autogen, elixir-format
 msgid "— tables that reference selected tables. Consider including them for data to function correctly."
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2716
+#: lib/phoenix_kit_sync/web/connections_live.ex:2781
 #, elixir-autogen, elixir-format
 msgid "— tables that will be synced. Dependencies (via foreign keys) are auto-selected."
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3133
+#: lib/phoenix_kit_sync/web/connections_live.ex:3206
 #, elixir-autogen, elixir-format
 msgid "%{count}d ago"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3132
+#: lib/phoenix_kit_sync/web/connections_live.ex:3205
 #, elixir-autogen, elixir-format
 msgid "%{count}h ago"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3131
+#: lib/phoenix_kit_sync/web/connections_live.ex:3204
 #, elixir-autogen, elixir-format
 msgid "%{count}m ago"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2289
+#: lib/phoenix_kit_sync/web/connections_live.ex:2344
 #, elixir-autogen, elixir-format
 msgid "Bulk Transfer"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1754
+#: lib/phoenix_kit_sync/web/connections_live.ex:1809
 #, elixir-autogen, elixir-format
 msgid "Incoming"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2643
+#: lib/phoenix_kit_sync/web/connections_live.ex:2708
 #, elixir-autogen, elixir-format
 msgid "New"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:1708
+#: lib/phoenix_kit_sync/web/connections_live.ex:1763
 #, elixir-autogen, elixir-format
 msgid "Outgoing"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2292
+#: lib/phoenix_kit_sync/web/connections_live.ex:2347
 #, elixir-autogen, elixir-format
 msgid "Precise Transfer"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3130
+#: lib/phoenix_kit_sync/web/connections_live.ex:3203
 #, elixir-autogen, elixir-format
 msgid "just now"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:3341
+#: lib/phoenix_kit_sync/web/connections_live.ex:3414
 #, elixir-autogen, elixir-format
 msgid "large"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2035
+#: lib/phoenix_kit_sync/web/connections_live.ex:2090
 #, elixir-autogen, elixir-format
 msgid "Records per request"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:238
+#: lib/phoenix_kit_sync/errors.ex:246
 #, elixir-autogen, elixir-format
 msgid "Table only partly pulled: its key is of type %{type}, which the sender cannot continue from once it stops at its max_records_per_request limit. Have the source site's admin raise that limit for this connection"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2040
+#: lib/phoenix_kit_sync/web/connections_live.ex:2095
 #, elixir-autogen, elixir-format
 msgid "The most rows the remote site gets in one answer. A table whose key has no cursor can only be pulled whole when it fits in this limit"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2334
+#: lib/phoenix_kit_sync/web/connections_live.ex:2399
 #, elixir-autogen, elixir-format
 msgid "Continue"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2323
+#: lib/phoenix_kit_sync/web/connections_live.ex:2388
 #, elixir-autogen, elixir-format
 msgid "Download password"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:2337
+#: lib/phoenix_kit_sync/web/connections_live.ex:2402
 #, elixir-autogen, elixir-format
 msgid "Set on the sending site for this connection. It is used for this page only and is not stored"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:790
+#: lib/phoenix_kit_sync/web/connections_live.ex:795
 #, elixir-autogen, elixir-format
 msgid "This connection asks for its download password"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:135
+#: lib/phoenix_kit_sync/errors.ex:137
 #, elixir-autogen, elixir-format
 msgid "The sender's schema has a column type that is not a plain type name, or an array column without its element type. If the source site runs an older sync, update it and try again"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:254
+#: lib/phoenix_kit_sync/errors.ex:262
 #, elixir-autogen, elixir-format
 msgid "The table has a column type that cannot be created automatically"
 msgstr ""
 
-#: lib/phoenix_kit_sync/errors.ex:149
+#: lib/phoenix_kit_sync/errors.ex:151
 #, elixir-autogen, elixir-format
 msgid "Invalid sender URL"
 msgstr ""
 
-#: lib/phoenix_kit_sync/connections.ex:410
-#: lib/phoenix_kit_sync/errors.ex:194
+#: lib/phoenix_kit_sync/connections.ex:408
+#: lib/phoenix_kit_sync/errors.ex:199
 #, elixir-autogen, elixir-format
 msgid "This connection's current status does not allow that change"
 msgstr ""
 
-#: lib/phoenix_kit_sync/web/connections_live.ex:412
+#: lib/phoenix_kit_sync/web/connections_live.ex:413
 #, elixir-autogen, elixir-format
 msgid "To replace a connection token, delete the connection and create it again"
+msgstr ""
+
+#: lib/phoenix_kit_sync/web/connections_live.ex:3087
+#, elixir-autogen, elixir-format
+msgid "A preview counts as one download on the sending site."
+msgstr ""
+
+#: lib/phoenix_kit_sync/web/connections_live.ex:1623
+#, elixir-autogen, elixir-format
+msgid "Connection created. It is pending: approve it in the list before the other site can use it"
+msgstr ""
+
+#: lib/phoenix_kit_sync/web/connections_live.ex:3084
+#, elixir-autogen, elixir-format
+msgid "Preview rows"
+msgstr ""
+
+#: lib/phoenix_kit_sync/web/connections_live.ex:2357
+#, elixir-autogen, elixir-format
+msgid "Rate limited by the sender, retrying in %{seconds} s"
+msgstr ""
+
+#: lib/phoenix_kit_sync/errors.ex:182
+#, elixir-autogen, elixir-format
+msgid "Too many requests to the sending site; it asked to wait and the wait ran out"
+msgstr ""
+
+#: lib/phoenix_kit_sync/errors.ex:242
+#, elixir-autogen, elixir-format
+msgid "Too many requests; try again in %{seconds} s"
 msgstr ""

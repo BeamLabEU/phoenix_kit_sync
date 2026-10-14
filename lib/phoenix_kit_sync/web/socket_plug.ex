@@ -232,6 +232,16 @@ defmodule PhoenixKitSync.Web.SocketPlug do
     send_forbidden(conn, "Invalid password")
   end
 
+  defp handle_token_error(conn, {:rate_limited, seconds}, _client_ip) do
+    Logger.warning("Sync: Token connection over its requests per minute")
+
+    conn
+    |> Plug.Conn.put_resp_header("retry-after", Integer.to_string(seconds))
+    |> Plug.Conn.put_resp_content_type("text/plain")
+    |> Plug.Conn.send_resp(429, "Too many requests")
+    |> Plug.Conn.halt()
+  end
+
   defp handle_token_error(conn, reason, _client_ip) do
     Logger.warning("Sync: Token connection refused (#{inspect(reason)})")
     send_forbidden(conn, "Not authorized")

@@ -62,6 +62,22 @@ defmodule PhoenixKitSync.Test.StubRemote do
   @doc "The body of the last `pull-data` request for `table`, or nil."
   def last_pull_body(table), do: get_in(state(), [Access.key(:bodies, %{}), table])
 
+  @doc """
+  Makes the next `times` requests to `endpoint` (`"pull-data"`,
+  `"list-tables"`, ...) answer 429 with `retry_after` as the `Retry-After`
+  header (nil sends none), like a sender over the connection's requests per
+  minute. `times: :always` never lets one through.
+  """
+  def put_rate_limited(endpoint, times, retry_after),
+    do: update(&put_in(&1, [Access.key(:rate_limited, %{}), endpoint], {times, retry_after}))
+
+  @doc "Sets the answer `register-connection` gives (otherwise \"Not stubbed\")."
+  def put_registration(answer), do: update(&Map.put(&1, :registration, answer))
+
+  @doc "How many requests reached `endpoint` since `reset/0`, 429s included."
+  def request_count(endpoint),
+    do: state() |> Map.get(:requests, %{}) |> Map.get(endpoint, 0)
+
   @doc "How many `pull-data` requests asked for `table` since `reset/0`."
   def pull_count(table), do: Map.get(Map.get(state(), :pulls, %{}), table, 0)
 
@@ -83,6 +99,49 @@ defmodule PhoenixKitSync.Test.StubRemote do
 
   @impl true
   def call(conn, _opts) do
+    endpoint = List.last(conn.path_info)
+
+    count_request(endpoint)
+
+    case take_rate_limit(endpoint) do
+      {:limited, retry_after} -> rate_limited(conn, retry_after)
+      :pass -> answer(conn)
+    end
+  end
+
+  defp count_request(endpoint) do
+    update(fn state ->
+      requests = Map.get(state, :requests, %{})
+      Map.put(state, :requests, Map.update(requests, endpoint, 1, &(&1 + 1)))
+    end)
+  end
+
+  defp take_rate_limit(endpoint) do
+    case get_in(state(), [Access.key(:rate_limited, %{}), endpoint]) do
+      {:always, retry_after} ->
+        {:limited, retry_after}
+
+      {times, retry_after} when is_integer(times) and times > 0 ->
+        update(&put_in(&1, [:rate_limited, endpoint], {times - 1, retry_after}))
+        {:limited, retry_after}
+
+      _ ->
+        :pass
+    end
+  end
+
+  defp rate_limited(conn, retry_after) do
+    conn =
+      if retry_after,
+        do: put_resp_header(conn, "retry-after", to_string(retry_after)),
+        else: conn
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(429, Jason.encode!(%{success: false, error_code: "rate_limited"}))
+  end
+
+  defp answer(conn) do
     table = conn.body_params["table_name"]
 
     if List.last(conn.path_info) == "pull-data" do
@@ -135,6 +194,19 @@ defmodule PhoenixKitSync.Test.StubRemote do
       :error -> %{success: false, error: "Table not found"}
     end
   end
+
+  defp respond("table-records", table, body) do
+    case Map.fetch(state().data, table) do
+      {:ok, records} when is_list(records) ->
+        %{success: true, records: Enum.take(records, body["limit"] || 10)}
+
+      _ ->
+        %{success: false, error: "Table not found"}
+    end
+  end
+
+  defp respond("register-connection", _table, _body),
+    do: Map.get(state(), :registration, %{success: false, error: "Not stubbed"})
 
   defp respond(_endpoint, _table, _body), do: %{success: false, error: "Not stubbed"}
 
