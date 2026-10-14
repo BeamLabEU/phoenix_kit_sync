@@ -371,6 +371,11 @@ defmodule PhoenixKitSync.Client do
       {:sync_client, {:request_error, ^expected_type, error}} ->
         {:error, error}
 
+      # The sender is rate limiting this request and the client sends it
+      # again after the wait: the answer is that much later.
+      {:sync_client, {:rate_limited, ^expected_type, seconds}} ->
+        wait_for_response(expected_type, timeout + seconds * 1000)
+
       {:sync_client, {:error, error}} ->
         {:error, error}
 

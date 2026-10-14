@@ -77,17 +77,35 @@ socket is open takes effect on its next message.
 |---------|----------|-------------|
 | **Allowed Tables** | Yes | Whitelist of tables the receiver can access |
 | **Excluded Tables** | Yes | Blacklist of tables to hide from receiver |
-| **Max Downloads** | Yes | Total pulls. A table read page by page is one pull, over REST (with the sender's cursor) and on one WebSocket (a request for exactly the position, or the offset, the page before ended on, within ten minutes). Every nonempty `table-records` answer, the 10-row preview of the receiving site's sync page included, is a pull of its own |
+| **Max Downloads** | Yes | Total pulls. A table read page by page is one pull, over REST (with the sender's cursor) and on one WebSocket (a request for exactly the position, or the offset, the page before ended on, within ten minutes). Every nonempty `table-records` answer is a pull of its own: the receiving site's sync page asks for one only when its admin clicks "Preview rows", never on opening the page, selecting a table or refreshing |
 | **Max Records Total** | Yes | Total records that can be downloaded, by `pull-data`, `table-records` and the WebSocket alike; a page is cut where the allowance ends |
 | **Max Records Per Request** | Yes | Records per page (default: 10,000), set as "Records per request" in the connection form. A larger table is sent in pages |
 | **Download Password** | Yes | The request must carry it (`password` in the REST body, `?password=` on the socket). The receiving site's sync page asks its admin for it when the sender refuses a request without one, keeps it for as long as that page is open, and stores it nowhere |
 | **IP Whitelist** | Yes | Only the listed client addresses (see "Client address" below) |
 | **Allowed Hours** | Yes | Time-of-day window, in UTC (e.g., only 2am-5am) |
 | **Expiration Date** | Yes | Requests after `expires_at` are refused |
-| **Approval Mode** | **No** | `auto_approve` / `require_approval` / `per_table` and **Auto-Approve Tables** are stored, and `Connections.requires_approval?/2` answers for them, but no pull is held for approval: every mode behaves as `auto_approve` |
-| **Rate Limit** | **No** | `rate_limit_requests_per_minute` is stored but not applied |
+| **Requests per minute** | Yes | `rate_limit_requests_per_minute` (default 600; `0` is no limit). Counted: each REST action, the socket upgrade and each `request:*` message on an open socket (not the join or heartbeats), once the request has passed every other check; a wrong download password still counts, so guessing it is bounded too. Over the limit, REST answers `429` with `Retry-After` (seconds until the minute frees) and `"error_code": "rate_limited"`, the upgrade `429` with `Retry-After`, and an open socket `response:error` with `"error_code": "rate_limited"` and `retry_after`. The count is per node, in core's rate-limiter backend |
+| **Approval Mode** | **No** | `auto_approve` / `require_approval` / `per_table` and **Auto-Approve Tables** are stored and read by nothing: no pull is held for approval, so every mode behaves as `auto_approve`. (The connection itself still needs approving; see "Connection Statuses") |
 
 An answer with no rows returns its reservation and consumes no download.
+
+A sync of N tables of P pages each makes 1 + N × P requests (the table
+list, then one `pull-data` per page), plus one `table-schema` per table
+opened on the Precise Transfer tab and one `table-records` per preview.
+A site with every module has some 200 tables, nearly all of one page, so
+the default of 600 a minute lets a full sync through in one minute with
+room to spare; a connection set lower is not refused a sync, only slowed.
+On a `429` the receiving site waits the `Retry-After` it was given and
+sends the same request again (its sync page says "Rate limited by the
+sender, retrying in N s"). The value is the sender's, so the receiver
+clamps each wait to `rate_limit_max_wait_seconds` (default 60) and gives
+up on a request after `rate_limit_wait_budget_seconds` (default 300) of
+waiting, which fails that table with `rate_limited`.
+
+Connections saved before the limit was enforced hold 60, the old default
+that nothing read: raise it (`Connections.update_connection/2`) for a
+connection that syncs many tables at once, or its syncs wait out the
+minute every 60 requests.
 
 Both limits are taken with one conditional `UPDATE` before any row is read
 (`Connections.reserve_transfer/2`), so requests arriving together cannot
@@ -99,18 +117,19 @@ refused with `record_limit_reached` although rows are left; it is given
 them on its next try.
 
 The connection form has the name, the URL and "Records per request". The
-download password, the other limits and the approval and rate-limit fields
-are not in it; set them with `Connections.update_connection/2`.
+download password, the other limits, the requests per minute and the
+approval mode are not in it; set them with `Connections.update_connection/2`.
+The form never sets a status.
 
 ### Connection Statuses
 
 | Status | Description |
 |--------|-------------|
-| **Pending** | Created, awaiting approval. Grants and uses nothing |
+| **Pending** | Created, awaiting approval. Grants and uses nothing. A connection made in the form is created pending (the page says so), and only the Approve button on its row activates it: no approval mode, incoming mode or answer from the remote site does |
 | **Active** | In use |
 | **Suspended** | Temporarily disabled (can be reactivated) |
 | **Revoked** | Permanently disabled |
-| **Expired** | Set by `Connections.expire_connections/0`, which nothing in this module schedules; call it from a job of your own if you want the status to follow. A connection past its expiry date or limits is refused either way |
+| **Expired** | A valid status that nothing in this module sets. A connection past its expiry date or its limits is refused on every request whatever its status says |
 
 A status changes only on the site that owns the connection (asking for it
 with `get-connection-status` is a read and changes nothing), with one
@@ -461,7 +480,11 @@ config :phoenix_kit_sync,
   # (pull-data, table-records), in bytes. A table list or a table's schema
   # is capped at 16 MiB (or at this value when it is lower), every other
   # answer at 1 MiB
-  max_response_bytes: 268_435_456
+  max_response_bytes: 268_435_456,
+  # Receiving side of a sender's 429: the longest single wait for its
+  # Retry-After, and the most one request waits in total, in seconds
+  rate_limit_max_wait_seconds: 60,
+  rate_limit_wait_budget_seconds: 300
 ```
 
 ## Not Implemented
@@ -469,8 +492,7 @@ config :phoenix_kit_sync,
 - **Auto-sync scheduling.** Connections have `auto_sync_enabled`,
   `auto_sync_tables` and `auto_sync_interval_minutes` columns; nothing reads
   them, and the form does not offer them.
-- **Per-transfer approval** and **request rate limiting** (see "Sender-Side
-  Controls").
+- **Per-transfer approval** (see "Sender-Side Controls").
 
 ## Security Considerations
 

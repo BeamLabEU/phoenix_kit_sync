@@ -448,6 +448,9 @@ defmodule PhoenixKitSync.Web.ApiController do
   - 401 Unauthorized - Invalid auth token
   - 403 Forbidden - The connection may not be used now (`error_code` says
     why: not active, expired, a limit reached, IP, hours, password)
+  - 429 Too Many Requests - Over the connection's requests per minute
+    (`error_code` `rate_limited`; `Retry-After` and `retry_after` give the
+    seconds until the minute frees)
   - 503 Service Unavailable - DB Sync module is disabled
   """
   def list_tables(conn, params) do
@@ -481,6 +484,9 @@ defmodule PhoenixKitSync.Web.ApiController do
         conn
         |> put_status(401)
         |> json(%{success: false, error: "Invalid connection"})
+
+      {:error, {:rate_limited, seconds}} ->
+        render_rate_limited(conn, seconds)
 
       {:error, reason} when reason in @authorization_errors ->
         render_authorization_error(conn, reason)
@@ -533,6 +539,9 @@ defmodule PhoenixKitSync.Web.ApiController do
     to page in)
   - 401 Unauthorized - Invalid auth token
   - 403 Forbidden - The connection may not be used now, or not for this table
+  - 429 Too Many Requests - Over the connection's requests per minute
+    (`error_code` `rate_limited`; `Retry-After` and `retry_after` give the
+    seconds until the minute frees)
   - 404 Not Found - Table not found
   - 503 Service Unavailable - DB Sync module is disabled
   """
@@ -585,6 +594,9 @@ defmodule PhoenixKitSync.Web.ApiController do
         conn
         |> put_status(401)
         |> json(%{success: false, error: "Invalid connection"})
+
+      {:error, {:rate_limited, seconds}} ->
+        render_rate_limited(conn, seconds)
 
       {:error, reason} when reason in @authorization_errors ->
         render_authorization_error(conn, reason)
@@ -721,6 +733,9 @@ defmodule PhoenixKitSync.Web.ApiController do
         |> put_status(401)
         |> json(%{success: false, error: "Invalid connection"})
 
+      {:error, {:rate_limited, seconds}} ->
+        render_rate_limited(conn, seconds)
+
       {:error, reason} when reason in @authorization_errors ->
         render_authorization_error(conn, reason)
 
@@ -809,6 +824,9 @@ defmodule PhoenixKitSync.Web.ApiController do
         |> put_status(401)
         |> json(%{success: false, error: "Invalid connection"})
 
+      {:error, {:rate_limited, seconds}} ->
+        render_rate_limited(conn, seconds)
+
       {:error, reason} when reason in @authorization_errors ->
         render_authorization_error(conn, reason)
 
@@ -840,6 +858,17 @@ defmodule PhoenixKitSync.Web.ApiController do
     conn
     |> put_status(400)
     |> json(%{success: false, error: text, error_code: Atom.to_string(code)})
+  end
+
+  # Over the connection's requests per minute: 429, and Retry-After with
+  # the seconds until the minute frees, for the receiver to wait out.
+  defp render_rate_limited(conn, seconds) do
+    conn
+    |> put_resp_header("retry-after", Integer.to_string(seconds))
+    |> render_json_error(429, {:rate_limited, seconds}, %{
+      error_code: "rate_limited",
+      retry_after: seconds
+    })
   end
 
   defp render_authorization_error(conn, reason) do

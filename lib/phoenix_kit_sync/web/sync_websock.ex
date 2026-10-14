@@ -113,7 +113,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   def handle_in({text, [opcode: :text]}, state) do
     case Jason.decode(text) do
       {:ok, [join_ref, ref, topic, event, payload]} when is_binary(topic) and is_binary(event) ->
-        state = authorize(state, continuation?(event, payload, state))
+        state = authorize(state, continuation?(event, payload, state), request?(event))
         handle_message(join_ref, ref, topic, event, payload, state)
 
       # Valid JSON that is not a `[join_ref, ref, topic, event, payload]`
@@ -167,7 +167,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
     reply =
       encode_reply(ref, topic, "phx_reply", %{
         "status" => "error",
-        "response" => %{"reason" => Atom.to_string(reason)}
+        "response" => %{"reason" => reason_code(reason)}
       })
 
     {:push, {:text, reply}, state}
@@ -273,10 +273,11 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
        )
        when not is_nil(reason) do
     response =
-      encode_push("transfer:#{state.code}", "response:error", %{
-        "error" => Errors.public_message(reason),
-        "ref" => if(is_map(payload), do: payload["ref"])
-      })
+      encode_push(
+        "transfer:#{state.code}",
+        "response:error",
+        refusal_payload(reason, if(is_map(payload), do: payload["ref"]))
+      )
 
     {:push, {:text, response}, state}
   end
@@ -658,9 +659,13 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
   # Connections.authorize_request/3 (what the upgrade and the REST actions
   # use) before every message; the state carries the fresh row, or the
   # reason it is refused.
+  #
+  # Only a `request:*` frame counts against the connection's requests per
+  # minute; the join and heartbeats are the socket keeping itself open.
   defp authorize(
          %__MODULE__{auth_type: :connection, db_connection: snapshot} = state,
-         continuation
+         continuation,
+         request?
        ) do
     with %Connection{} = connection <- Connections.get_connection(snapshot.uuid),
          :ok <-
@@ -668,7 +673,8 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
              connection,
              Map.get(state.connection_info || %{}, :remote_ip),
              password: state.password,
-             continuation: continuation
+             continuation: continuation,
+             rate_limit: request?
            ) do
       %{state | db_connection: connection, refused: nil}
     else
@@ -677,7 +683,7 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
     end
   end
 
-  defp authorize(%__MODULE__{auth_type: :session, code: code} = state, _continuation) do
+  defp authorize(%__MODULE__{auth_type: :session, code: code} = state, _continuation, _request?) do
     case SessionStore.get(code) do
       {:ok, %{direction: :send, owner_pid: owner} = session} ->
         if Process.alive?(owner),
@@ -688,6 +694,27 @@ defmodule PhoenixKitSync.Web.SyncWebsock do
         %{state | refused: :invalid_code}
     end
   end
+
+  defp request?("request:" <> _), do: true
+  defp request?(_event), do: false
+
+  defp reason_code({:rate_limited, _seconds}), do: "rate_limited"
+  defp reason_code(reason) when is_atom(reason), do: Atom.to_string(reason)
+
+  # A refused request gets the reason as text; one over the requests per
+  # minute also gets "error_code" and the seconds to wait, so a receiver
+  # can wait and ask again rather than fail.
+  defp refusal_payload({:rate_limited, seconds} = reason, ref) do
+    %{
+      "error" => Errors.public_message(reason),
+      "error_code" => "rate_limited",
+      "retry_after" => seconds,
+      "ref" => ref
+    }
+  end
+
+  defp refusal_payload(reason, ref),
+    do: %{"error" => Errors.public_message(reason), "ref" => ref}
 
   # Track transfer for permanent connections
   defp track_transfer(db_connection, table_name, records_count, connection_info) do

@@ -443,28 +443,6 @@ defmodule PhoenixKitSync.ConnectionTest do
     end
   end
 
-  describe "requires_approval?/2" do
-    test "false for auto_approve mode" do
-      conn = %Connection{approval_mode: "auto_approve"}
-      refute Connection.requires_approval?(conn, "users")
-    end
-
-    test "true for require_approval mode" do
-      conn = %Connection{approval_mode: "require_approval"}
-      assert Connection.requires_approval?(conn, "users")
-    end
-
-    test "false for per_table mode when table is auto-approved" do
-      conn = %Connection{approval_mode: "per_table", auto_approve_tables: ["users"]}
-      refute Connection.requires_approval?(conn, "users")
-    end
-
-    test "true for per_table mode when table is not auto-approved" do
-      conn = %Connection{approval_mode: "per_table", auto_approve_tables: ["users"]}
-      assert Connection.requires_approval?(conn, "secrets")
-    end
-  end
-
   # ===========================================
   # WITHIN_ALLOWED_HOURS? TESTS
   # ===========================================
@@ -558,9 +536,11 @@ defmodule PhoenixKitSync.ConnectionTest do
       assert errors_on(changeset).max_records_per_request != []
     end
 
-    test "validates rate_limit must be greater than 0" do
+    test "a rate limit of 0 (no limit) is accepted, a negative one is not" do
       conn = %Connection{}
-      changeset = Connection.settings_changeset(conn, %{rate_limit_requests_per_minute: 0})
+      assert Connection.settings_changeset(conn, %{rate_limit_requests_per_minute: 0}).valid?
+
+      changeset = Connection.settings_changeset(conn, %{rate_limit_requests_per_minute: -1})
       assert errors_on(changeset).rate_limit_requests_per_minute != []
     end
 

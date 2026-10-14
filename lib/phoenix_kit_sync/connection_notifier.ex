@@ -38,6 +38,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   alias PhoenixKitSync.Connections
   alias PhoenixKitSync.ExtensionTypes
   alias PhoenixKitSync.PullFilter
+  alias PhoenixKitSync.RateLimit
   alias PhoenixKitSync.SchemaInspector
   alias PhoenixKitSync.Transfers
 
@@ -537,7 +538,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
     Logger.debug("Sync: Fetching tables from sender", %{sender_url: site_url})
 
-    case make_http_request(api_url, body, timeout) do
+    case make_limited_request(api_url, body, timeout, opts) do
       {:ok, %{status: 200, body: resp_body}} ->
         parse_tables_response(resp_body)
 
@@ -602,6 +603,14 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     - `:actor_uuid` - The user who started the pull; recorded on the
       transfer (`initiated_by_uuid`) and its activity row
     - `:password` - The sender connection's download password, when it has one
+    - `:on_rate_limited` - A function of one argument, called with the
+      seconds before each wait when the sender answers 429 (over the
+      connection's requests per minute). `fetch_sender_tables/2`,
+      `fetch_table_schema/3` and `fetch_table_records/3` take it too
+
+  A request the sender refuses with 429 is sent again after its
+  `Retry-After` (clamped, within a total budget: `PhoenixKitSync.RateLimit`);
+  past the budget the pull fails with `:rate_limited`.
 
   A table larger than the sender's `max_records_per_request` comes in pages:
   the sender's answer says where the next one starts, and the pull follows
@@ -809,6 +818,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     pull = %{
       api_url: build_pull_data_url(site_url),
       timeout: Keyword.get(opts, :timeout, 60_000),
+      request_opts: Keyword.take(opts, [:on_rate_limited]),
       table_name: table_name,
       transfer: transfer,
       conflict_strategy: conflict_strategy,
@@ -1009,7 +1019,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   # One request of a pull: `{:ok, response, data}` for a page of rows, or
   # `{:error, reason, message}` with the text the transfer row records.
   defp fetch_pull_page(pull, body) do
-    case make_http_request(pull.api_url, body, pull.timeout) do
+    case make_limited_request(pull.api_url, body, pull.timeout, pull.request_opts) do
       {:ok, %{status: 200, body: resp_body}} ->
         read_pull_page(Jason.decode(resp_body))
 
@@ -1245,7 +1255,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
     body =
       put_password(%{"auth_token_hash" => auth_token_hash, "table_name" => table_name}, opts)
 
-    case make_http_request(api_url, body, timeout) do
+    case make_limited_request(api_url, body, timeout, opts) do
       {:ok, %{status: 200, body: resp_body}} ->
         parse_schema_response(resp_body)
 
@@ -1306,7 +1316,7 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       |> Map.merge(build_records_request_body(auth_token_hash, table_name, opts))
       |> put_password(opts)
 
-    case make_http_request(api_url, body, timeout) do
+    case make_limited_request(api_url, body, timeout, opts) do
       {:ok, %{status: 200, body: resp_body}} ->
         parse_records_response(resp_body)
 
@@ -1400,8 +1410,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
 
   defp handle_table_http_result({:error, reason}), do: {:error, transport_reason(reason)}
 
-  defp transport_reason(reason) when reason in [:response_too_large, :invalid_response],
-    do: reason
+  defp transport_reason(reason)
+       when reason in [:response_too_large, :invalid_response, :rate_limited],
+       do: reason
 
   defp transport_reason(%{reason: reason}) when reason in [:econnrefused, :timeout, :nxdomain],
     do: :offline
@@ -1567,6 +1578,46 @@ defmodule PhoenixKitSync.ConnectionNotifier do
       {:error, {:exception, Exception.message(e)}}
   end
 
+  # A request the sender may answer with 429 because this connection is
+  # over its requests per minute (the four table endpoints). The sender's
+  # Retry-After is waited out and the same request sent again, each wait
+  # clamped and all of them within a budget (`PhoenixKitSync.RateLimit`);
+  # past the budget the request fails with `:rate_limited`. Before each wait
+  # `opts[:on_rate_limited]`, when given, is called with the seconds, so a
+  # page can say why nothing is moving.
+  defp make_limited_request(url, body, timeout, opts, waited \\ 0) do
+    case make_http_request(url, body, timeout) do
+      {:ok, %{status: 429} = response} ->
+        case RateLimit.next_wait(retry_after(response), waited) do
+          {:wait, seconds} ->
+            Logger.info("Sync: the sender is rate limiting this connection; waiting #{seconds} s")
+            notify_rate_limited(opts, seconds)
+            Process.sleep(seconds * 1000)
+            make_limited_request(url, body, timeout, opts, waited + seconds)
+
+          :give_up ->
+            Logger.warning("Sync: the sender kept rate limiting this connection; giving up")
+            {:error, :rate_limited}
+        end
+
+      result ->
+        result
+    end
+  end
+
+  defp retry_after(%{headers: headers}) do
+    Enum.find_value(headers, fn {name, value} ->
+      if String.downcase(name) == "retry-after", do: value
+    end)
+  end
+
+  defp notify_rate_limited(opts, seconds) do
+    case Keyword.get(opts, :on_rate_limited) do
+      fun when is_function(fun, 1) -> fun.(seconds)
+      _none -> :ok
+    end
+  end
+
   # The remote site decides how much it answers, and an answer is held in
   # memory whole. Every request reads at most `max_bytes` of body and then
   # drops the connection with `{:error, :response_too_large}`. Three sizes:
@@ -1600,14 +1651,14 @@ defmodule PhoenixKitSync.ConnectionNotifier do
   end
 
   defp request_capped(request, timeout, max_bytes) do
-    acc = %{status: nil, size: 0, chunks: []}
+    acc = %{status: nil, headers: [], size: 0, chunks: []}
 
     collect = fn
       {:status, status}, acc ->
         {:cont, %{acc | status: status}}
 
-      {:headers, _headers}, acc ->
-        {:cont, acc}
+      {:headers, headers}, acc ->
+        {:cont, %{acc | headers: acc.headers ++ headers}}
 
       {:data, chunk}, acc ->
         size = acc.size + byte_size(chunk)
@@ -1629,8 +1680,9 @@ defmodule PhoenixKitSync.ConnectionNotifier do
         Logger.warning("Sync: dropped a response larger than #{max_bytes} bytes")
         {:error, :response_too_large}
 
-      {:ok, %{status: status, chunks: chunks}} ->
-        {:ok, %{status: status, body: chunks |> Enum.reverse() |> IO.iodata_to_binary()}}
+      {:ok, %{status: status, headers: headers, chunks: chunks}} ->
+        body = chunks |> Enum.reverse() |> IO.iodata_to_binary()
+        {:ok, %{status: status, headers: headers, body: body}}
 
       {:error, reason, _acc} ->
         {:error, reason}

@@ -14,9 +14,10 @@ defmodule PhoenixKitSync.Connection do
 
   ## Approval Modes (Sender-side)
 
-  Stored, and answered for by `requires_approval?/2`, but not applied to
-  pulls: no transfer is held for approval, so every mode behaves as
-  `"auto_approve"`.
+  Stored and read by nothing: no transfer is held for approval, so every
+  mode behaves as `"auto_approve"`. (Approving the connection itself is
+  separate: a new connection is `"pending"` until an admin of this site
+  approves it.)
 
   - `"auto_approve"` - All transfers are automatically approved
   - `"require_approval"` - Each transfer needs manual approval
@@ -26,13 +27,11 @@ defmodule PhoenixKitSync.Connection do
 
   ```
   pending → active → suspended → revoked
-                  ↘
-                  expired (set by `Connections.expire_connections/0`)
   ```
 
-  A connection past `expires_at` or its limits is refused whatever its
-  stored status (`Connections.authorize_request/3`); nothing in this module
-  schedules `expire_connections/0`.
+  A connection past `expires_at` or its limits is refused on every request
+  (`Connections.authorize_request/3`); its stored status stays as it was.
+  `"expired"` is a valid status that nothing in this module sets.
 
   ## Security Features
 
@@ -44,8 +43,8 @@ defmodule PhoenixKitSync.Connection do
   - Time-of-day restrictions
   - Download and record limits
   - Expiration date
-
-  `rate_limit_requests_per_minute` is stored and not applied.
+  - Requests per minute (`rate_limit_requests_per_minute`, `0` for no
+    limit; `PhoenixKitSync.RateLimit`)
 
   ## Usage Examples
 
@@ -211,7 +210,11 @@ defmodule PhoenixKitSync.Connection do
 
     # Per-request limits
     field :max_records_per_request, :integer, default: 10_000
-    field :rate_limit_requests_per_minute, :integer, default: 60
+    # Requests per minute (`PhoenixKitSync.RateLimit`); 0 is no limit. A
+    # sync makes one request per page of each table it pulls, and a full
+    # install has some 200 tables, so the default leaves a sync of all of
+    # them inside one minute with room to spare.
+    field :rate_limit_requests_per_minute, :integer, default: 600
 
     # Additional security
     field :download_password, :string, virtual: true, redact: true
@@ -311,7 +314,7 @@ defmodule PhoenixKitSync.Connection do
       greater_than: 0,
       less_than_or_equal_to: @max_records_per_request_limit
     )
-    |> validate_number(:rate_limit_requests_per_minute, greater_than: 0)
+    |> validate_number(:rate_limit_requests_per_minute, greater_than_or_equal_to: 0)
     |> validate_number(:allowed_hours_start,
       greater_than_or_equal_to: 0,
       less_than_or_equal_to: 23
@@ -525,7 +528,7 @@ defmodule PhoenixKitSync.Connection do
       greater_than: 0,
       less_than_or_equal_to: @max_records_per_request_limit
     )
-    |> validate_number(:rate_limit_requests_per_minute, greater_than: 0)
+    |> validate_number(:rate_limit_requests_per_minute, greater_than_or_equal_to: 0)
     |> validate_number(:allowed_hours_start,
       greater_than_or_equal_to: 0,
       less_than_or_equal_to: 23
@@ -687,22 +690,6 @@ defmodule PhoenixKitSync.Connection do
   end
 
   def ip_allowed?(_, _), do: false
-
-  @doc """
-  Checks if a table requires approval based on the connection's approval mode.
-  """
-  @spec requires_approval?(term(), term()) :: boolean()
-  def requires_approval?(%__MODULE__{approval_mode: "auto_approve"}, _table), do: false
-  def requires_approval?(%__MODULE__{approval_mode: "require_approval"}, _table), do: true
-
-  def requires_approval?(
-        %__MODULE__{approval_mode: "per_table", auto_approve_tables: tables},
-        table
-      ) do
-    table not in tables
-  end
-
-  def requires_approval?(_, _), do: true
 
   @doc """
   Checks if a table is allowed to be accessed.

@@ -145,37 +145,5 @@ defmodule PhoenixKitSync.Integration.SyncWebsockTest do
 
       assert Connection.ip_allowed?(conn)
     end
-
-    test "requires_approval? depends on approval_mode" do
-      {:ok, auto, _} =
-        Connections.create_connection(%{
-          "name" => "Auto Mode",
-          "direction" => "sender",
-          "site_url" => "https://auto-mode-#{System.unique_integer([:positive])}.com",
-          "approval_mode" => "auto_approve"
-        })
-
-      {:ok, manual, _} =
-        Connections.create_connection(%{
-          "name" => "Manual Mode",
-          "direction" => "sender",
-          "site_url" => "https://manual-mode-#{System.unique_integer([:positive])}.com",
-          "approval_mode" => "require_approval"
-        })
-
-      {:ok, per_table, _} =
-        Connections.create_connection(%{
-          "name" => "Per Table Mode",
-          "direction" => "sender",
-          "site_url" => "https://per-table-mode-#{System.unique_integer([:positive])}.com",
-          "approval_mode" => "per_table",
-          "auto_approve_tables" => ["users"]
-        })
-
-      refute Connection.requires_approval?(auto, "any_table")
-      assert Connection.requires_approval?(manual, "any_table")
-      refute Connection.requires_approval?(per_table, "users")
-      assert Connection.requires_approval?(per_table, "secrets")
-    end
   end
 end

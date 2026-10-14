@@ -202,6 +202,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     |> assign(:sync_local_checksums, %{})
     |> assign(:sync_loading, true)
     |> assign(:sync_error, nil)
+    |> assign(:sync_rate_limited, nil)
     # The sender's download password, when it asks for one: typed on this
     # page, held here for as long as the page is open, sent with each
     # request to the sender and written nowhere.
@@ -754,7 +755,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     password = socket.assigns.sync_password
 
     Task.start_link(fn ->
-      result = ConnectionNotifier.fetch_sender_tables(connection, password: password)
+      result =
+        ConnectionNotifier.fetch_sender_tables(connection,
+          password: password,
+          on_rate_limited: rate_limit_notifier(liveview_pid)
+        )
+
       send(liveview_pid, {:sender_tables_result, result})
     end)
 
@@ -814,7 +820,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     password = socket.assigns.sync_password
 
     Task.start_link(fn ->
-      result = ConnectionNotifier.fetch_table_schema(connection, table_name, password: password)
+      result =
+        ConnectionNotifier.fetch_table_schema(connection, table_name,
+          password: password,
+          on_rate_limited: rate_limit_notifier(liveview_pid)
+        )
+
       send(liveview_pid, {:table_schema_result, table_name, result})
     end)
 
@@ -872,7 +883,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             [id_range: {parse_int(filter.range_start), parse_int(filter.range_end)}, limit: 10]
         end
 
-      opts = Keyword.put(opts, :password, password)
+      opts =
+        Keyword.merge(opts,
+          password: password,
+          on_rate_limited: rate_limit_notifier(liveview_pid)
+        )
+
       result = ConnectionNotifier.fetch_table_records(connection, table_name, opts)
       send(liveview_pid, {:preview_records_result, table_name, result})
     end)
@@ -960,8 +976,12 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             end
 
           opts =
-            [conflict_strategy: strategy, actor_uuid: actor_uuid, password: password] ++
-              filter_opts
+            [
+              conflict_strategy: strategy,
+              actor_uuid: actor_uuid,
+              password: password,
+              on_rate_limited: rate_limit_notifier(liveview_pid)
+            ] ++ filter_opts
 
           ConnectionNotifier.pull_table_data(connection, table, opts)
         end)
@@ -1057,7 +1077,8 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
           uuid_remap,
           conflict_strategy: strategy,
           actor_uuid: actor_uuid,
-          password: password
+          password: password,
+          on_rate_limited: rate_limit_notifier(liveview_pid)
         )
       end
 
@@ -1111,12 +1132,28 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     {:noreply, socket}
   end
 
+  # The sender answered 429 and the request waits `seconds` before it is
+  # sent again. The notice stays for that long, unless a later wait
+  # replaces it.
+  def handle_info({:sync_rate_limited, seconds}, socket) when is_integer(seconds) do
+    ref = make_ref()
+    Process.send_after(self(), {:sync_rate_limit_over, ref}, seconds * 1000)
+    {:noreply, assign(socket, :sync_rate_limited, %{seconds: seconds, ref: ref})}
+  end
+
+  def handle_info({:sync_rate_limit_over, ref}, socket) do
+    case socket.assigns[:sync_rate_limited] do
+      %{ref: ^ref} -> {:noreply, assign(socket, :sync_rate_limited, nil)}
+      _other -> {:noreply, socket}
+    end
+  end
+
   def handle_info({:sender_status_fetched, connection_uuid, status}, socket) do
     sender_statuses = Map.put(socket.assigns.sender_statuses, connection_uuid, status)
 
-    # Reload connections from DB — the status query may have triggered
-    # auto-activation of pending senders on the remote side, which
-    # updates the shared DB but can't reach us via PubSub (separate node)
+    # Reload connections from DB: a status change made on another node
+    # does not reach this LiveView through PubSub. Asking the sender for its
+    # status changes nothing there (get-connection-status is a read).
     sender_connections =
       Connections.list_connections(direction: "sender")
 
@@ -1210,6 +1247,10 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
       _with_key -> SchemaInspector.create_table(table, schema, actor_uuid: actor_uuid)
     end
   end
+
+  # What a request to the sender calls before it waits out a 429.
+  defp rate_limit_notifier(liveview_pid),
+    do: fn seconds -> send(liveview_pid, {:sync_rate_limited, seconds}) end
 
   # Runs one table's pull inside its supervised task. Whatever the pull
   # does — return, raise or exit — the task ends with a result to send,
@@ -1523,9 +1564,16 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
   # PRIVATE HELPERS FOR SAVE
   # ===========================================
 
+  # A status is never taken from the form: a new connection is pending,
+  # and only the Approve button (or the other status buttons) changes it,
+  # each with its own audit entry.
   defp do_create_connection(socket, params) do
     actor_uuid = Actor.uuid(socket)
-    params = Map.put(params, "created_by_uuid", actor_uuid)
+
+    params =
+      params
+      |> Map.drop(["status", :status])
+      |> Map.put("created_by_uuid", actor_uuid)
 
     direction = params["direction"] || params[:direction]
     site_url = params["site_url"] || params[:site_url]
@@ -1554,7 +1602,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
 
         socket =
           socket
-          |> put_flash(:info, gettext("Connection created successfully"))
+          |> put_flash(:info, created_message(connection))
           |> load_connections()
 
         path = Routes.path("/admin/sync/connections", locale: socket.assigns.current_locale)
@@ -1572,12 +1620,20 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
     end
   end
 
+  defp created_message(%{status: "pending"}),
+    do:
+      gettext(
+        "Connection created. It is pending: approve it in the list before the other site can use it"
+      )
+
+  defp created_message(_connection), do: gettext("Connection created successfully")
+
   defp do_update_connection(socket, params) do
     actor_uuid = Actor.uuid(socket)
 
     case Connections.update_connection(
            socket.assigns.selected_connection,
-           params,
+           Map.drop(params, ["status", :status]),
            actor_uuid: actor_uuid
          ) do
       {:ok, _connection} ->
@@ -1650,6 +1706,7 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
               local_checksums={@sync_local_checksums}
               loading={@sync_loading}
               error={@sync_error}
+              rate_limited={@sync_rate_limited}
               password_needed={@sync_password_needed}
               selected_tables={@selected_sync_tables}
               suggested_tables={@suggested_sync_tables}
@@ -2294,6 +2351,16 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
             }
           ]}
         />
+
+        <%!-- The sender answered 429: the request waits and is sent again --%>
+        <div :if={@rate_limited} id="sync-rate-limited" class="alert alert-info mb-4">
+          <span class="loading loading-spinner loading-sm"></span>
+          <span>
+            {gettext("Rate limited by the sender, retrying in %{seconds} s",
+              seconds: @rate_limited.seconds
+            )}
+          </span>
+        </div>
 
         <%!-- Error State --%>
         <%= if @error do %>
@@ -2998,11 +3065,16 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                       <% end %>
                     </form>
 
-                    <%!-- Preview Button --%>
-                    <div class="flex gap-2">
+                    <%!-- Preview Button. A table-records answer is a download on
+                         the sender, so a preview is only ever asked for here,
+                         on a click: never on mount, on selecting a table or on
+                         a refresh. --%>
+                    <div class="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
+                        id="preview-detail-records"
                         phx-click="preview_detail_records"
+                        phx-disable-with={gettext("Loading…")}
                         class="btn btn-outline btn-sm"
                         disabled={@loading_preview}
                       >
@@ -3011,8 +3083,11 @@ defmodule PhoenixKitSync.Web.ConnectionsLive do
                         <% else %>
                           <.icon name="hero-eye" class="w-4 h-4" />
                         <% end %>
-                        {gettext("Preview")}
+                        {gettext("Preview rows")}
                       </button>
+                      <span class="text-xs text-base-content/60">
+                        {gettext("A preview counts as one download on the sending site.")}
+                      </span>
                     </div>
 
                     <%!-- Preview Results --%>
