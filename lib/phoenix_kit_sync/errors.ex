@@ -239,11 +239,11 @@ defmodule PhoenixKitSync.Errors do
         "Table only partly pulled: the sender stopped at its max_records_per_request limit and gave no way to continue. Update sync on the source site, or have its admin raise that limit"
       )
 
-  # The sender is current and named the key type it has no cursor for:
-  # updating it would not help, raising the limit does.
   def message({:rate_limited, seconds}) when is_integer(seconds),
     do: gettext("Too many requests; try again in %{seconds} s", seconds: seconds)
 
+  # The sender is current and named the key type it has no cursor for:
+  # updating it would not help, raising the limit does.
   def message({:truncated_key_type, type}) when is_binary(type),
     do:
       gettext(
@@ -293,7 +293,8 @@ defmodule PhoenixKitSync.Errors do
     offline invalid_response pull_failed sender_ignores_filters invalid_column_name
     table_missing_locally no_primary_key import_failed response_too_large invalid_filter
     unsupported_key_type filter_needs_single_key download_limit_reached record_limit_reached
-    connection_expired connection_not_active ip_not_allowed outside_allowed_hours invalid_password)a
+    connection_expired connection_not_active ip_not_allowed outside_allowed_hours invalid_password
+    rate_limited)a
 
   def transfer_error("truncated_key_type:" <> type), do: message({:truncated_key_type, type})
 

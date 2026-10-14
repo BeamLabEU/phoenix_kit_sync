@@ -27,7 +27,7 @@ Permanent, token-based connections between PhoenixKit sites.
 | max_records_total | bigint | YES | | Total record limit |
 | records_downloaded | bigint | NO | 0 | Counter |
 | max_records_per_request | integer | NO | 10000 | Per-request limit |
-| rate_limit_requests_per_minute | integer | NO | 60 | Rate limit |
+| rate_limit_requests_per_minute | integer | NO | 600 | Requests per minute; 0 is no limit |
 | download_password_hash | varchar | YES | | SHA256 hash |
 | ip_whitelist | text[] | NO | {} | Allowed IPs |
 | allowed_hours_start | integer | YES | | 0-23 |

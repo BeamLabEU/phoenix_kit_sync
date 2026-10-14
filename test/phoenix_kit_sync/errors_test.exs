@@ -125,4 +125,11 @@ defmodule PhoenixKitSync.ErrorsTest do
       assert Errors.message({:weird, :tuple, 42}) == "{:weird, :tuple, 42}"
     end
   end
+
+  describe "transfer_error/1" do
+    test "a pull that gave up on a rate-limited sender shows its message, not the stored name" do
+      assert Errors.transfer_error("rate_limited") == Errors.message(:rate_limited)
+      refute Errors.transfer_error("rate_limited") == "rate_limited"
+    end
+  end
 end
