@@ -1,3 +1,45 @@
+## 0.3.0 - 2026-10-24
+
+PR #33 (rate limit, previews on demand, local approval) and #34, with the
+review fix on top. **Upgrade note:** the per-minute rate limit is now
+enforced. New connections default to 600 requests a minute; existing rows
+keep what they hold, and rows created under the old default hold 60. Core
+migration V218 (core 2.63.0+, run `mix phoenix_kit.update`) raises every row
+still at exactly 60 to 600. On an older core, raise them by hand
+(`Connections.update_connection/2`), or a full sync of a large install will
+spend minutes waiting out 429s instead of finishing in one.
+
+### Changed
+
+- **`rate_limit_requests_per_minute` is enforced** (#33). It is counted in
+  `Connections.authorize_request/3` for every REST action, the socket upgrade
+  and every `request:*` socket message (not the join or heartbeats), after the
+  checks a stranger can fail and before the download password, so password
+  guessing is bounded too. Over the limit, REST answers `429` with
+  `Retry-After`, the upgrade `429`, and an open socket `response:error` with
+  `"error_code": "rate_limited"` and `retry_after`. The count uses core's
+  rate-limiter backend, per node. `0` now means no limit (previously refused
+  by validation). `validate_connection/3` and `authorize_request/3` can
+  return `{:error, {:rate_limited, seconds}}`.
+- **The receiving side waits out a 429** within a clamped budget (new
+  `PhoenixKitSync.RateLimit`; `config :phoenix_kit_sync,
+  rate_limit_max_wait_seconds: 60, rate_limit_wait_budget_seconds: 300`), and
+  the sync page shows "Rate limited by the sender, retrying in N s". A pull
+  that gives up records `rate_limited`, shown translated in History.
+- The default for new connections is 600 requests a minute, in the schema
+  and the standalone migration (was 60, which was never enforced).
+- **A sender connection is activated only by the local Approve click.** A
+  `status` submitted with the connection form is ignored, so a new connection
+  stays `pending`, and the flash says so.
+- **Table previews run only from the Preview rows button**, which says that
+  a preview costs a download. They no longer run on their own.
+- **Removed** `Connections.expire_connections/0`, `Connections.requires_approval?/2`
+  and `Connection.requires_approval?/2`. Nothing called them; expiry and
+  limits are enforced per request by `authorize_request/3`.
+- The Gettext backend is split by locale and domain (#34). Lookups are
+  unchanged.
+- Dependency refresh: `phoenix_kit` 2.64.1 and its transitive set.
+
 ## 0.2.5 - 2026-10-13
 
 Quality sweep (#28) and four follow-ups (#29 to #32), with the review fixes

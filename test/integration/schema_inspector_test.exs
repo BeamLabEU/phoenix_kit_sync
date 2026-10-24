@@ -50,12 +50,16 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
 
       for name <- ~w(phoenix_kit_sync_connections phoenix_kit_sync_transfers phoenix_kit_settings
                      phoenix_kit_users_tokens phoenix_kit_user_oauth_providers phoenix_kit_buckets
-                     phoenix_kit_ai_accounts phoenix_kit_ai_endpoints
+                     phoenix_kit_ai_endpoints
                      phoenix_kit_payment_provider_configs phoenix_kit_organization_invitations) do
         assert SchemaInspector.table_exists?(name), "#{name} is not in the test database"
         refute name in table_names
         assert {:error, :table_excluded} = SchemaInspector.get_schema(name)
       end
+    end
+
+    test "still refuses phoenix_kit_ai_accounts, which core V223 drops but an older core keeps" do
+      assert {:error, :table_excluded} = SchemaInspector.get_schema("phoenix_kit_ai_accounts")
     end
 
     test "each entry has an :estimated_count key" do
