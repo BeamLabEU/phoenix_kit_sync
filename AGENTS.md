@@ -16,7 +16,7 @@ a WebSocket protocol for cross-site communication, and Oban-backed batch
 import. Implements `PhoenixKit.Module`; it is a library and borrows the host's
 Repo, Endpoint and Settings.
 
-- **Depends on:** `phoenix_kit` `>= 2.38.0 and < 3.0.0` (Hex; the floor is functional, see Landmines). No sibling `phoenix_kit_*` deps. Other runtime deps: `decimal` `>= 3.1.2 and < 4.0.0` (the advisory floor ships to Hex consumers), `websockex` (WebSocket client towards a remote sender), `websock_adapter` (server-side upgrade), `oban` (import jobs), `jason`, `gettext`.
+- **Depends on:** `phoenix_kit` `>= 2.63.0 and < 3.0.0` (Hex; the floor is functional — V218, first in 2.63.0, shaped the tables this module's chain adopts; see Landmines and Database & migrations). No sibling `phoenix_kit_*` deps. Other runtime deps: `decimal` `>= 3.1.2 and < 4.0.0` (the advisory floor ships to Hex consumers), `websockex` (WebSocket client towards a remote sender), `websock_adapter` (server-side upgrade), `oban` (import jobs), `jason`, `gettext`.
 - **Consumed by:** nothing yet.
 - **Admin surface:** tab `:admin_sync` "Sync" at `sync` (group `:admin_modules`, priority 640, `match: :prefix`) with subtabs Overview `sync` (`Web.Index`), Connections `sync/connections` (`Web.ConnectionsLive`), History `sync/history` (`Web.History`). Public: REST API under `<url_prefix>/sync/api/*` and a WebSocket forward at `<url_prefix>/sync/websocket`, both from `route_module/0`.
 - **Module key** `"sync"`; settings prefix `sync_`; permission key `"sync"`.
@@ -123,7 +123,7 @@ Repo-local aliases:
 - `PhoenixKitSync.Migration.up/1` is built on `Ecto.Migration` macros and raises outside a migrator process; call it from a host migration file or via `Ecto.Migrator.up/4`.
 - `SessionStore` owns one global ETS table: tests start it in `setup_all` and accept `{:error, {:already_started, _}}`; a per-test `start_link` fails.
 - `enabled?/0` and `get_config/0` hit the DB. Without `config :phoenix_kit, repo: ...` every `PhoenixKit.RepoHelper` call dies with "No repository configured"; in unit tests assert on `function_exported?/3` or tag `:integration`.
-- `connections_live.ex` renders the tab strip with `variant={:border}`, which core's `nav_tabs` only accepts from **2.13.6** on. Below that the attribute fails `attr :values` validation and the module does not compile — a failure that reads as an attribute typo, not a version problem. The requirement was raised to `>= 2.13.6` for exactly this reason (it is `>= 2.38.0 and < 3.0.0` now, for `PhoenixKitWeb.Actor` and `Activity.log/3`), and `core_pin_conformance_test.exs` asserts the floor; `mix.lock` is not published to Hex, so the requirement is the only thing that protects a consumer. If a local checkout still fails this way, its lock predates the floor: `mix deps.update phoenix_kit`.
+- `connections_live.ex` renders the tab strip with `variant={:border}`, which core's `nav_tabs` only accepts from **2.13.6** on. Below that the attribute fails `attr :values` validation and the module does not compile — a failure that reads as an attribute typo, not a version problem. The requirement was raised to `>= 2.13.6` for exactly this reason (later `>= 2.38.0` for `PhoenixKitWeb.Actor` and `Activity.log/3`, and `>= 2.63.0 and < 3.0.0` now, for the tables V1 adopts), and `core_pin_conformance_test.exs` asserts the floor; `mix.lock` is not published to Hex, so the requirement is the only thing that protects a consumer. If a local checkout still fails this way, its lock predates the floor: `mix deps.update phoenix_kit`.
 - `sync_channel_test.exs` replies are served by a live Postgres introspection query, so `assert_push`'s default 100 ms deadline loses the race on a loaded machine and reports an empty mailbox as a protocol failure. Those assertions carry an explicit `@reply_timeout`; keep it on any new DB-backed reply.
 - A receiver connection is created `pending` by default and under the default incoming mode; a test (or a fixture) that syncs through one needs `"status" => "active"`, or the sync page redirects with "not active" and nothing is requested.
 - The module's own tables and `phoenix_kit_settings` are never synced, so they cannot be the table a test exports or pulls: every such call answers `:table_excluded` / 403. Use `PhoenixKitSync.SyncableTable` or a table the test creates.
@@ -151,7 +151,8 @@ lib/phoenix_kit_sync/
 ├── column_info.ex / table_schema.ex       # structs
 ├── client.ex / channel_client.ex / websocket_client.ex   # client side of the sync protocol (heartbeat)
 ├── paths.ex / routes.ex                   # path helpers; route_module/0 target
-├── migration.ex                           # standalone CREATE TABLE IF NOT EXISTS fallback
+├── migrations.ex                          # own migration chain (V1 adopts the two core-created tables)
+├── migration.ex                           # superseded fallback a host migration file may still call
 ├── web/
 │   ├── api_controller.ex (+ /validators.ex)  # REST API; param-shape validators
 │   ├── socket_plug.ex / sync_websock.ex   # WebSocket upgrade (code or token) + WebSock handler
@@ -200,16 +201,41 @@ Full column lists: `docs/table_structure.md`.
 
 ## Database & migrations
 
-None. Tables `phoenix_kit_sync_connections` and `phoenix_kit_sync_transfers`
-ship in core's chain (V135 baseline); `migration_module/0` is unset. A schema
-change is a core migration first, then schema edits here.
+Owns a versioned chain: `PhoenixKitSync.Migrations` via `migration_module/0`,
+marker `pksyn_schema:<N>` as a `COMMENT ON TABLE` on
+`phoenix_kit_sync_connections` (none reads as 0), currently **V1**. The SQL is
+data (`up_statements/2`, `down_statements/2`); `up/1` / `down/1` `execute/1` it,
+so they only work inside an `Ecto.Migration` run. `mix phoenix_kit.update` runs
+core's chain, then a generated wrapper calling `up(prefix:, version:)`.
 
-`PhoenixKitSync.Migration` is a standalone fallback, not a chain: `up/1` and
-`down/1` take `:prefix`, use `CREATE TABLE IF NOT EXISTS` and `IF NOT EXISTS`
-indexes, add FKs to `phoenix_kit_users` only when that table exists, and
-`down/1` drops both tables. It mirrors core's shape for installs where core's
-migrations have not run; when the table shape changes in core, change it here
-too.
+- **V1 adopts the two tables core's chain creates**
+  (`phoenix_kit_sync_connections`, `phoenix_kit_sync_transfers`): V135's shape
+  plus V218's rate-limit default, exactly as a fresh core install builds them,
+  with core's names. On existing installs only the marker is new; where core no
+  longer creates the tables, the same statements create them.
+- **A change to these tables is a new version here, never a core migration** —
+  core refuses one since V223 (its `PhoenixKit.Migrations.ModuleOwnedTables`;
+  plan: core's `dev_docs/plans/2026-10-25-module-table-ownership.md`). Until
+  core's `ExpectedSchema` hands the tables over, a version that reshapes an
+  object the manifest declares must take it out of the manifest first, or
+  `mix phoenix_kit.repair` restores the old shape; one that only adds objects the
+  manifest never names needs no core step.
+- **Never edit a shipped version's statements**: append behind `target >= N` in
+  `up_statements/2` and bump `@current_version`. **`down/1` never drops a
+  table** (`migrations_test.exs` asserts no emitted statement matches
+  `DROP|TRUNCATE|DELETE`).
+- **Proof the chain stands alone:** `test/integration/migrations_build_alone_test.exs`
+  runs core's `PhoenixKit.TestSupport.ModuleChainCheck` (core after 2.64.1).
+  `test/phoenix_kit_sync/migrations_test.exs` pins every table, index and
+  constraint name, each FK's delete action and prefix threading, and checks the
+  statements against core's manifest.
+
+`PhoenixKitSync.Migration` (singular) predates the chain and is superseded by
+it: a standalone fallback a host's own migration file may still call (`up/1`
+and `down/1` take `:prefix`, `CREATE TABLE IF NOT EXISTS`, FKs to
+`phoenix_kit_users` only when that table exists, and `down/1` drops both
+tables). `mix phoenix_kit.update` never runs it; it is kept only so those host
+files keep compiling. Do not extend it.
 
 Always: UUIDv7 PKs (`@primary_key {:uuid, UUIDv7, autogenerate: true}`, DB
 default `uuid_generate_v7()`), `use PhoenixKit.SchemaPrefix` on both
@@ -228,8 +254,9 @@ files under `test/phoenix_kit_sync/web/`, so `mix test test/phoenix_kit_sync/`
 is not "unit only".
 
 With the DB, the helper builds the schema with
-`PhoenixKit.Migration.ensure_current(TestRepo, log: false)` (no module DDL),
-then starts `PhoenixKit.PubSub.Manager`, `PhoenixKit.ModuleRegistry`,
+`PhoenixKit.Migration.ensure_current(TestRepo, log: false)`, replays
+`PhoenixKitSync.Migrations.up_statements/1` when the marker is behind, then
+starts `PhoenixKit.PubSub.Manager`, `PhoenixKit.ModuleRegistry`,
 `PhoenixKit.Users.RateLimiter.Backend` (user registration needs its ETS
 table), `PhoenixKit.TaskSupervisor`, `SessionStore`, `Phoenix.PubSub`
 (`PhoenixKitSync.Test.PubSub`), `Finch` (`PhoenixKit.Finch`) and

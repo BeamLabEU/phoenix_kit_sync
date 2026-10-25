@@ -170,6 +170,9 @@ defmodule PhoenixKitSync do
   def version, do: @version
 
   @impl PhoenixKit.Module
+  def migration_module, do: PhoenixKitSync.Migrations
+
+  @impl PhoenixKit.Module
   def route_module, do: PhoenixKitSync.Routes
 
   @impl PhoenixKit.Module

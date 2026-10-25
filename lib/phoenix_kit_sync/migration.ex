@@ -2,6 +2,11 @@ defmodule PhoenixKitSync.Migration do
   @moduledoc """
   Creates the sync tables if they don't already exist.
 
+  **Superseded by `PhoenixKitSync.Migrations`**, the module's versioned chain
+  (`migration_module/0`), which `mix phoenix_kit.update` runs on every host.
+  This module stays for host migration files that call it; new code should not.
+  Its `down/1` drops both tables, which the chain never does.
+
   PhoenixKit's core migration system (V37, V44, V56, V58, V74) normally manages
   these tables. This module provides a fallback for installations where the tables
   haven't been created yet — every operation uses IF NOT EXISTS so it's safe to

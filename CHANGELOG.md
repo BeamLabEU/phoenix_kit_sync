@@ -1,3 +1,22 @@
+## Unreleased
+
+### Added
+
+- The module's own migration chain, `PhoenixKitSync.Migrations`
+  (`migration_module/0`). V1 adopts the two sync tables core's chain creates,
+  exactly as a fresh core install builds them (V135 plus V218's rate-limit
+  default), and stamps a `pksyn_schema:1` marker. Nothing changes on an existing
+  install but the marker; from now on a change to these tables ships here
+  instead of in core. A test proves the chain builds the tables without core
+  (core's `PhoenixKit.TestSupport.ModuleChainCheck`).
+
+### Changed
+
+- Requires `phoenix_kit` `>= 2.63.0 and < 3.0.0` (was `>= 2.38.0`): V1 re-states
+  the tables as core 2.63.0's V218 left them.
+- `PhoenixKitSync.Migration` (singular) is marked superseded by the chain. It
+  still works for host migration files that call it.
+
 ## 0.3.0 - 2026-10-24
 
 PR #33 (rate limit, previews on demand, local approval) and #34, with the

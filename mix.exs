@@ -95,9 +95,12 @@ defmodule PhoenixKitSync.MixProject do
       # 2.38.0 is the floor now: the actor and the activity log come from
       # `PhoenixKitWeb.Actor` and `PhoenixKit.Activity.log/3`, first shipped
       # there and no longer feature-detected, so a lower core fails to compile.
+      # 2.63.0 since this module's migration chain: its V1 re-states the sync
+      # tables as core builds them, and core's V218 (first in 2.63.0) set the
+      # rate-limit default V1 declares.
       # Patch-precise floor in the compound form, so the ceiling stays open
       # through every later 2.x minor (see test/core_pin_conformance_test.exs).
-      pk_dep(:phoenix_kit, ">= 2.38.0 and < 3.0.0"),
+      pk_dep(:phoenix_kit, ">= 2.63.0 and < 3.0.0"),
       {:phoenix_live_view, "~> 1.1"},
       {:phoenix, "~> 1.8.1"},
       {:ecto_sql, "~> 3.10"},

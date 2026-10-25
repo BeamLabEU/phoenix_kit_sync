@@ -52,7 +52,7 @@ repo_available =
       # `phoenix_kit_sync_*`; V56/V58/V61/V73/V74 evolve them). The
       # `phoenix_kit_settings` (V03), `phoenix_kit_activities` (V90), and
       # `uuid-ossp` / `pgcrypto` extensions + `uuid_generate_v7()` function
-      # (V40) are also owned by core. No module-side DDL in this helper.
+      # (V40) are also owned by core. This module's own chain runs after it.
       #
       # `ensure_current/2` (core 1.7.105+ / phoenix_kit#515) re-applies
       # any newly-shipped Vxxx migrations on every boot by passing a
@@ -63,6 +63,14 @@ repo_available =
       # `0` landed in `schema_migrations`. See
       # `dev_docs/migration_cleanup.md` for the staleness story.
       PhoenixKit.Migration.ensure_current(TestRepo, log: false)
+
+      # Then this module's own chain (`PhoenixKitSync.Migrations`, V1 adopts
+      # the sync tables core creates), as `mix phoenix_kit.update` runs it.
+      # `up/1` needs an `Ecto.Migration` run; the SQL is data, so replay it.
+      if PhoenixKitSync.Migrations.migrated_version_runtime() <
+           PhoenixKitSync.Migrations.current_version() do
+        Enum.each(PhoenixKitSync.Migrations.up_statements("public"), &TestRepo.query!/1)
+      end
 
       Ecto.Adapters.SQL.Sandbox.mode(TestRepo, :manual)
       true
@@ -144,7 +152,15 @@ if repo_available do
   :persistent_term.put({PhoenixKit.Config, :url_prefix}, "")
 end
 
+# `migrations_build_alone_test.exs` uses core's
+# `PhoenixKit.TestSupport.ModuleChainCheck`, which the first core release after
+# 2.64.1 ships; against an older core in `deps/` it is excluded.
+chain_check =
+  if Code.ensure_loaded?(PhoenixKit.TestSupport.ModuleChainCheck),
+    do: [],
+    else: [:requires_module_chain_check]
+
 # Exclude integration tests when DB is not available
-exclude = if repo_available, do: [], else: [:integration]
+exclude = if repo_available, do: chain_check, else: [:integration | chain_check]
 
 ExUnit.start(exclude: exclude)
