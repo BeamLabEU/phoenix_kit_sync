@@ -249,7 +249,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       conn =
         post(conn, "/sync/api/pull-data", %{
           "auth_token_hash" => String.duplicate("b", 64),
-          "table_name" => "phoenix_kit_staff_skills"
+          "table_name" => "phoenix_kit_media_folders"
         })
 
       assert json_response(conn, 401)["success"] == false
@@ -259,7 +259,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       {connection, token} = create_active_sender()
 
       Connections.update_connection(connection, %{
-        "allowed_tables" => ["phoenix_kit_staff_skills"]
+        "allowed_tables" => ["phoenix_kit_media_folders"]
       })
 
       conn =
@@ -277,7 +277,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       conn =
         post(conn, "/sync/api/pull-data", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_staff_skills"
+          "table_name" => "phoenix_kit_media_folders"
         })
 
       body = json_response(conn, 200)
@@ -330,13 +330,13 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       {connection, token} = create_active_sender()
 
       Connections.update_connection(connection, %{
-        "excluded_tables" => ["phoenix_kit_staff_skills"]
+        "excluded_tables" => ["phoenix_kit_media_folders"]
       })
 
       conn =
         post(conn, "/sync/api/table-schema", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_staff_skills"
+          "table_name" => "phoenix_kit_media_folders"
         })
 
       assert json_response(conn, 403)["success"] == false
@@ -348,7 +348,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       conn =
         post(conn, "/sync/api/table-schema", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_staff_skills"
+          "table_name" => "phoenix_kit_media_folders"
         })
 
       body = json_response(conn, 200)
@@ -378,7 +378,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
         conn =
           post(conn, "/sync/api/table-records", %{
             "auth_token_hash" => token_hash(token),
-            "table_name" => "phoenix_kit_staff_skills",
+            "table_name" => "phoenix_kit_media_folders",
             "limit" => limit,
             "offset" => offset
           })
@@ -413,13 +413,13 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       {connection, token} = create_active_sender()
 
       Connections.update_connection(connection, %{
-        "excluded_tables" => ["phoenix_kit_staff_skills"]
+        "excluded_tables" => ["phoenix_kit_media_folders"]
       })
 
       conn =
         post(conn, "/sync/api/table-records", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_staff_skills"
+          "table_name" => "phoenix_kit_media_folders"
         })
 
       assert json_response(conn, 403)["success"] == false
@@ -431,7 +431,7 @@ defmodule PhoenixKitSync.Integration.ApiControllerEndpointsTest do
       conn =
         post(conn, "/sync/api/table-records", %{
           "auth_token_hash" => token_hash(token),
-          "table_name" => "phoenix_kit_staff_skills",
+          "table_name" => "phoenix_kit_media_folders",
           "limit" => "5"
         })
 

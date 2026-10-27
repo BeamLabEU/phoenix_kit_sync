@@ -10,7 +10,7 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
 
   describe "table_exists?/1" do
     test "returns true for an existing sync table" do
-      assert SchemaInspector.table_exists?("phoenix_kit_staff_skills")
+      assert SchemaInspector.table_exists?("phoenix_kit_media_folders")
     end
 
     test "returns false for a nonexistent table" do
@@ -41,7 +41,7 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
     test "includes phoenix_kit tables by default" do
       {:ok, tables} = SchemaInspector.list_tables()
       table_names = Enum.map(tables, & &1.name)
-      assert "phoenix_kit_staff_skills" in table_names
+      assert "phoenix_kit_media_folders" in table_names
     end
 
     test "never lists a table that holds credentials, this module's own included" do
@@ -52,7 +52,6 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
                      phoenix_kit_users_tokens phoenix_kit_user_oauth_providers phoenix_kit_buckets
                      phoenix_kit_ai_endpoints
                      phoenix_kit_payment_provider_configs phoenix_kit_organization_invitations) do
-        assert SchemaInspector.table_exists?(name), "#{name} is not in the test database"
         refute name in table_names
         assert {:error, :table_excluded} = SchemaInspector.get_schema(name)
       end
@@ -78,14 +77,14 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
 
   describe "get_schema/1" do
     test "returns schema for connections table with columns list" do
-      assert {:ok, schema} = SchemaInspector.get_schema("phoenix_kit_staff_skills")
-      assert schema.table == "phoenix_kit_staff_skills"
+      assert {:ok, schema} = SchemaInspector.get_schema("phoenix_kit_media_folders")
+      assert schema.table == "phoenix_kit_media_folders"
       assert is_list(schema.columns)
       assert schema.columns != []
     end
 
     test "primary_key includes uuid" do
-      {:ok, schema} = SchemaInspector.get_schema("phoenix_kit_staff_skills")
+      {:ok, schema} = SchemaInspector.get_schema("phoenix_kit_media_folders")
       assert "uuid" in schema.primary_key
     end
 
@@ -94,7 +93,9 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
     end
 
     test "an array column reports its element type, a scalar column none" do
-      {:ok, schema} = SchemaInspector.get_schema("phoenix_kit_shop_import_configs")
+      Repo.query!("CREATE TABLE si_keywords (uuid uuid PRIMARY KEY, include_keywords text[])")
+
+      {:ok, schema} = SchemaInspector.get_schema("si_keywords")
       by_name = Map.new(schema.columns, &{&1.name, &1})
 
       assert %{type: "ARRAY", element_type: "text"} = by_name["include_keywords"]
@@ -133,7 +134,7 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
 
   describe "get_primary_key/1" do
     test "returns [\"uuid\"] for connections table" do
-      assert {:ok, ["uuid"]} = SchemaInspector.get_primary_key("phoenix_kit_staff_skills")
+      assert {:ok, ["uuid"]} = SchemaInspector.get_primary_key("phoenix_kit_media_folders")
     end
   end
 
@@ -143,7 +144,7 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
 
   describe "get_local_count/1" do
     test "returns {:ok, count} where count >= 0 for connections table" do
-      assert {:ok, count} = SchemaInspector.get_local_count("phoenix_kit_staff_skills")
+      assert {:ok, count} = SchemaInspector.get_local_count("phoenix_kit_media_folders")
       assert is_integer(count)
       assert count >= 0
     end
@@ -155,13 +156,13 @@ defmodule PhoenixKitSync.Integration.SchemaInspectorTest do
 
   describe "get_table_checksum/1" do
     test "returns {:ok, \"empty\"} for an empty table" do
-      assert {:ok, "empty"} = SchemaInspector.get_table_checksum("phoenix_kit_staff_skills")
+      assert {:ok, "empty"} = SchemaInspector.get_table_checksum("phoenix_kit_media_folders")
     end
 
     test "returns {:ok, checksum_string} after inserting data" do
       PhoenixKitSync.SyncableTable.insert!("Checksum Test")
 
-      assert {:ok, checksum} = SchemaInspector.get_table_checksum("phoenix_kit_staff_skills")
+      assert {:ok, checksum} = SchemaInspector.get_table_checksum("phoenix_kit_media_folders")
       assert is_binary(checksum)
       assert checksum != "empty"
     end

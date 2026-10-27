@@ -1,5 +1,11 @@
 ## Unreleased
 
+### Changed
+
+- **Core pin widened to `>= 2.65.0 and < 4.0.0`:** works with core 3.x (core 3.0 stops creating the module tables; this module's own chain builds its tables). The floor is the first core with the `file_references/0` and `expected_schema/0` callbacks, which now carry `@impl PhoenixKit.Module`.
+
+- Tests no longer need core to create another module's tables (core 3.0 does not): the sample table is core's `phoenix_kit_media_folders` instead of `phoenix_kit_staff_skills`, and the array-column test builds its own table. The transitional "core's ExpectedSchema manifest" test is removed; the module's own manifest test covers it.
+
 ### Added
 
 - **The module supplies the manifest of its 2 tables** (`expected_schema/0`, `PhoenixKitSync.ExpectedSchema`), so `mix phoenix_kit.repair` and `mix phoenix_kit.doctor` check and repair them again, now from the module's own chain instead of core's manifest. Generated from `PhoenixKitSync.Migrations` by core's `dev_docs/squash/generate_module_manifest.exs`, never edited by hand. Core uses it from the first release after 2.64.1; before that nothing reads it. Repair is additive (it creates what is missing and reports the rest) and checks the tables only while the database is at the chain's current version. No migration.

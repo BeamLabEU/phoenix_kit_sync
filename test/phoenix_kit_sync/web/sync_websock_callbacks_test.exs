@@ -277,7 +277,7 @@ defmodule PhoenixKitSync.Web.SyncWebsockCallbacksTest do
 
       payload =
         encode(nil, "u1", "transfer:conn:#{conn.uuid}", "request:records", %{
-          "table" => "phoenix_kit_staff_skills",
+          "table" => "phoenix_kit_media_folders",
           "ref" => "u1"
         })
 

@@ -8,7 +8,7 @@ defmodule PhoenixKitSync.SyncableTable do
   credentials and are never synced (`SchemaInspector.excluded_table?/1`).
   """
 
-  @table "phoenix_kit_staff_skills"
+  @table "phoenix_kit_media_folders"
 
   @doc "The table's name."
   @spec name() :: String.t()

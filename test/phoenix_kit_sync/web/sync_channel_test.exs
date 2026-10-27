@@ -115,7 +115,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       ref = "sch-1"
-      push(channel, "request:schema", %{"table" => "phoenix_kit_staff_skills", "ref" => ref})
+      push(channel, "request:schema", %{"table" => "phoenix_kit_media_folders", "ref" => ref})
 
       assert_push("response:schema", %{schema: schema, ref: ^ref}, @reply_timeout)
       assert is_list(schema.columns) or is_map(schema)
@@ -139,7 +139,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       ref = "cnt-1"
-      push(channel, "request:count", %{"table" => "phoenix_kit_staff_skills", "ref" => ref})
+      push(channel, "request:count", %{"table" => "phoenix_kit_media_folders", "ref" => ref})
 
       assert_push("response:count", %{count: count, ref: ^ref}, @reply_timeout)
       assert is_integer(count)
@@ -154,7 +154,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
       ref = "rec-1"
 
       push(channel, "request:records", %{
-        "table" => "phoenix_kit_staff_skills",
+        "table" => "phoenix_kit_media_folders",
         "ref" => ref,
         "limit" => 10
       })
@@ -184,7 +184,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
       push(channel, "request:records", %{
-        "table" => "phoenix_kit_staff_skills",
+        "table" => "phoenix_kit_media_folders",
         "ref" => "uuid-json"
       })
 
@@ -216,7 +216,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
           channel,
           "request:records",
           Map.merge(
-            %{"table" => "phoenix_kit_staff_skills", "ref" => "bounded"},
+            %{"table" => "phoenix_kit_media_folders", "ref" => "bounded"},
             unquote(Macro.escape(extra))
           )
         )
@@ -446,7 +446,7 @@ defmodule PhoenixKitSync.Web.SyncChannelTest do
       {:ok, _reply, channel} =
         subscribe_and_join(socket, SyncChannel, "transfer:#{session.code}")
 
-      ref = push(channel, "request:records", %{"table" => "phoenix_kit_staff_skills"})
+      ref = push(channel, "request:records", %{"table" => "phoenix_kit_media_folders"})
       assert_reply(ref, :error, %{reason: "missing_fields"}, @reply_timeout)
       assert Process.alive?(channel.channel_pid)
     end

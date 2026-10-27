@@ -1,7 +1,6 @@
 defmodule PhoenixKitSync.MigrationsTest do
   use ExUnit.Case, async: true
 
-  alias PhoenixKit.Migrations.ExpectedSchema.Resolver
   alias PhoenixKitSync.Migrations
 
   @tables ~w(
@@ -189,104 +188,5 @@ defmodule PhoenixKitSync.MigrationsTest do
     assert_raise ArgumentError, fn -> Migrations.up_statements("public; DROP") end
     assert_raise ArgumentError, fn -> Migrations.down_statements("x'y", 0) end
     assert_raise ArgumentError, fn -> Migrations.migrated_version_runtime(prefix: "a b") end
-  end
-
-  # ── the drift lock ───────────────────────────────────────────────────
-  #
-  # Core's `ExpectedSchema` manifest still audits these tables, and V1 only
-  # holds together while this chain reproduces what that manifest requires.
-  # Objects are picked by table name, not by the manifest's `owner:` label,
-  # which predates `PhoenixKit.Migrations.ModuleOwnedTables`.
-  describe "core's ExpectedSchema manifest" do
-    setup do
-      case Resolver.resolve() do
-        {:ok, manifest} -> {:ok, objects: owned_objects(manifest)}
-        {:error, :not_generated} -> {:ok, objects: nil}
-      end
-    end
-
-    test "every required object of the sync tables is emitted by up_statements/1", ctx do
-      if ctx.objects do
-        refute ctx.objects == []
-
-        stmts = Migrations.up_statements("public")
-
-        missing =
-          ctx.objects
-          |> Enum.filter(&(&1.presence == :required))
-          |> Enum.reject(&emitted?(stmts, &1))
-          |> Enum.map(& &1.id)
-
-        assert missing == [],
-               "core's manifest requires these on a fresh install, and the chain " <>
-                 "does not create them:\n  " <> Enum.join(missing, "\n  ")
-      end
-    end
-
-    test "no object core deliberately dropped is re-created", ctx do
-      if ctx.objects do
-        stmts = Migrations.up_statements("public")
-
-        resurrected =
-          ctx.objects
-          |> Enum.filter(&(&1.presence == :legacy_optional and emitted?(stmts, &1)))
-          |> Enum.map(& &1.id)
-
-        assert resurrected == [],
-               "chain re-creates objects core deliberately dropped:\n  " <>
-                 Enum.join(resurrected, "\n  ")
-      end
-    end
-  end
-
-  defp owned_objects(manifest) do
-    Enum.filter(manifest.objects("public"), &(object_table(&1) in @tables))
-  end
-
-  defp object_table(%{id: "table:" <> table}), do: table
-  defp object_table(%{id: "column:" <> rest}), do: rest |> String.split(".") |> hd()
-  defp object_table(%{id: "constraint:" <> rest}), do: rest |> String.split(".") |> hd()
-  defp object_table(%{class: :index, check: {:catalog, %{table: table}}}), do: table
-  defp object_table(_object), do: nil
-
-  # The manifest's id format (`table:<t>` / `column:<t>.<c>` / `index:<name>`
-  # / `constraint:<t>.<name>`) identifies the object in the emitted DDL.
-  defp emitted?(stmts, %{class: :table, id: "table:" <> table}) do
-    Enum.any?(stmts, &creates_table?(&1, table))
-  end
-
-  defp emitted?(stmts, %{class: :index, id: "index:" <> name}) do
-    Enum.any?(stmts, &String.contains?(&1, "INDEX IF NOT EXISTS #{name} ON "))
-  end
-
-  defp emitted?(stmts, %{class: :column, id: "column:" <> rest}) do
-    [table, column] = String.split(rest, ".", parts: 2)
-
-    stmts
-    |> Enum.find(&creates_table?(&1, table))
-    |> declared_columns()
-    |> Enum.member?(column)
-  end
-
-  defp emitted?(stmts, %{class: :constraint, id: "constraint:" <> rest}) do
-    [table, name] = String.split(rest, ".", parts: 2)
-
-    Enum.any?(stmts, fn s ->
-      String.contains?(s, "ALTER TABLE public.#{table} ADD CONSTRAINT #{name} ")
-    end)
-  end
-
-  defp creates_table?(statement, table) do
-    String.contains?(statement, "CREATE TABLE IF NOT EXISTS public.#{table} (")
-  end
-
-  defp declared_columns(nil), do: []
-
-  defp declared_columns(statement) do
-    statement
-    |> String.split("\n")
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == "" or String.starts_with?(&1, ["CREATE ", "CONSTRAINT ", ")"])))
-    |> Enum.map(fn line -> line |> String.split(" ", parts: 2) |> hd() |> String.trim("\"") end)
   end
 end
