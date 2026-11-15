@@ -5,40 +5,22 @@ defmodule PhoenixKitSync.CorePinConformanceTest do
   Guards the `:phoenix_kit` requirement against being re-narrowed to a single
   core MINOR, and against a local path override reaching a commit.
 
-  The trap is the three-segment form: `~> 2.0.x` expands to
-  `>= 2.0.x and < 2.1.0`, so no 2.1 or later core satisfies it. The breakage
+  The trap is the three-segment form: `~> 3.5.x` expands to
+  `>= 3.5.x and < 3.6.0`, so no 3.6 or later core satisfies it. The breakage
   lands on CONSUMERS, never here — a host depending on both this module and a
   newer core minor gets an unsolvable dependency set and `mix deps.get` fails
   outright, with no degraded mode. Nothing else in this repo's own test run
   would notice, which is why the check is a test rather than a convention.
 
-  Core 1.7 is deliberately excluded: core 2.0.0 squashed the migration chain to
-  a V135 floor and this module is verified only against that baseline.
-
-  The floor is 2.13.6, not 2.0.0. `connections_live.ex` passes
-  `variant={:border}` to core's `nav_tabs`, and core only added that value in
-  2.13.6; below it the component's `attr :values` check fails and this module
-  does not compile. `mix.lock` is not published to Hex, so the requirement is
-  the only thing standing between a consumer and that failure — which is why
-  the floor is asserted here and not merely documented.
-
-  The floor was `>= 2.38.0 and < 3.0.0` next: the actor and the activity log
-  come from `PhoenixKitWeb.Actor` and `Activity.log/3`, first shipped in core
-  2.38.0 and no longer feature-detected — an older core does not compile the
-  package. Any earlier floor's reasons above still hold below it. Keep the
-  compound form: patch-precise at the bottom, open through every later 2.x
-  minor at the top.
-
-  The floor is `>= 2.63.0 and < 3.0.0` since the module's own migration chain
-  (`PhoenixKitSync.Migrations`): its V1 re-states the sync tables as a fresh
-  core builds them, and core's V218, first in 2.63.0, set the rate-limit default
-  V1 declares.
+  The requirement is `>= 3.5.0 and < 4.0.0`. The floor is core 3.5.0, the
+  minimum every PhoenixKit module requires, and it carries everything this
+  module compiles against. The ceiling is open through every core 3.x.
   """
 
-  @must_admit ["2.65.0", "2.65.1", "2.99.4", "3.0.0", "3.9.9"]
-  @must_reject ["1.7.236", "2.0.0", "2.13.6", "2.37.5", "2.38.0", "2.62.2", "2.64.9", "4.0.0"]
+  @must_admit ["3.5.0", "3.5.1", "3.6.0", "3.9.9"]
+  @must_reject ["1.7.236", "2.0.0", "2.65.0", "2.99.4", "3.0.0", "3.4.0", "3.4.9", "4.0.0"]
 
-  test "the :phoenix_kit requirement admits every core >= 2.65.0 minor and nothing else" do
+  test "the :phoenix_kit requirement admits every core >= 3.5.0 minor and nothing else" do
     requirement = core_requirement()
 
     assert match?({:ok, _parsed}, Version.parse_requirement(requirement)),
@@ -48,8 +30,8 @@ defmodule PhoenixKitSync.CorePinConformanceTest do
       assert Version.match?(version, requirement),
              "`:phoenix_kit` requirement #{inspect(requirement)} rejects core #{version}. " <>
                "A pin that excludes a core minor breaks `mix deps.get` for every host " <>
-               "running this module alongside that core. Widen the upper bound rather " <>
-               "than pinning a single minor."
+               "running this module alongside that core. Keep the floor patch-precise " <>
+               "and the ceiling open (`>= 3.5.0 and < 4.0.0`), never a three-segment `~>`."
     end
 
     for version <- @must_reject do

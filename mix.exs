@@ -85,24 +85,10 @@ defmodule PhoenixKitSync.MixProject do
 
   defp deps do
     [
-      # Floor is 2.13.6, not 2.0: `connections_live.ex` renders the tab strip
-      # with core's `nav_tabs` `variant={:border}`, which core only started
-      # accepting in 2.13.6. Below it the attribute fails `attr :values`
-      # validation and the module does not compile. `mix.lock` is not
-      # published to Hex, so only this requirement protects a consumer.
-      # Written as a range rather than a three-segment `~>`, which would
-      # exclude the next minor.
-      # 2.38.0 is the floor now: the actor and the activity log come from
-      # `PhoenixKitWeb.Actor` and `PhoenixKit.Activity.log/3`, first shipped
-      # there and no longer feature-detected, so a lower core fails to compile.
-      # 2.63.0 since this module's migration chain: its V1 re-states the sync
-      # tables as core builds them, and core's V218 (first in 2.63.0) set the
-      # rate-limit default V1 declares.
-      # Patch-precise floor in the compound form, so the ceiling stays open
-      # through every later 2.x minor (see test/core_pin_conformance_test.exs).
-      # Floor 2.65.0: the first core with the `file_references/0` and `expected_schema/0`
-      # callbacks this module implements (`@impl`). The ceiling is open through core 3.x.
-      pk_dep(:phoenix_kit, ">= 2.65.0 and < 4.0.0"),
+      # Floor 3.5.0, ceiling open through every core 3.x. Compound form, never
+      # a three-segment `~>`, which would pin a single core minor (see
+      # test/core_pin_conformance_test.exs).
+      pk_dep(:phoenix_kit, ">= 3.5.0 and < 4.0.0"),
       {:phoenix_live_view, "~> 1.1"},
       {:phoenix, "~> 1.8.1"},
       {:ecto_sql, "~> 3.10"},
