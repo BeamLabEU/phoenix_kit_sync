@@ -161,6 +161,28 @@ defmodule PhoenixKitSync do
   def css_sources, do: [:phoenix_kit_sync]
 
   @impl PhoenixKit.Module
+  @doc """
+  The prebuilt JS bundle of the module: the delegated `data-pks-*` listeners that
+  do what an inline event handler used to (copying the connection code).
+
+  An inline `onclick="…"` is blocked by a Content-Security-Policy that allows
+  inline code by nonce only, so the behaviour lives in this bundle, which core's
+  `:phoenix_kit_js_sources` compiler folds into the host's
+  `phoenix_kit_modules.js`. The bundle registers no LiveView hook; `global` is
+  the (empty) hooks map the compiler expects.
+  """
+  @spec js_sources() :: [%{app: atom(), file: String.t(), global: String.t()}]
+  def js_sources do
+    [
+      %{
+        app: :phoenix_kit_sync,
+        file: "static/assets/phoenix_kit_sync.js",
+        global: "PhoenixKitSyncHooks"
+      }
+    ]
+  end
+
+  @impl PhoenixKit.Module
   def module_key, do: "sync"
 
   @impl PhoenixKit.Module

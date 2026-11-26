@@ -338,7 +338,7 @@ defmodule PhoenixKitSync.Web.Sender do
             </code>
             <button
               id="copy-code-btn"
-              onclick={"navigator.clipboard.writeText('#{@session.code}').then(() => { this.querySelector('.copy-icon').classList.add('hidden'); this.querySelector('.check-icon').classList.remove('hidden'); setTimeout(() => { this.querySelector('.copy-icon').classList.remove('hidden'); this.querySelector('.check-icon').classList.add('hidden'); }, 2000); })"}
+              data-pks-copy={@session.code}
               class="btn btn-ghost btn-sm"
               title="Copy to clipboard"
             >

@@ -290,6 +290,35 @@ mix test test/integration/full_sync_flow_test.exs   # end-to-end export -> impor
 None. Feature behaviour is documented in `@moduledoc`s and the README;
 table shapes are in `docs/table_structure.md`.
 
+## Content-Security-Policy
+
+The module works under a host policy that allows inline code by nonce only
+(`script-src 'self' 'nonce-…'`); core's guide is `guides/content-security-policy.md`.
+It renders no inline `<script>` / `<style>` and no inline event handler.
+
+- No inline event handlers (`onclick=`, `onerror=` …), in markup or in HTML the
+  bundle builds: no nonce covers an attribute. Use a `phx-` binding, or name the
+  behaviour with a `data-pks-*` attribute handled by the one delegated listener in
+  `priv/static/assets/phoenix_kit_sync.js` ("DECLARATIVE HANDLERS"; declared by
+  `js_sources/0`, global `PhoenixKitSyncHooks`). `data-pks-copy="text"` copies the
+  text and swaps the button's `.copy-icon` / `.check-icon` for two seconds (the
+  connection code of `Web.Sender`). Not core's `data-pk-*`: cores below the one
+  that introduced them do not listen, and the module's core floor is older.
+- The bundle reaches the browser only through the host's `:phoenix_kit_js_sources`
+  compiler and its `phoenix_kit_modules.js` tag; a host without them has a copy
+  button that does nothing.
+- A new inline `<style>` / `<script>` carries the page's nonce. Core's
+  `PhoenixKitWeb.CSP.nonce/1` is newer than this module's core floor, so read it
+  through a feature-detecting helper (`Code.ensure_loaded?/1` +
+  `function_exported?/3` + `apply/3`, answering `nil` on an older core; reference:
+  `PhoenixKitComments.Web.CSP`). Never raise the core floor for it.
+- A `<style>` / `<script>` the bundle creates is stamped before insertion:
+  `window.PhoenixKitInternals && window.PhoenixKitInternals.adoptStyle && window.PhoenixKitInternals.adoptStyle(el)`.
+- `test/csp_inline_tags_test.exs` enforces all of it; `test/js/copy_code.test.cjs`
+  runs the listener under node (the Elixir suite starts it from
+  `test/phoenix_kit_sync/web/copy_code_js_test.exs`). Inline `style="…"` attributes
+  are not covered yet.
+
 ## Versioning & releases
 
 SemVer. The version is single-sourced in `mix.exs` (`@version`); `version/0`
